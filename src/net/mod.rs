@@ -6,34 +6,6 @@ use iced_native::subscription;
 
 use nostr_sdk::prelude::*;
 
-// pub async fn net() -> Result<(), anyhow::Error> {
-//     // Generate new keys
-//     // let my_keys: Keys = Keys::generate();
-//     //
-//     // or use your already existing
-//     //
-//     // From HEX or Bech32
-//     let my_keys =
-//         Keys::from_sk_str("4510459b74db68371be462f19ef4f7ef1e6c5a95b1d83a7adf00987c51ac56fe")?;
-
-//     // Show bech32 public key
-//     let bech32_pubkey: String = my_keys.public_key().to_bech32()?;
-//     println!("Bech32 PubKey: {}", bech32_pubkey);
-
-//     // Create new client
-//     let client = Client::new(&my_keys);
-
-//     let proxy = Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 9050)));
-
-//     // Add relays
-//     client.add_relay("ws://192.168.15.119:8080", None).await?;
-
-//     // Connect to relays
-//     client.connect().await;
-
-//     Ok(())
-// }
-
 #[derive(Debug, Clone)]
 pub struct Connection(mpsc::Sender<Message>);
 impl Connection {

@@ -1,7 +1,4 @@
-use iced::{
-    widget::{button, column, container, row, text},
-    Element, Length,
-};
+use iced::Element;
 
 use crate::net::Connection;
 
@@ -12,7 +9,6 @@ mod settings;
 pub enum Message {
     ChatMsg(chat::Message),
     SettingsMsg(settings::Message),
-    NavSettingsPress,
 }
 #[derive(Debug)]
 pub struct Router {
@@ -39,15 +35,20 @@ impl Router {
         match message {
             Message::ChatMsg(msg) => {
                 if let State::Chat { state } = &mut self.state {
-                    state.update(msg.clone(), conn);
+                    match msg {
+                        chat::Message::NavSettingsPress => self.next_state(State::settings()),
+                        _ => state.update(msg.clone(), conn),
+                    }
                 }
             }
             Message::SettingsMsg(msg) => {
                 if let State::Settings { state } = &mut self.state {
-                    state.update(msg.clone());
+                    match msg {
+                        settings::Message::NavEscPress => self.back(),
+                        _ => state.update(msg.clone()),
+                    }
                 }
             }
-            Message::NavSettingsPress => self.next_state(State::settings()),
         }
     }
     pub fn default() -> Self {
@@ -76,24 +77,9 @@ impl State {
     }
 
     pub fn view(&self) -> Element<Message> {
-        let view = match self {
+        match self {
             Self::Chat { state } => state.view().map(Message::ChatMsg),
             Self::Settings { state } => state.view().map(Message::SettingsMsg),
-        };
-
-        let search_input = container(text("Search")).padding(10);
-        let settings_btn = button("Settings")
-            .padding(10)
-            .on_press(Message::NavSettingsPress);
-        let empty = container(text("")).width(Length::Fill);
-        let navbar = row![search_input, empty, settings_btn]
-            .width(Length::Fill)
-            .padding(10)
-            .spacing(10);
-
-        column![navbar, view]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        }
     }
 }

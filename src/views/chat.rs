@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, text};
+use iced::widget::{button, column, container, row, text};
 use iced::{Element, Length};
 
 use crate::net::{self, Connection};
@@ -8,6 +8,7 @@ pub enum Message {
     OnVerResize(u16),
     AddRelay,
     ShowRelays,
+    NavSettingsPress,
 }
 
 #[derive(Debug, Clone)]
@@ -36,20 +37,35 @@ impl State {
             .height(Length::Fill)
             .center_x()
             .center_y();
-        iced_aw::split::Split::new(
+        let content = iced_aw::split::Split::new(
             first,
             second,
             self.ver_divider_position,
             iced_aw::split::Axis::Vertical,
             Message::OnVerResize,
-        )
-        .into()
+        );
+
+        let search_input = container(text("Search")).padding(10);
+        let settings_btn = button("Settings")
+            .padding(10)
+            .on_press(Message::NavSettingsPress);
+        let empty = container(text("")).width(Length::Fill);
+        let navbar = row![search_input, empty, settings_btn]
+            .width(Length::Fill)
+            .padding(10)
+            .spacing(10);
+
+        column![navbar, content]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
     pub fn update(&mut self, message: Message, conn: &mut Connection) {
         match message {
             Message::OnVerResize(position) => {
                 self.ver_divider_position = Some(position);
             }
+            Message::NavSettingsPress => (),
             Message::AddRelay => {
                 if let Err(e) = conn.send(net::Message::AddRelay("ws://192.168.15.119:8080".into()))
                 {
