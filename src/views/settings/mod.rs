@@ -1,5 +1,8 @@
+use fake::Fake;
 use iced::widget::{button, column, container, row, text};
 use iced::{theme, Element, Length};
+
+use self::network::RelayRow;
 
 mod account;
 mod appearance;
@@ -43,8 +46,12 @@ impl State {
         }
     }
     fn network() -> Self {
+        let mut relays = vec![];
+        for _ in 0..10 {
+            relays.push(RelayRow::new((8..12).fake::<String>()))
+        }
         Self::Network {
-            state: network::State::default(),
+            state: network::State::new(relays),
         }
     }
     fn backup() -> Self {
@@ -91,6 +98,7 @@ impl State {
                 Self::Account { .. } => theme::Button::Primary,
                 _ => theme::Button::Secondary,
             })
+            .width(Length::Fill)
             .padding(10)
             .on_press(Message::MenuAccountPress);
         let appearance_btn = button("Appearance")
@@ -98,6 +106,7 @@ impl State {
                 Self::Appearance { .. } => theme::Button::Primary,
                 _ => theme::Button::Secondary,
             })
+            .width(Length::Fill)
             .padding(10)
             .on_press(Message::MenuAppearancePress);
         let network_btn = button("Network")
@@ -105,6 +114,7 @@ impl State {
                 Self::Network { .. } => theme::Button::Primary,
                 _ => theme::Button::Secondary,
             })
+            .width(Length::Fill)
             .padding(10)
             .on_press(Message::MenuNetworkPress);
         let backup_btn = button("Backup")
@@ -112,15 +122,18 @@ impl State {
                 Self::Backup { .. } => theme::Button::Primary,
                 _ => theme::Button::Secondary,
             })
+            .width(Length::Fill)
             .padding(10)
             .on_press(Message::MenuBackupPress);
 
-        let menubar = column![account_btn, appearance_btn, network_btn, backup_btn]
+        let menubar =
+            container(column![account_btn, appearance_btn, network_btn, backup_btn].spacing(3))
+                .width(Length::FillPortion(1))
+                .padding([0, 5]);
+        let view_ct = container(view).width(Length::FillPortion(3));
+        let content = row![menubar, view_ct]
             .width(Length::Fill)
-            .padding(10)
-            .spacing(10);
-
-        let content = row![menubar, view].width(Length::Fill).height(Length::Fill);
+            .height(Length::Fill);
 
         let esc_btn = button("Esc").padding(10).on_press(Message::NavEscPress);
         let empty = container(text("")).width(Length::Fill);

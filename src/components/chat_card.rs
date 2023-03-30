@@ -1,9 +1,7 @@
 use fake::faker::name::en::Name;
 use fake::{Dummy, Fake};
-use iced::theme::palette;
-use iced::widget::{button, column, container, row, text};
+use iced::widget::{button, column, row, text};
 use iced::{Color, Element, Length};
-use iced_native::Widget;
 
 #[derive(Debug, Dummy, Clone)]
 pub struct ChatCard {
