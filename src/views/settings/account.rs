@@ -1,6 +1,8 @@
 use iced::widget::text;
 use iced::Element;
 
+use crate::components::text::title;
+
 #[derive(Debug, Clone)]
 pub enum Message {}
 
@@ -16,6 +18,6 @@ impl State {
     }
 
     pub fn view(&self) -> Element<Message> {
-        text("Account").into()
+        title("Account").into()
     }
 }

@@ -1,6 +1,6 @@
 use fake::Fake;
 use iced::widget::{button, column, container, row, text};
-use iced::{theme, Element, Length};
+use iced::{theme, Color, Element, Length};
 
 use self::network::RelayRow;
 
@@ -95,56 +95,106 @@ impl State {
 
         let account_btn = button("Account")
             .style(match self {
-                Self::Account { .. } => theme::Button::Primary,
-                _ => theme::Button::Secondary,
+                Self::Account { .. } => iced::theme::Button::Custom(Box::new(ActiveMenuBtn {})),
+                _ => iced::theme::Button::Custom(Box::new(InactiveMenuBtn {})),
             })
             .width(Length::Fill)
             .padding(10)
             .on_press(Message::MenuAccountPress);
         let appearance_btn = button("Appearance")
             .style(match self {
-                Self::Appearance { .. } => theme::Button::Primary,
-                _ => theme::Button::Secondary,
+                Self::Appearance { .. } => iced::theme::Button::Custom(Box::new(ActiveMenuBtn {})),
+                _ => iced::theme::Button::Custom(Box::new(InactiveMenuBtn {})),
             })
             .width(Length::Fill)
             .padding(10)
             .on_press(Message::MenuAppearancePress);
         let network_btn = button("Network")
             .style(match self {
-                Self::Network { .. } => theme::Button::Primary,
-                _ => theme::Button::Secondary,
+                Self::Network { .. } => iced::theme::Button::Custom(Box::new(ActiveMenuBtn {})),
+                _ => iced::theme::Button::Custom(Box::new(InactiveMenuBtn {})),
             })
             .width(Length::Fill)
             .padding(10)
             .on_press(Message::MenuNetworkPress);
         let backup_btn = button("Backup")
             .style(match self {
-                Self::Backup { .. } => theme::Button::Primary,
-                _ => theme::Button::Secondary,
+                Self::Backup { .. } => iced::theme::Button::Custom(Box::new(ActiveMenuBtn {})),
+                _ => iced::theme::Button::Custom(Box::new(InactiveMenuBtn {})),
             })
             .width(Length::Fill)
             .padding(10)
             .on_press(Message::MenuBackupPress);
-
-        let menubar =
-            container(column![account_btn, appearance_btn, network_btn, backup_btn].spacing(3))
-                .width(Length::FillPortion(1))
-                .padding([0, 5]);
-        let view_ct = container(view).width(Length::FillPortion(3));
+        let esc_btn = button("Esc")
+            .padding(10)
+            .on_press(Message::NavEscPress)
+            .style(iced::theme::Button::Custom(Box::new(InactiveMenuBtn {})));
+        let spacer = iced::widget::horizontal_space(Length::Fixed(3.0));
+        let menubar = container(
+            column![
+                esc_btn,
+                spacer,
+                account_btn,
+                appearance_btn,
+                network_btn,
+                backup_btn
+            ]
+            .spacing(3),
+        )
+        .width(Length::FillPortion(1))
+        .padding([10, 5]);
+        let view_ct = container(view)
+            .padding([10, 5])
+            .width(Length::FillPortion(3));
         let content = row![menubar, view_ct]
             .width(Length::Fill)
             .height(Length::Fill);
 
-        let esc_btn = button("Esc").padding(10).on_press(Message::NavEscPress);
-        let empty = container(text("")).width(Length::Fill);
-        let topbar = row![empty, esc_btn]
-            .width(Length::Fill)
-            .padding(10)
-            .spacing(10);
-
-        column![topbar, content]
+        container(content)
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
+    }
+}
+
+struct InactiveMenuBtn;
+impl button::StyleSheet for InactiveMenuBtn {
+    type Style = iced::Theme;
+
+    fn active(&self, _style: &Self::Style) -> button::Appearance {
+        button::Appearance {
+            text_color: Color::BLACK,
+            border_radius: 5.0,
+            background: Some(Color::TRANSPARENT.into()),
+            ..Default::default()
+        }
+    }
+
+    fn hovered(&self, style: &Self::Style) -> button::Appearance {
+        button::Appearance {
+            background: Some(Color::from_rgb8(240, 240, 240).into()),
+            text_color: Color::BLACK,
+            ..self.active(style)
+        }
+    }
+}
+
+struct ActiveMenuBtn;
+impl button::StyleSheet for ActiveMenuBtn {
+    type Style = iced::Theme;
+
+    fn active(&self, _style: &Self::Style) -> button::Appearance {
+        button::Appearance {
+            text_color: Color::WHITE,
+            border_radius: 5.0,
+            background: Some(Color::from_rgb8(65, 159, 217).into()),
+            ..Default::default()
+        }
+    }
+
+    fn hovered(&self, style: &Self::Style) -> button::Appearance {
+        button::Appearance {
+            ..self.active(style)
+        }
     }
 }

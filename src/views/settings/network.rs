@@ -1,6 +1,8 @@
 use iced::widget::{button, checkbox, column, container, row, text};
 use iced::{Element, Length};
 
+use crate::components::text::title;
+
 #[derive(Debug, Clone)]
 pub enum RelayMessage {
     None,
@@ -34,11 +36,11 @@ impl RelayRow {
                 "Offline"
             })
             .width(Length::Fill),
-            text(&self.address).width(Length::Fill),
-            text(format!("{}s", self.last_activity)).width(Length::Fill),
-            checkbox("", self.is_read, |_| RelayMessage::None).width(Length::Fill),
-            checkbox("", self.is_write, |_| RelayMessage::None).width(Length::Fill),
-            checkbox("", self.is_advertise, |_| RelayMessage::None).width(Length::Fill),
+            container(text(&self.address)).width(Length::Fill),
+            container(text(format!("{}s", self.last_activity))).width(Length::Fill),
+            container(checkbox("", self.is_read, |_| RelayMessage::None)).width(Length::Fill),
+            container(checkbox("", self.is_write, |_| RelayMessage::None)).width(Length::Fill),
+            container(checkbox("", self.is_advertise, |_| RelayMessage::None)).width(Length::Fill),
             button("Remove").width(Length::Fill),
         ]
         .into()
@@ -78,7 +80,7 @@ impl State {
     }
 
     pub fn view(&self) -> Element<Message> {
-        let title = text("Network");
+        let title = title("Network");
 
         let relays = self.relays.iter().fold(
             column![RelayRow::view_header().map(Message::RelayMessage)],
