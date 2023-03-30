@@ -6,6 +6,10 @@ use crate::components::text::title;
 #[derive(Debug, Clone)]
 pub enum RelayMessage {
     None,
+    DeleteRelay(String),
+    ToggleRead(String),
+    ToggleWrite(String),
+    ToggleAdvertise(String),
 }
 
 #[derive(Debug, Clone)]
@@ -28,7 +32,7 @@ impl RelayRow {
             is_advertise: false,
         }
     }
-    pub fn view(&self) -> Element<'static, RelayMessage> {
+    pub fn view<'a>(&'a self) -> Element<'a, RelayMessage> {
         row![
             text(if self.is_connected {
                 "Online"
@@ -38,10 +42,21 @@ impl RelayRow {
             .width(Length::Fill),
             container(text(&self.address)).width(Length::Fill),
             container(text(format!("{}s", self.last_activity))).width(Length::Fill),
-            container(checkbox("", self.is_read, |_| RelayMessage::None)).width(Length::Fill),
-            container(checkbox("", self.is_write, |_| RelayMessage::None)).width(Length::Fill),
-            container(checkbox("", self.is_advertise, |_| RelayMessage::None)).width(Length::Fill),
-            button("Remove").width(Length::Fill),
+            container(checkbox("", self.is_read, |_| RelayMessage::ToggleRead(
+                self.address.clone()
+            )))
+            .width(Length::Fill),
+            container(checkbox("", self.is_write, |_| RelayMessage::ToggleWrite(
+                self.address.clone()
+            )))
+            .width(Length::Fill),
+            container(checkbox("", self.is_advertise, |_| {
+                RelayMessage::ToggleAdvertise(self.address.clone())
+            }))
+            .width(Length::Fill),
+            button("Remove")
+                .on_press(RelayMessage::DeleteRelay(self.address.clone()))
+                .width(Length::Fill),
         ]
         .into()
     }
@@ -56,6 +71,15 @@ impl RelayRow {
             text("").width(Length::Fill)
         ]
         .into()
+    }
+    pub fn update(&mut self, message: RelayMessage) {
+        match message {
+            RelayMessage::None => (),
+            RelayMessage::DeleteRelay(_) => (),
+            RelayMessage::ToggleRead(_) => self.is_read = !self.is_read,
+            RelayMessage::ToggleWrite(_) => self.is_write = !self.is_write,
+            RelayMessage::ToggleAdvertise(_) => self.is_advertise = !self.is_advertise,
+        }
     }
 }
 
@@ -75,7 +99,20 @@ impl State {
 
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::RelayMessage(_msg) => (),
+            Message::RelayMessage(msg) => match msg.clone() {
+                RelayMessage::None => (),
+                RelayMessage::DeleteRelay(_addrs) => (),
+                RelayMessage::ToggleRead(addrs)
+                | RelayMessage::ToggleWrite(addrs)
+                | RelayMessage::ToggleAdvertise(addrs) => {
+                    for r in &mut self.relays {
+                        if &r.address == &addrs {
+                            r.update(msg.clone());
+                            break;
+                        }
+                    }
+                }
+            },
         }
     }
 

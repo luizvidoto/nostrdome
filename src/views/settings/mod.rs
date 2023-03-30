@@ -1,6 +1,6 @@
 use fake::Fake;
-use iced::widget::{button, column, container, row, text};
-use iced::{theme, Color, Element, Length};
+use iced::widget::{button, column, container, row};
+use iced::{Color, Element, Length};
 
 use self::network::RelayRow;
 
@@ -65,10 +65,26 @@ impl State {
 
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::AccountMessage(_) => todo!(),
-            Message::AppearanceMessage(_) => todo!(),
-            Message::NetworkMessage(_) => todo!(),
-            Message::BackupMessage(_) => todo!(),
+            Message::AccountMessage(msg) => {
+                if let State::Account { state } = self {
+                    state.update(msg);
+                }
+            }
+            Message::AppearanceMessage(msg) => {
+                if let State::Appearance { state } = self {
+                    state.update(msg);
+                }
+            }
+            Message::NetworkMessage(msg) => {
+                if let State::Network { state } = self {
+                    state.update(msg);
+                }
+            }
+            Message::BackupMessage(msg) => {
+                if let State::Backup { state } = self {
+                    state.update(msg);
+                }
+            }
             Message::NavEscPress => (),
             Message::MenuAccountPress => {
                 *self = Self::account();
