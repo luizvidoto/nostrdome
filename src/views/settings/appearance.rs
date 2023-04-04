@@ -1,4 +1,3 @@
-use iced::widget::text;
 use iced::Element;
 
 use crate::components::text::title;
@@ -9,7 +8,7 @@ pub enum Message {}
 #[derive(Debug, Clone)]
 pub struct State {}
 impl State {
-    pub fn default() -> Self {
+    pub fn new() -> Self {
         Self {}
     }
 

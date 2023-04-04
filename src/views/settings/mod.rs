@@ -1,6 +1,7 @@
 use fake::Fake;
 use iced::widget::{button, column, container, row};
 use iced::{Color, Element, Length};
+use nostr_sdk::Metadata;
 
 use self::network::RelayRow;
 
@@ -36,13 +37,14 @@ impl Default for State {
 }
 impl State {
     fn account() -> Self {
+        let profile = Metadata::new();
         Self::Account {
-            state: account::State::default(),
+            state: account::State::new(profile),
         }
     }
     fn appearance() -> Self {
         Self::Appearance {
-            state: appearance::State::default(),
+            state: appearance::State::new(),
         }
     }
     fn network() -> Self {
