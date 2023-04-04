@@ -3,6 +3,8 @@ use iced::widget::{button, column, container, row};
 use iced::{Color, Element, Length};
 use nostr_sdk::Metadata;
 
+use crate::net::Connection;
+
 use self::network::RelayRow;
 
 mod account;
@@ -30,14 +32,13 @@ pub enum State {
     Network { state: network::State },
     Backup { state: backup::State },
 }
-impl Default for State {
-    fn default() -> Self {
-        Self::account()
-    }
-}
 impl State {
-    fn account() -> Self {
+    pub fn new(conn: &mut Connection) -> Self {
+        Self::account(conn)
+    }
+    fn account(conn: &mut Connection) -> Self {
         let profile = Metadata::new();
+        // conn.send(message)
         Self::Account {
             state: account::State::new(profile),
         }
@@ -61,11 +62,8 @@ impl State {
             state: backup::State::default(),
         }
     }
-    pub fn new() -> Self {
-        Self::account()
-    }
 
-    pub fn update(&mut self, message: Message) {
+    pub fn update(&mut self, message: Message, conn: &mut Connection) {
         match message {
             Message::AccountMessage(msg) => {
                 if let State::Account { state } = self {
@@ -89,7 +87,7 @@ impl State {
             }
             Message::NavEscPress => (),
             Message::MenuAccountPress => {
-                *self = Self::account();
+                *self = Self::account(conn);
             }
             Message::MenuAppearancePress => {
                 *self = Self::appearance();
