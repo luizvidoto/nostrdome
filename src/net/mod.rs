@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use futures::channel::mpsc;
 use futures::stream::StreamExt;
 use iced::Subscription;
@@ -21,6 +23,7 @@ pub enum State {
     Connected {
         receiver: mpsc::Receiver<Message>,
         nostr_client: Client,
+        my_keys: Keys,
     },
 }
 
@@ -30,12 +33,14 @@ pub enum Event {
     Disconnected,
     Error(String),
     GotRelays(Vec<Relay>),
+    GotOwnEvents(Vec<nostr::Event>),
 }
 #[derive(Debug, Clone)]
 pub enum Message {
     ShowRelays,
     AddRelay(String),
     RemoveRelay(usize),
+    GetOwnEvents,
 }
 
 const PRIVATE_KEY: &'static str =
@@ -61,12 +66,14 @@ pub fn nostr_connect() -> Subscription<Event> {
                     State::Connected {
                         receiver,
                         nostr_client,
+                        my_keys,
                     },
                 )
             }
             State::Connected {
                 mut receiver,
                 nostr_client,
+                my_keys,
             } => {
                 futures::select! {
                     message = receiver.select_next_some() => {
@@ -79,6 +86,7 @@ pub fn nostr_connect() -> Subscription<Event> {
                                     State::Connected {
                                         receiver,
                                         nostr_client,
+                                        my_keys
                                     },
                                 )
                             },
@@ -91,6 +99,7 @@ pub fn nostr_connect() -> Subscription<Event> {
                                             State::Connected {
                                                 receiver,
                                                 nostr_client,
+                                                my_keys
                                             },
                                         )
                                     }
@@ -99,14 +108,25 @@ pub fn nostr_connect() -> Subscription<Event> {
                                         State::Connected {
                                             receiver,
                                             nostr_client,
+                                            my_keys
                                         },
                                     ),
                                 }
                             },
                             Message::RemoveRelay(id) => {
                                 println!("remove_relay: {}", id);
-                                (None, State::Connected {receiver, nostr_client})
+                                (None, State::Connected {receiver, nostr_client, my_keys})
                             },
+                            Message::GetOwnEvents => {
+                                    let sub = Filter::new()
+                                        .pubkeys(vec![my_keys.public_key()])
+                                        .since(Timestamp::from(1675555023));
+                                    let timeout = Duration::from_secs(10);
+                                    match nostr_client.get_events_of(vec![sub], Some(timeout)).await {
+                                        Ok(events) => (Some(Event::GotOwnEvents(events)), State::Connected {receiver, nostr_client, my_keys}),
+                                        Err(e) => (Some(Event::Error(e.to_string())), State::Connected {receiver, nostr_client, my_keys}),
+                                    }
+                            }
                         }
                     }
                 }

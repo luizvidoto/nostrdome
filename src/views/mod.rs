@@ -1,6 +1,6 @@
 use iced::Element;
 
-use crate::net::Connection;
+use crate::net::{self, Connection};
 
 mod chat;
 mod settings;
@@ -36,7 +36,7 @@ impl Router {
             Message::ChatMsg(msg) => {
                 if let State::Chat { state } = &mut self.state {
                     match msg {
-                        chat::Message::NavSettingsPress => self.next_state(State::settings()),
+                        chat::Message::NavSettingsPress => self.next_state(State::settings(conn)),
                         _ => state.update(msg.clone(), conn),
                     }
                 }
@@ -45,11 +45,11 @@ impl Router {
                 if let State::Settings { state } = &mut self.state {
                     match msg {
                         settings::Message::NavEscPress => self.back(),
-                        _ => state.update(msg.clone()),
+                        _ => state.update(msg.clone(), conn),
                     }
                 }
             }
-        }
+        };
     }
     pub fn default() -> Self {
         Self {
@@ -70,9 +70,9 @@ impl State {
             state: chat::State::new(),
         }
     }
-    pub fn settings() -> Self {
+    pub fn settings(conn: &mut Connection) -> Self {
         Self::Settings {
-            state: settings::State::default(),
+            state: settings::State::new(conn),
         }
     }
 

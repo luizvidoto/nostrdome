@@ -79,6 +79,12 @@ impl Application for App {
                             println!("{}", r.url());
                         }
                     }
+                    net::Event::GotOwnEvents(events) => {
+                        println!("Got Own events");
+                        for e in events {
+                            println!("{:?}", e)
+                        }
+                    }
                 }
             }
         }

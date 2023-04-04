@@ -12,6 +12,7 @@ pub enum Message {
     ShowRelays,
     NavSettingsPress,
     ChatCardMessage(components::chat_card::Message),
+    GetOwnEvents,
 }
 
 #[derive(Debug, Clone)]
@@ -31,23 +32,25 @@ impl State {
         }
     }
     pub fn view(&self) -> Element<Message> {
-        let first = container(column![
-            // button("Add Relay").on_press(Message::AddRelay),
-            // button("Show Relay").on_press(Message::ShowRelays),
-            scrollable(self.chats.iter().fold(column![].spacing(0), |col, card| {
+        let first = container(column![scrollable(
+            self.chats.iter().fold(column![].spacing(0), |col, card| {
                 col.push(card.view().map(Message::ChatCardMessage))
-            }))
-        ])
+            })
+        )])
         .width(Length::Fill)
         .height(Length::Fill)
         .center_x()
         .center_y();
 
-        let second = container(text("Second"))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x()
-            .center_y();
+        let add_relay_btn = button("Add Relay").on_press(Message::AddRelay);
+        let show_relay_btn = button("Show Relay").on_press(Message::ShowRelays);
+        let get_own_events_btn = button("Own Events").on_press(Message::GetOwnEvents);
+        let second =
+            container(column![add_relay_btn, show_relay_btn, get_own_events_btn].spacing(10))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center_x()
+                .center_y();
         let content = iced_aw::split::Split::new(
             first,
             second,
@@ -73,6 +76,9 @@ impl State {
     }
     pub fn update(&mut self, message: Message, conn: &mut Connection) {
         match message {
+            Message::GetOwnEvents => {
+                conn.send(net::Message::GetOwnEvents);
+            }
             Message::OnVerResize(position) => {
                 if position > 200 {
                     self.ver_divider_position = Some(position);
@@ -90,9 +96,16 @@ impl State {
             }
             Message::NavSettingsPress => (),
             Message::AddRelay => {
-                if let Err(e) = conn.send(net::Message::AddRelay("ws://192.168.15.119:8080".into()))
-                {
-                    println!("{}", e);
+                for r in vec![
+                    "wss://eden.nostr.land",
+                    "wss://nostr.fmt.wiz.biz",
+                    "wss://relay.damus.io",
+                    "wss://nostr.anchel.nl/",
+                    // "ws://192.168.15.119:8080"
+                ] {
+                    if let Err(e) = conn.send(net::Message::AddRelay(r.into())) {
+                        println!("{}", e);
+                    }
                 }
             }
             Message::ShowRelays => {
