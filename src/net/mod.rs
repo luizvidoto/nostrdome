@@ -38,6 +38,9 @@ pub enum Message {
     RemoveRelay(usize),
 }
 
+const PRIVATE_KEY: &'static str =
+    "4510459b74db68371be462f19ef4f7ef1e6c5a95b1d83a7adf00987c51ac56fe";
+
 pub fn nostr_connect() -> Subscription<Event> {
     struct Connect;
     let id = std::any::TypeId::of::<Connect>();
@@ -45,10 +48,7 @@ pub fn nostr_connect() -> Subscription<Event> {
     subscription::unfold(id, State::Disconnected, move |state| async move {
         match state {
             State::Disconnected => {
-                let my_keys = Keys::from_sk_str(
-                    "4510459b74db68371be462f19ef4f7ef1e6c5a95b1d83a7adf00987c51ac56fe",
-                )
-                .unwrap();
+                let my_keys = Keys::from_sk_str(PRIVATE_KEY).unwrap();
                 // Show bech32 public key
                 let bech32_pubkey: String = my_keys.public_key().to_bech32().unwrap();
                 println!("Bech32 PubKey: {}", bech32_pubkey);

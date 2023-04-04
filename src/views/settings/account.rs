@@ -65,47 +65,54 @@ impl State {
         let title = title("Account");
 
         let profile_name_input =
-            text_input_group("Name", "Name", &self.name, Message::ProfileNameChange);
+            text_input_group("Name", "Name", &self.name, None, Message::ProfileNameChange);
         let user_name_input = text_input_group(
             "Username",
             "Username",
             &self.user_name,
+            None,
             Message::UserNameChange,
         );
         let picture_url_input = text_input_group(
             "Picture Url",
             "https://my-picture.com/img/bitcoin_is_king.jpg",
             &self.picture_url,
+            None,
             Message::PictureUrlChange,
         );
         let about_input = text_input_group(
             "About",
             "About you, what you like, what you post, etc.",
             &self.about,
+            None,
             Message::AboutChange,
         );
         let banner_input = text_input_group(
             "Banner",
             "https://my-picture.com/img/bitcoin_is_king.jpg",
             &self.banner,
+            None,
             Message::BannerChange,
         );
         let website_input = text_input_group(
             "Website",
             "https://my-website-rocks.com",
             &self.website,
+            None,
             Message::WebsiteChange,
         );
         let ln_input = text_input_group(
             "Lightning Network Address (LUD 16)",
-            "my-ln-address@getalby.com",
+            "my-ln-address@walletofsatoshi.com",
             &self.ln_addrs,
+            Some("Some wallets support Lightning Network Address".to_string()),
             Message::LNChange,
         );
         let nostr_addrs_input = text_input_group(
             "Nostr Address (NIP 05)",
             "my-addrs@example.com",
             &self.nostr_addrs,
+            None,
             Message::NIP05Change,
         );
 
