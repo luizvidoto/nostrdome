@@ -2,6 +2,7 @@ pub mod components;
 pub mod error;
 pub mod net;
 pub mod types;
+pub mod utils;
 pub mod views;
 
 use iced::{executor, widget::text, window, Application, Command, Element, Settings};
@@ -71,6 +72,9 @@ impl Application for App {
                 }
             }
             Message::NostrClientMessage(nostr_event) => match nostr_event {
+                net::Event::SomeEventSuccessId(ev_id) => {
+                    println!("Success! Event id: {}", ev_id);
+                }
                 net::Event::GotPublicKey(pb_key) => {
                     println!("Public key: {}", pb_key);
                 }

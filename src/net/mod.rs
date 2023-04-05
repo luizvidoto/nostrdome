@@ -38,9 +38,11 @@ pub enum Event {
     DirectMessage(String),
     NostrEvent(nostr_sdk::Event),
     GotPublicKey(XOnlyPublicKey),
+    SomeEventSuccessId(EventId),
 }
 #[derive(Debug, Clone)]
 pub enum Message {
+    SendDMTo((XOnlyPublicKey, String)),
     ShowPublicKey,
     ShowRelays,
     AddRelay(String),
@@ -50,8 +52,15 @@ pub enum Message {
 }
 // acc1
 // "4510459b74db68371be462f19ef4f7ef1e6c5a95b1d83a7adf00987c51ac56fe"
+
 // acc2
 // "nsec14q6klhw6u83y2k3l5ey2pf609wl60qnmpt7yu3fak3d6p3u26nwqd0jhvl"
+// "npub1fn8d97ccluqdx260qxn9a88ucl3uvpczflvvvczpsm0ypeg24cps4n52a5"
+
+// acc3
+// "nsec1x2aq7r90upmen8f860d64gxr9evvtt6cl8w9uvdc5dnte36gjlsqkkvcdf"
+// "npub1nezmtetn4hahp05ls8n0r83a7v605f9n5unnskgsf5ueejlkf62qyhlsam"
+
 const PRIVATE_KEY: &'static str = "nsec14q6klhw6u83y2k3l5ey2pf609wl60qnmpt7yu3fak3d6p3u26nwqd0jhvl";
 
 pub fn nostr_connect() -> Subscription<Event> {
@@ -87,6 +96,7 @@ pub fn nostr_connect() -> Subscription<Event> {
                 nostr_client.connect().await;
 
                 let subscription = Filter::new()
+                    .author(my_keys.public_key())
                     .pubkey(my_keys.public_key())
                     .since(Timestamp::now());
 
@@ -121,6 +131,16 @@ pub fn nostr_connect() -> Subscription<Event> {
                 futures::select! {
                     message = receiver.select_next_some() => {
                         match message {
+                            Message::SendDMTo((pub_key, msg)) => {
+                                match nostr_client.send_direct_msg(pub_key, msg).await {
+                                    Ok(ev_id)=> {
+                                        (Some(Event::SomeEventSuccessId(ev_id)), State::Connected {receiver, nostr_client, my_keys, notifications_stream})
+                                    }
+                                    Err(e) => {
+                                        (Some(Event::Error(e.to_string())), State::Connected {receiver, nostr_client, my_keys, notifications_stream})
+                                    }
+                                }
+                            }
                             Message::ShowPublicKey => {
                                 let pb_key = my_keys.public_key();
                                 (Some(Event::GotPublicKey(pb_key)), State::Connected {receiver, nostr_client, my_keys, notifications_stream})

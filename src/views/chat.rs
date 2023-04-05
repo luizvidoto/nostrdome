@@ -1,9 +1,14 @@
+use std::str::FromStr;
+
 use iced::widget::{button, column, container, row, scrollable, text};
 use iced::{Element, Length};
+use nostr_sdk::secp256k1::XOnlyPublicKey;
 
 use crate::components;
 use crate::components::chat_card::{self, ChatCard};
+use crate::components::text_input_group::text_input_group;
 use crate::net::{self, Connection};
+use crate::utils::parse_key;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -15,12 +20,17 @@ pub enum Message {
     ListOwnEvents,
     GetEventById(String),
     ShowPublicKey,
+    DMNPubReceiverChange(String),
+    DMNMessageChange(String),
+    DMSentPress,
 }
 
 #[derive(Debug, Clone)]
 pub struct State {
     ver_divider_position: Option<u16>,
     chats: Vec<chat_card::State>,
+    dm_npub_receiver: String,
+    dm_msg: String,
 }
 impl State {
     pub fn new() -> Self {
@@ -31,6 +41,8 @@ impl State {
         Self {
             ver_divider_position: None,
             chats,
+            dm_npub_receiver: "".into(),
+            dm_msg: "".into(),
         }
     }
     pub fn view(&self) -> Element<Message> {
@@ -47,23 +59,29 @@ impl State {
         // let add_relay_btn = button("Add Relay").on_press(Message::AddRelay);
         let show_relay_btn = button("Show Relay").on_press(Message::ShowRelays);
         let get_own_events_btn = button("List Own Events").on_press(Message::ListOwnEvents);
-        let get_specific_ev = button("Specific Ev").on_press(Message::GetEventById(
-            "note1hfv7gup8wdlnsyxrug0q3mevlcj3v00zk5cus3wnju4wuhtw7nzsjrk9wa".into(),
-        ));
         let show_public_btn = button("Show Public Key").on_press(Message::ShowPublicKey);
-        let second = container(
-            column![
-                show_relay_btn,
-                get_own_events_btn,
-                get_specific_ev,
-                show_public_btn
-            ]
-            .spacing(10),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x()
-        .center_y();
+        let dm_receiver_pubkey_input = text_input_group(
+            "DM To PubKey",
+            "npub1...",
+            &self.dm_npub_receiver,
+            None,
+            Message::DMNPubReceiverChange,
+        );
+        let dm_msg_input = text_input_group(
+            "Message",
+            "Hello friend...",
+            &self.dm_msg,
+            None,
+            Message::DMNMessageChange,
+        );
+        let dm_send_btn = button("Send DM").on_press(Message::DMSentPress);
+        let first_row = column![show_relay_btn, get_own_events_btn, show_public_btn].spacing(10);
+        let second_row = column![dm_receiver_pubkey_input, dm_msg_input, dm_send_btn].spacing(5);
+        let second = container(column![first_row, second_row])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x()
+            .center_y();
         let content = iced_aw::split::Split::new(
             first,
             second,
@@ -89,6 +107,28 @@ impl State {
     }
     pub fn update(&mut self, message: Message, conn: &mut Connection) {
         match message {
+            Message::DMNMessageChange(msg) => {
+                self.dm_msg = msg;
+            }
+            Message::DMSentPress => match parse_key(self.dm_npub_receiver.clone()) {
+                Ok(hex_key) => match XOnlyPublicKey::from_str(&hex_key) {
+                    Ok(pub_key) => {
+                        conn.send(net::Message::SendDMTo((pub_key, self.dm_msg.clone())));
+                    }
+                    Err(e) => {
+                        println!("Invalid Public Key!");
+                        println!("{}", e.to_string());
+                    }
+                },
+                Err(e) => {
+                    println!("Invalid Public Key!");
+                    println!("{}", e.to_string());
+                }
+            },
+
+            Message::DMNPubReceiverChange(npub) => {
+                self.dm_npub_receiver = npub;
+            }
             Message::ShowPublicKey => {
                 conn.send(net::Message::ShowPublicKey);
             }
