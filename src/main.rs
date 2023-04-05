@@ -96,8 +96,8 @@ impl Application for App {
                 }
                 net::Event::GotOwnEvents(events) => {
                     println!("Got Own events");
-                    for e in events {
-                        println!("{:?}", e)
+                    for (idx, e) in events.iter().enumerate() {
+                        println!("{}: {:?}", idx, e)
                     }
                 }
             },

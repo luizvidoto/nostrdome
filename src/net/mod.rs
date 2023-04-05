@@ -51,15 +51,15 @@ pub enum Message {
     GetEventById(String),
 }
 // acc1
-// "4510459b74db68371be462f19ef4f7ef1e6c5a95b1d83a7adf00987c51ac56fe"
+// secret  "4510459b74db68371be462f19ef4f7ef1e6c5a95b1d83a7adf00987c51ac56fe"
 
 // acc2
-// "nsec14q6klhw6u83y2k3l5ey2pf609wl60qnmpt7yu3fak3d6p3u26nwqd0jhvl"
-// "npub1fn8d97ccluqdx260qxn9a88ucl3uvpczflvvvczpsm0ypeg24cps4n52a5"
+// secret  "nsec14q6klhw6u83y2k3l5ey2pf609wl60qnmpt7yu3fak3d6p3u26nwqd0jhvl"
+// bech_32 "npub1fn8d97ccluqdx260qxn9a88ucl3uvpczflvvvczpsm0ypeg24cps4n52a5"
 
 // acc3
-// "nsec1x2aq7r90upmen8f860d64gxr9evvtt6cl8w9uvdc5dnte36gjlsqkkvcdf"
-// "npub1nezmtetn4hahp05ls8n0r83a7v605f9n5unnskgsf5ueejlkf62qyhlsam"
+// secret  "nsec1x2aq7r90upmen8f860d64gxr9evvtt6cl8w9uvdc5dnte36gjlsqkkvcdf"
+// bech_32 "npub1nezmtetn4hahp05ls8n0r83a7v605f9n5unnskgsf5ueejlkf62qyhlsam"
 
 const PRIVATE_KEY: &'static str = "nsec14q6klhw6u83y2k3l5ey2pf609wl60qnmpt7yu3fak3d6p3u26nwqd0jhvl";
 
@@ -74,9 +74,9 @@ pub fn nostr_connect() -> Subscription<Event> {
                 // Show bech32 public key
                 let bech32_pubkey: String = my_keys.public_key().to_bech32().unwrap();
                 println!("Bech32 PubKey: {}", bech32_pubkey);
-
                 // Create new client
                 let nostr_client = Client::new(&my_keys);
+
                 // Add relays
                 for r in vec![
                     "wss://eden.nostr.land",
@@ -205,15 +205,16 @@ pub fn nostr_connect() -> Subscription<Event> {
                     }
                     notification = notifications_stream.select_next_some() => {
                         if let RelayPoolNotification::Event(_url, event) = notification {
+                            println!("url: {}", _url);
+                            println!("event: {:?}", event);
                             if event.kind == Kind::EncryptedDirectMessage {
                                 let secret_key = match my_keys.secret_key() {
                                     Ok(sk) => sk,
                                     Err(e) => return (Some(Event::Error(e.to_string())), State::Connected {receiver, nostr_client, my_keys, notifications_stream}),
                                 };
-                                if let Ok(msg) = decrypt(&secret_key, &event.pubkey, &event.content) {
-                                    return (Some(Event::DirectMessage(msg)), State::Connected {receiver, nostr_client, my_keys, notifications_stream})
-                                }else {
-                                    return (Some(Event::Error("Impossible to decrypt message.".into())), State::Connected {receiver, nostr_client, my_keys, notifications_stream})
+                                match decrypt(&secret_key, &event.pubkey, &event.content) {
+                                    Ok(msg) => return (Some(Event::DirectMessage(msg)), State::Connected {receiver, nostr_client, my_keys, notifications_stream}),
+                                    Err(e) => return (Some(Event::Error(format!("Impossible to decrypt message: {}", e.to_string()))), State::Connected {receiver, nostr_client, my_keys, notifications_stream})
                                 }
                             } else {
                                 return (Some(Event::NostrEvent(event)), State::Connected {receiver, nostr_client, my_keys, notifications_stream})
