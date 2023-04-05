@@ -8,11 +8,13 @@ use crate::net::{self, Connection};
 #[derive(Debug, Clone)]
 pub enum Message {
     OnVerResize(u16),
-    AddRelay,
+    AddRelay(String),
     ShowRelays,
     NavSettingsPress,
     ChatCardMessage(components::chat_card::Message),
-    GetOwnEvents,
+    ListOwnEvents,
+    GetEventById(String),
+    ShowPublicKey,
 }
 
 #[derive(Debug, Clone)]
@@ -42,15 +44,26 @@ impl State {
         .center_x()
         .center_y();
 
-        let add_relay_btn = button("Add Relay").on_press(Message::AddRelay);
+        // let add_relay_btn = button("Add Relay").on_press(Message::AddRelay);
         let show_relay_btn = button("Show Relay").on_press(Message::ShowRelays);
-        let get_own_events_btn = button("Own Events").on_press(Message::GetOwnEvents);
-        let second =
-            container(column![add_relay_btn, show_relay_btn, get_own_events_btn].spacing(10))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .center_x()
-                .center_y();
+        let get_own_events_btn = button("List Own Events").on_press(Message::ListOwnEvents);
+        let get_specific_ev = button("Specific Ev").on_press(Message::GetEventById(
+            "note1hfv7gup8wdlnsyxrug0q3mevlcj3v00zk5cus3wnju4wuhtw7nzsjrk9wa".into(),
+        ));
+        let show_public_btn = button("Show Public Key").on_press(Message::ShowPublicKey);
+        let second = container(
+            column![
+                show_relay_btn,
+                get_own_events_btn,
+                get_specific_ev,
+                show_public_btn
+            ]
+            .spacing(10),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x()
+        .center_y();
         let content = iced_aw::split::Split::new(
             first,
             second,
@@ -76,8 +89,14 @@ impl State {
     }
     pub fn update(&mut self, message: Message, conn: &mut Connection) {
         match message {
-            Message::GetOwnEvents => {
-                conn.send(net::Message::GetOwnEvents);
+            Message::ShowPublicKey => {
+                conn.send(net::Message::ShowPublicKey);
+            }
+            Message::GetEventById(ev_id) => {
+                conn.send(net::Message::GetEventById(ev_id));
+            }
+            Message::ListOwnEvents => {
+                conn.send(net::Message::ListOwnEvents);
             }
             Message::OnVerResize(position) => {
                 if position > 200 {
@@ -95,17 +114,9 @@ impl State {
                 }
             }
             Message::NavSettingsPress => (),
-            Message::AddRelay => {
-                for r in vec![
-                    "wss://eden.nostr.land",
-                    "wss://nostr.fmt.wiz.biz",
-                    "wss://relay.damus.io",
-                    "wss://nostr.anchel.nl/",
-                    // "ws://192.168.15.119:8080"
-                ] {
-                    if let Err(e) = conn.send(net::Message::AddRelay(r.into())) {
-                        println!("{}", e);
-                    }
+            Message::AddRelay(relay_addrs) => {
+                if let Err(e) = conn.send(net::Message::AddRelay(relay_addrs.into())) {
+                    println!("{}", e);
                 }
             }
             Message::ShowRelays => {

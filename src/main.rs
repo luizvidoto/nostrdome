@@ -32,6 +32,10 @@ impl State {
 pub struct App {
     state: State,
 }
+pub enum NotificationState {
+    Starting,
+    Running,
+}
 impl Application for App {
     type Theme = iced::Theme;
     type Executor = executor::Default;
@@ -66,27 +70,33 @@ impl Application for App {
                     router.update(msg, conn);
                 }
             }
-            Message::NostrClientMessage(nostr_event) => {
-                // println!("Event from nostr client: {:?}", &nostr_event);
-                match nostr_event {
-                    net::Event::Connected(conn) => self.state = State::loaded(conn),
-                    net::Event::Disconnected => {}
-                    net::Event::Error(error_msg) => {
-                        println!("Error: {}", error_msg);
-                    }
-                    net::Event::GotRelays(relays) => {
-                        for r in relays {
-                            println!("{}", r.url());
-                        }
-                    }
-                    net::Event::GotOwnEvents(events) => {
-                        println!("Got Own events");
-                        for e in events {
-                            println!("{:?}", e)
-                        }
+            Message::NostrClientMessage(nostr_event) => match nostr_event {
+                net::Event::GotPublicKey(pb_key) => {
+                    println!("Public key: {}", pb_key);
+                }
+                net::Event::DirectMessage(msg) => {
+                    println!("New DM {}", msg);
+                }
+                net::Event::NostrEvent(event) => {
+                    println!("{:?}", event);
+                }
+                net::Event::Connected(conn) => self.state = State::loaded(conn),
+                net::Event::Disconnected => {}
+                net::Event::Error(error_msg) => {
+                    println!("Error: {}", error_msg);
+                }
+                net::Event::GotRelays(relays) => {
+                    for r in relays {
+                        println!("{}", r.url());
                     }
                 }
-            }
+                net::Event::GotOwnEvents(events) => {
+                    println!("Got Own events");
+                    for e in events {
+                        println!("{:?}", e)
+                    }
+                }
+            },
         }
 
         Command::none()
