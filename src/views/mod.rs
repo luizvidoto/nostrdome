@@ -1,6 +1,6 @@
 use iced::Element;
 
-use crate::net::Connection;
+use crate::net::{self, Connection};
 
 mod chat;
 mod settings;
@@ -9,6 +9,7 @@ mod settings;
 pub enum Message {
     ChatMsg(chat::Message),
     SettingsMsg(settings::Message),
+    DbEvent(net::Event),
 }
 #[derive(Debug)]
 pub struct Router {
@@ -33,6 +34,10 @@ impl Router {
     }
     pub fn update(&mut self, message: Message, conn: &mut Connection) {
         match message {
+            Message::DbEvent(event) => match &mut self.state {
+                State::Chat { state } => state.update(chat::Message::DbEvent(event), conn),
+                State::Settings { state } => state.update(settings::Message::DbEvent(event), conn),
+            },
             Message::ChatMsg(msg) => {
                 if let State::Chat { state } = &mut self.state {
                     match msg {

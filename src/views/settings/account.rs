@@ -4,6 +4,7 @@ use nostr_sdk::Metadata;
 
 use crate::components::text::title;
 use crate::components::text_input_group::text_input_group;
+use crate::net;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -16,6 +17,7 @@ pub enum Message {
     LNChange(String),
     NIP05Change(String),
     SubmitPress,
+    DbEvent(net::Event),
 }
 
 #[derive(Debug, Clone)]
@@ -47,6 +49,7 @@ impl State {
 
     pub fn update(&mut self, message: Message) {
         match message {
+            Message::DbEvent(_ev) => (),
             Message::ProfileNameChange(name) => self.name = name,
             Message::UserNameChange(user_name) => self.user_name = user_name,
             Message::PictureUrlChange(pic_url) => self.picture_url = pic_url,

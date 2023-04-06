@@ -36,6 +36,13 @@ pub enum State {
 }
 
 #[derive(Debug, Clone)]
+pub enum DatabaseSuccessEventKind {
+    RelayCreated,
+    RelayUpdated,
+    RelayDeleted,
+}
+
+#[derive(Debug, Clone)]
 pub enum Event {
     Connected(Connection),
     Disconnected,
@@ -46,6 +53,8 @@ pub enum Event {
     NostrEvent(nostr_sdk::Event),
     GotPublicKey(XOnlyPublicKey),
     SomeEventSuccessId(EventId),
+    DatabaseSuccessEvent(DatabaseSuccessEventKind),
+    GotDbRelays(Vec<DbRelay>),
 }
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -56,6 +65,9 @@ pub enum Message {
     RemoveRelay(usize),
     ListOwnEvents,
     GetEventById(String),
+    FetchRelays,
+    UpdateRelay(DbRelay),
+    DeleteRelay(RelayUrl),
 }
 // acc1
 // secret  "4510459b74db68371be462f19ef4f7ef1e6c5a95b1d83a7adf00987c51ac56fe"
@@ -79,18 +91,16 @@ pub fn nostr_connect() -> Subscription<Event> {
             State::Disconnected => match Database::new(true).await {
                 Ok(database) => (None, State::ConnectedDB { database }),
                 Err(e) => {
-                    println!("Failed to init database");
-                    println!("{:?}", e);
-                    println!("Trying again in 2 secs");
+                    tracing::error!("Failed to init database");
+                    tracing::error!("{:?}", e);
+                    tracing::warn!("Trying again in 2 secs");
                     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                     (Some(Event::Disconnected), State::Disconnected)
                 }
             },
             State::ConnectedDB { database } => {
                 let my_keys = Keys::from_sk_str(PRIVATE_KEY).unwrap();
-                // Show bech32 public key
-                let bech32_pubkey: String = my_keys.public_key().to_bech32().unwrap();
-                println!("Bech32 PubKey: {}", bech32_pubkey);
+
                 // Create new client
                 let nostr_client = Client::new(&my_keys);
 
@@ -107,7 +117,7 @@ pub fn nostr_connect() -> Subscription<Event> {
                     if let Ok(url) = RelayUrl::try_from_str(r) {
                         let db_relay = DbRelay::new(url);
                         if let Err(e) = DbRelay::insert(&database.pool, db_relay).await {
-                            println!("{}", e);
+                            tracing::error!("{}", e);
                         }
                     }
 
@@ -121,7 +131,7 @@ pub fn nostr_connect() -> Subscription<Event> {
                 let relays = match DbRelay::fetch(&database.pool, None).await {
                     Ok(relays) => relays,
                     Err(e) => {
-                        println!("{}", e);
+                        tracing::error!("{}", e);
                         vec![]
                     }
                 };
@@ -129,7 +139,7 @@ pub fn nostr_connect() -> Subscription<Event> {
                 // add relays to client
                 for r in relays {
                     if let Err(e) = nostr_client.add_relay(r.url.0, None).await {
-                        println!("{}", e);
+                        tracing::error!("{}", e);
                     }
                 }
 
@@ -174,6 +184,36 @@ pub fn nostr_connect() -> Subscription<Event> {
                 futures::select! {
                     message = receiver.select_next_some() => {
                         match message {
+                            Message::DeleteRelay(relay_url) => {
+                                match DbRelay::delete(&database.pool, relay_url).await {
+                                    Ok(_) => {
+                                        (Some(Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayDeleted)), State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream})
+                                    }
+                                    Err(e) => {
+                                        (Some(Event::Error(e.to_string())), State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream})
+                                    }
+                                }
+                            }
+                            Message::UpdateRelay(db_relay) => {
+                                match DbRelay::update(&database.pool, db_relay).await {
+                                    Ok(_) => {
+                                        (Some(Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayUpdated)), State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream})
+                                    }
+                                    Err(e) => {
+                                        (Some(Event::Error(e.to_string())), State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream})
+                                    }
+                                }
+                            }
+                            Message::FetchRelays => {
+                                match DbRelay::fetch(&database.pool, None).await {
+                                    Ok(relays) => {
+                                        (Some(Event::GotDbRelays(relays)), State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream})
+                                    },
+                                    Err(e) => {
+                                        (Some(Event::Error(e.to_string())), State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream})
+                                    }
+                                }
+                            }
                             Message::SendDMTo((pub_key, msg)) => {
                                 match nostr_client.send_direct_msg(pub_key, msg).await {
                                     Ok(ev_id)=> {
@@ -208,7 +248,7 @@ pub fn nostr_connect() -> Subscription<Event> {
                             Message::AddRelay(address) => {
                                 match nostr_client.add_relay(&address, None).await {
                                     Ok(_) => {
-                                        println!("added_relay: {}", address);
+                                        tracing::warn!("added_relay: {}", address);
                                         (
                                             None,
                                             State::ConnectedAll {
@@ -233,7 +273,7 @@ pub fn nostr_connect() -> Subscription<Event> {
                                 }
                             },
                             Message::RemoveRelay(id) => {
-                                println!("remove_relay: {}", id);
+                                tracing::warn!("remove_relay: {}", id);
                                 (None, State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream})
                             },
                             Message::ListOwnEvents => {
@@ -251,8 +291,8 @@ pub fn nostr_connect() -> Subscription<Event> {
                     }
                     notification = notifications_stream.select_next_some() => {
                         if let RelayPoolNotification::Event(_url, event) = notification {
-                            println!("url: {}", _url);
-                            println!("event: {:?}", event);
+                            tracing::warn!("url: {}", _url);
+                            tracing::warn!("event: {:?}", event);
                             if event.kind == Kind::EncryptedDirectMessage {
                                 let secret_key = match my_keys.secret_key() {
                                     Ok(sk) => sk,

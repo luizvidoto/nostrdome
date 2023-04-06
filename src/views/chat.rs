@@ -12,6 +12,7 @@ use crate::utils::parse_key;
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    DbEvent(net::Event),
     OnVerResize(u16),
     AddRelay(String),
     ShowRelays,
@@ -107,6 +108,7 @@ impl State {
     }
     pub fn update(&mut self, message: Message, conn: &mut Connection) {
         match message {
+            Message::DbEvent(_ev) => (),
             Message::DMNMessageChange(msg) => {
                 self.dm_msg = msg;
             }

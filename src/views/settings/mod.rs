@@ -1,11 +1,8 @@
-use fake::Fake;
 use iced::widget::{button, column, container, row};
 use iced::{Color, Element, Length};
 use nostr_sdk::Metadata;
 
-use crate::net::Connection;
-
-use self::network::RelayRow;
+use crate::net::{self, Connection};
 
 mod account;
 mod appearance;
@@ -14,6 +11,7 @@ mod network;
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    DbEvent(net::Event),
     AccountMessage(account::Message),
     AppearanceMessage(appearance::Message),
     NetworkMessage(network::Message),
@@ -48,13 +46,13 @@ impl State {
             state: appearance::State::new(),
         }
     }
-    fn network() -> Self {
-        let mut relays = vec![];
-        for _ in 0..10 {
-            relays.push(RelayRow::new((8..12).fake::<String>()))
-        }
+    fn network_loading(conn: &mut Connection) -> Self {
+        // let mut relays = vec![];
+        // for _ in 0..10 {
+        //     relays.push(RelayRow::new((8..12).fake::<String>()))
+        // }
         Self::Network {
-            state: network::State::new(relays),
+            state: network::State::loading(conn),
         }
     }
     fn backup() -> Self {
@@ -65,6 +63,12 @@ impl State {
 
     pub fn update(&mut self, message: Message, conn: &mut Connection) {
         match message {
+            Message::DbEvent(event) => match self {
+                Self::Account { state } => state.update(account::Message::DbEvent(event)),
+                Self::Appearance { state } => state.update(appearance::Message::DbEvent(event)),
+                Self::Network { state } => state.update(network::Message::DbEvent(event), conn),
+                Self::Backup { state } => state.update(backup::Message::DbEvent(event)),
+            },
             Message::AccountMessage(msg) => {
                 if let State::Account { state } = self {
                     state.update(msg);
@@ -77,7 +81,7 @@ impl State {
             }
             Message::NetworkMessage(msg) => {
                 if let State::Network { state } = self {
-                    state.update(msg);
+                    state.update(msg, conn);
                 }
             }
             Message::BackupMessage(msg) => {
@@ -93,7 +97,7 @@ impl State {
                 *self = Self::appearance();
             }
             Message::MenuNetworkPress => {
-                *self = Self::network();
+                *self = Self::network_loading(conn);
             }
             Message::MenuBackupPress => {
                 *self = Self::backup();

@@ -2,34 +2,37 @@ use iced::widget::{button, checkbox, column, container, row, text};
 use iced::{Element, Length};
 
 use crate::components::text::title;
+use crate::db::DbRelay;
+use crate::net::{self, Connection};
+use crate::types::RelayUrl;
 
 #[derive(Debug, Clone)]
 pub enum RelayMessage {
     None,
-    DeleteRelay(String),
-    ToggleRead(String),
-    ToggleWrite(String),
-    ToggleAdvertise(String),
+    DeleteRelay(RelayUrl),
+    ToggleRead(DbRelay),
+    ToggleWrite(DbRelay),
+    ToggleAdvertise(DbRelay),
 }
 
 #[derive(Debug, Clone)]
 pub struct RelayRow {
     is_connected: bool,
-    address: String,
-    last_activity: i64,
+    url: RelayUrl,
+    last_connected_at: Option<i32>,
     is_read: bool,
     is_write: bool,
     is_advertise: bool,
 }
 impl RelayRow {
-    pub fn new(address: impl Into<String>) -> Self {
+    pub fn new(relay: &DbRelay) -> Self {
         Self {
             is_connected: false,
-            address: address.into(),
-            last_activity: 0,
-            is_read: false,
-            is_write: false,
-            is_advertise: false,
+            url: relay.url.clone(),
+            last_connected_at: relay.last_connected_at,
+            is_read: relay.read,
+            is_write: relay.write,
+            is_advertise: relay.advertise,
         }
     }
     pub fn view<'a>(&'a self) -> Element<'a, RelayMessage> {
@@ -40,22 +43,23 @@ impl RelayRow {
                 "Offline"
             })
             .width(Length::Fill),
-            container(text(&self.address)).width(Length::Fill),
-            container(text(format!("{}s", self.last_activity))).width(Length::Fill),
+            container(text(&self.url)).width(Length::Fill),
+            container(text(format!("{}s", self.last_connected_at.unwrap_or(0))))
+                .width(Length::Fill),
             container(checkbox("", self.is_read, |_| RelayMessage::ToggleRead(
-                self.address.clone()
+                self.into()
             )))
             .width(Length::Fill),
             container(checkbox("", self.is_write, |_| RelayMessage::ToggleWrite(
-                self.address.clone()
+                self.into()
             )))
             .width(Length::Fill),
             container(checkbox("", self.is_advertise, |_| {
-                RelayMessage::ToggleAdvertise(self.address.clone())
+                RelayMessage::ToggleAdvertise(self.into())
             }))
             .width(Length::Fill),
             button("Remove")
-                .on_press(RelayMessage::DeleteRelay(self.address.clone()))
+                .on_press(RelayMessage::DeleteRelay(self.url.clone()))
                 .width(Length::Fill),
         ]
         .into()
@@ -72,13 +76,16 @@ impl RelayRow {
         ]
         .into()
     }
-    pub fn update(&mut self, message: RelayMessage) {
-        match message {
-            RelayMessage::None => (),
-            RelayMessage::DeleteRelay(_) => (),
-            RelayMessage::ToggleRead(_) => self.is_read = !self.is_read,
-            RelayMessage::ToggleWrite(_) => self.is_write = !self.is_write,
-            RelayMessage::ToggleAdvertise(_) => self.is_advertise = !self.is_advertise,
+}
+
+impl From<&RelayRow> for DbRelay {
+    fn from(row: &RelayRow) -> Self {
+        Self {
+            url: row.url.to_owned(),
+            last_connected_at: row.last_connected_at,
+            read: row.is_read,
+            write: row.is_write,
+            advertise: row.is_advertise,
         }
     }
 }
@@ -86,43 +93,92 @@ impl RelayRow {
 #[derive(Debug, Clone)]
 pub enum Message {
     RelayMessage(RelayMessage),
+    DbEvent(net::Event),
 }
 
 #[derive(Debug, Clone)]
-pub struct State {
-    relays: Vec<RelayRow>,
+pub enum State {
+    Loading,
+    Loaded { relays: Vec<RelayRow> },
 }
 impl State {
-    pub fn new(relays: Vec<RelayRow>) -> Self {
-        Self { relays }
+    pub fn loading(conn: &mut Connection) -> Self {
+        if let Err(e) = conn.send(net::Message::FetchRelays) {
+            tracing::error!("{}", e);
+        }
+        Self::Loading
+    }
+    pub fn loaded(relays: Vec<DbRelay>) -> Self {
+        let relays = relays.iter().map(|r| RelayRow::new(r)).collect();
+        Self::Loaded { relays }
     }
 
-    pub fn update(&mut self, message: Message) {
-        match message {
-            Message::RelayMessage(msg) => match msg.clone() {
-                RelayMessage::None => (),
-                RelayMessage::DeleteRelay(_addrs) => (),
-                RelayMessage::ToggleRead(addrs)
-                | RelayMessage::ToggleWrite(addrs)
-                | RelayMessage::ToggleAdvertise(addrs) => {
-                    for r in &mut self.relays {
-                        if &r.address == &addrs {
-                            r.update(msg.clone());
-                            break;
-                        }
+    pub fn update(&mut self, message: Message, conn: &mut Connection) {
+        match self {
+            State::Loading => {
+                if let Message::DbEvent(ev) = message {
+                    if let net::Event::GotDbRelays(db_relays) = ev {
+                        *self = Self::loaded(db_relays);
                     }
                 }
+            }
+            State::Loaded { ref mut relays } => match message {
+                Message::DbEvent(ev) => match ev {
+                    net::Event::GotDbRelays(db_relays) => {
+                        *relays = db_relays.iter().map(|r| RelayRow::new(r)).collect()
+                    }
+                    net::Event::DatabaseSuccessEvent(kind) => match kind {
+                        net::DatabaseSuccessEventKind::RelayCreated
+                        | net::DatabaseSuccessEventKind::RelayDeleted
+                        | net::DatabaseSuccessEventKind::RelayUpdated => {
+                            if let Err(e) = conn.send(net::Message::FetchRelays) {
+                                tracing::error!("{}", e);
+                            }
+                        }
+                        _ => (),
+                    },
+                    _ => (),
+                },
+                Message::RelayMessage(msg) => match msg.clone() {
+                    RelayMessage::None => (),
+                    RelayMessage::DeleteRelay(relay_url) => {
+                        if let Err(e) = conn.send(net::Message::DeleteRelay(relay_url)) {
+                            tracing::error!("{}", e);
+                        }
+                    }
+                    RelayMessage::ToggleRead(mut db_relay) => {
+                        db_relay.read = !db_relay.read;
+                        if let Err(e) = conn.send(net::Message::UpdateRelay(db_relay)) {
+                            tracing::error!("{}", e);
+                        }
+                    }
+                    RelayMessage::ToggleWrite(mut db_relay) => {
+                        db_relay.write = !db_relay.write;
+                        if let Err(e) = conn.send(net::Message::UpdateRelay(db_relay)) {
+                            tracing::error!("{}", e);
+                        }
+                    }
+                    RelayMessage::ToggleAdvertise(mut db_relay) => {
+                        db_relay.advertise = !db_relay.advertise;
+                        if let Err(e) = conn.send(net::Message::UpdateRelay(db_relay)) {
+                            tracing::error!("{}", e);
+                        }
+                    }
+                },
             },
         }
     }
 
     pub fn view(&self) -> Element<Message> {
         let title = title("Network");
+        let header = column![RelayRow::view_header().map(Message::RelayMessage)];
+        let relays = match self {
+            State::Loading => header.into(),
+            State::Loaded { relays } => relays.iter().fold(header, |col, relay| {
+                col.push(relay.view().map(Message::RelayMessage))
+            }),
+        };
 
-        let relays = self.relays.iter().fold(
-            column![RelayRow::view_header().map(Message::RelayMessage)],
-            |col, relay| col.push(relay.view().map(Message::RelayMessage)),
-        );
         container(column![title, relays])
             .width(Length::Fill)
             .height(Length::Fill)

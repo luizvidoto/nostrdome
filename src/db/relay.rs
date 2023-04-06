@@ -77,6 +77,14 @@ impl DbRelay {
 
         Ok(())
     }
+
+    pub async fn delete(pool: &SqlitePool, relay_url: RelayUrl) -> Result<(), Error> {
+        let sql = "DELETE FROM relay WHERE url=?";
+
+        sqlx::query(sql).bind(&relay_url.0).execute(pool).await?;
+
+        Ok(())
+    }
 }
 
 impl sqlx::FromRow<'_, SqliteRow> for DbRelay {
