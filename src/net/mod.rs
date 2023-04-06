@@ -8,6 +8,8 @@ use nostr_sdk::prelude::*;
 use std::pin::Pin;
 use std::time::Duration;
 
+use crate::db::Database;
+
 #[derive(Debug, Clone)]
 pub struct Connection(mpsc::UnboundedSender<Message>);
 impl Connection {
@@ -19,7 +21,11 @@ impl Connection {
 }
 pub enum State {
     Disconnected,
-    Connected {
+    ConnectedDB {
+        database: Database,
+    },
+    ConnectedAll {
+        database: Database,
         receiver: mpsc::UnboundedReceiver<Message>,
         nostr_client: Client,
         my_keys: Keys,
@@ -69,7 +75,17 @@ pub fn nostr_connect() -> Subscription<Event> {
 
     subscription::unfold(id, State::Disconnected, move |state| async move {
         match state {
-            State::Disconnected => {
+            State::Disconnected => match Database::new(true).await {
+                Ok(database) => (None, State::ConnectedDB { database }),
+                Err(e) => {
+                    println!("Failed to init database");
+                    println!("{:?}", e);
+                    println!("Trying again in 2 secs");
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                    (Some(Event::Disconnected), State::Disconnected)
+                }
+            },
+            State::ConnectedDB { database } => {
                 let my_keys = Keys::from_sk_str(PRIVATE_KEY).unwrap();
                 // Show bech32 public key
                 let bech32_pubkey: String = my_keys.public_key().to_bech32().unwrap();
@@ -114,7 +130,8 @@ pub fn nostr_connect() -> Subscription<Event> {
                 let (sender, receiver) = mpsc::unbounded();
                 (
                     Some(Event::Connected(Connection(sender))),
-                    State::Connected {
+                    State::ConnectedAll {
+                        database,
                         receiver,
                         nostr_client,
                         my_keys,
@@ -122,7 +139,8 @@ pub fn nostr_connect() -> Subscription<Event> {
                     },
                 )
             }
-            State::Connected {
+            State::ConnectedAll {
+                database,
                 mut receiver,
                 nostr_client,
                 my_keys,
@@ -134,26 +152,27 @@ pub fn nostr_connect() -> Subscription<Event> {
                             Message::SendDMTo((pub_key, msg)) => {
                                 match nostr_client.send_direct_msg(pub_key, msg).await {
                                     Ok(ev_id)=> {
-                                        (Some(Event::SomeEventSuccessId(ev_id)), State::Connected {receiver, nostr_client, my_keys, notifications_stream})
+                                        (Some(Event::SomeEventSuccessId(ev_id)), State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream})
                                     }
                                     Err(e) => {
-                                        (Some(Event::Error(e.to_string())), State::Connected {receiver, nostr_client, my_keys, notifications_stream})
+                                        (Some(Event::Error(e.to_string())), State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream})
                                     }
                                 }
                             }
                             Message::ShowPublicKey => {
                                 let pb_key = my_keys.public_key();
-                                (Some(Event::GotPublicKey(pb_key)), State::Connected {receiver, nostr_client, my_keys, notifications_stream})
+                                (Some(Event::GotPublicKey(pb_key)), State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream})
                             }
                             Message::GetEventById(_ev_id) => {
-                                (None, State::Connected {receiver, nostr_client, my_keys, notifications_stream})
+                                (None, State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream})
                             }
                             Message::ShowRelays => {
                                 let relays = nostr_client.relays().await;
                                 let relays:Vec<_> = relays.into_iter().map(|r| r.1).collect();
                                 (
                                     Some(Event::GotRelays(relays)),
-                                    State::Connected {
+                                    State::ConnectedAll {
+                                        database,
                                         receiver,
                                         nostr_client,
                                         my_keys,
@@ -167,7 +186,8 @@ pub fn nostr_connect() -> Subscription<Event> {
                                         println!("added_relay: {}", address);
                                         (
                                             None,
-                                            State::Connected {
+                                            State::ConnectedAll {
+                                                database,
                                                 receiver,
                                                 nostr_client,
                                                 my_keys,
@@ -177,7 +197,8 @@ pub fn nostr_connect() -> Subscription<Event> {
                                     }
                                     Err(e) => (
                                         Some(Event::Error(e.to_string())),
-                                        State::Connected {
+                                        State::ConnectedAll {
+                                            database,
                                             receiver,
                                             nostr_client,
                                             my_keys,
@@ -188,7 +209,7 @@ pub fn nostr_connect() -> Subscription<Event> {
                             },
                             Message::RemoveRelay(id) => {
                                 println!("remove_relay: {}", id);
-                                (None, State::Connected {receiver, nostr_client, my_keys, notifications_stream})
+                                (None, State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream})
                             },
                             Message::ListOwnEvents => {
                                 let sub = Filter::new()
@@ -197,8 +218,8 @@ pub fn nostr_connect() -> Subscription<Event> {
                                     .until(Timestamp::now());
                                 let timeout = Duration::from_secs(10);
                                 match nostr_client.get_events_of(vec![sub], Some(timeout)).await {
-                                    Ok(events) => (Some(Event::GotOwnEvents(events)), State::Connected {receiver, nostr_client, my_keys, notifications_stream}),
-                                    Err(e) => (Some(Event::Error(e.to_string())), State::Connected {receiver, nostr_client, my_keys, notifications_stream}),
+                                    Ok(events) => (Some(Event::GotOwnEvents(events)), State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream}),
+                                    Err(e) => (Some(Event::Error(e.to_string())), State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream}),
                                 }
                             }
                         }
@@ -210,17 +231,17 @@ pub fn nostr_connect() -> Subscription<Event> {
                             if event.kind == Kind::EncryptedDirectMessage {
                                 let secret_key = match my_keys.secret_key() {
                                     Ok(sk) => sk,
-                                    Err(e) => return (Some(Event::Error(e.to_string())), State::Connected {receiver, nostr_client, my_keys, notifications_stream}),
+                                    Err(e) => return (Some(Event::Error(e.to_string())), State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream}),
                                 };
                                 match decrypt(&secret_key, &event.pubkey, &event.content) {
-                                    Ok(msg) => return (Some(Event::DirectMessage(msg)), State::Connected {receiver, nostr_client, my_keys, notifications_stream}),
-                                    Err(e) => return (Some(Event::Error(format!("Impossible to decrypt message: {}", e.to_string()))), State::Connected {receiver, nostr_client, my_keys, notifications_stream})
+                                    Ok(msg) => return (Some(Event::DirectMessage(msg)), State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream}),
+                                    Err(e) => return (Some(Event::Error(format!("Impossible to decrypt message: {}", e.to_string()))), State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream})
                                 }
                             } else {
-                                return (Some(Event::NostrEvent(event)), State::Connected {receiver, nostr_client, my_keys, notifications_stream})
+                                return (Some(Event::NostrEvent(event)), State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream})
                             }
                         }
-                        (None, State::Connected {receiver, nostr_client, my_keys, notifications_stream})
+                        (None, State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream})
                     },
                 }
             }

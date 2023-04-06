@@ -1,4 +1,5 @@
 pub mod components;
+pub mod db;
 pub mod error;
 pub mod net;
 pub mod types;
@@ -7,6 +8,8 @@ pub mod views;
 
 use iced::{executor, widget::text, window, Application, Command, Element, Settings};
 use net::{nostr_connect, Connection};
+use tracing::metadata::LevelFilter;
+use tracing_subscriber::EnvFilter;
 use views::Router;
 
 #[derive(Debug, Clone)]
@@ -109,6 +112,25 @@ impl Application for App {
 
 #[tokio::main]
 async fn main() {
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "warn");
+    }
+
+    let env_filter = EnvFilter::from_default_env();
+    let max_level = match env_filter.max_level_hint() {
+        Some(l) => l,
+        None => LevelFilter::ERROR,
+    };
+    let show_debug = cfg!(debug_assertions) || max_level <= LevelFilter::DEBUG;
+    tracing_subscriber::fmt::fmt()
+        .with_target(false)
+        .with_file(show_debug)
+        .with_line_number(show_debug)
+        .with_env_filter(env_filter)
+        .init();
+
+    tracing::warn!("Starting up");
+
     App::run(Settings {
         id: Some(String::from("nostrdome")),
         window: window::Settings {

@@ -1,0 +1,7 @@
+CREATE TABLE relay (
+    url TEXT PRIMARY KEY NOT NULL,
+    last_connected_at INTEGER DEFAULT NULL,
+    read INTEGER NOT NULL DEFAULT 0,
+    write INTEGER NOT NULL DEFAULT 0,
+    advertise INTEGER NOT NULL DEFAULT 0
+);

@@ -15,9 +15,20 @@ pub enum Error {
     // #[error("Hex Decode Error: {0}")]
     // HexDecode(#[from] hex::FromHexError),
 
+    #[error("Database setup error: {0}")]
+    DatabaseSetup(String),
+
+    /// I/O Error
+    #[error("I/O Error: {0}")]
+    Io(#[from] std::io::Error),
+
     /// Invalid URL
     #[error("Invalid URL: \"{0}\"")]
     InvalidUrl(#[from] url::ParseError),
+
+    /// Invalid URL
+    #[error("Invalid URL Regex: \"{0}\"")]
+    InvalidUrlRegex(String),
 
     /// Invalid URL Host
     #[error("Invalid URL Host: \"{0}\"")]
@@ -34,6 +45,10 @@ pub enum Error {
     /// Serialization error
     #[error("JSON (de)serialization error: {0}")]
     SerdeJson(#[from] serde_json::Error),
+
+    /// Sqlx Error
+    #[error("Sqlx error: {0}")]
+    SqlxError(#[from] sqlx::Error),
 
     /// Url Error
     #[error("Not a valid nostr relay url: {0}")]
