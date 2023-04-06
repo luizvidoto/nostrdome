@@ -14,7 +14,6 @@ use crate::utils::parse_key;
 pub enum Message {
     DbEvent(net::Event),
     OnVerResize(u16),
-    AddRelay(String),
     ShowRelays,
     NavSettingsPress,
     ChatCardMessage(components::chat_card::Message),
@@ -57,7 +56,6 @@ impl State {
         .center_x()
         .center_y();
 
-        // let add_relay_btn = button("Add Relay").on_press(Message::AddRelay);
         let show_relay_btn = button("Show Relay").on_press(Message::ShowRelays);
         let get_own_events_btn = button("List Own Events").on_press(Message::ListOwnEvents);
         let show_public_btn = button("Show Public Key").on_press(Message::ShowPublicKey);
@@ -166,11 +164,6 @@ impl State {
                 }
             }
             Message::NavSettingsPress => (),
-            Message::AddRelay(relay_addrs) => {
-                if let Err(e) = conn.send(net::Message::AddRelay(relay_addrs.into())) {
-                    println!("{}", e);
-                }
-            }
             Message::ShowRelays => {
                 if let Err(e) = conn.send(net::Message::ShowRelays) {
                     println!("{}", e);

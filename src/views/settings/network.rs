@@ -1,7 +1,10 @@
+use iced::alignment::Horizontal;
 use iced::widget::{button, checkbox, column, container, row, text};
 use iced::{Element, Length};
+use iced_aw::{Card, Modal};
 
 use crate::components::text::title;
+use crate::components::text_input_group::text_input_group;
 use crate::db::DbRelay;
 use crate::net::{self, Connection};
 use crate::types::RelayUrl;
@@ -94,12 +97,21 @@ impl From<&RelayRow> for DbRelay {
 pub enum Message {
     RelayMessage(RelayMessage),
     DbEvent(net::Event),
+    OpenAddRelayModal,
+    CancelButtonPressed,
+    OkButtonPressed,
+    CloseModal,
+    AddRelayInputChange(String),
 }
 
 #[derive(Debug, Clone)]
 pub enum State {
     Loading,
-    Loaded { relays: Vec<RelayRow> },
+    Loaded {
+        relays: Vec<RelayRow>,
+        show_modal: bool,
+        add_relay_input: String,
+    },
 }
 impl State {
     pub fn loading(conn: &mut Connection) -> Self {
@@ -110,7 +122,11 @@ impl State {
     }
     pub fn loaded(relays: Vec<DbRelay>) -> Self {
         let relays = relays.iter().map(|r| RelayRow::new(r)).collect();
-        Self::Loaded { relays }
+        Self::Loaded {
+            relays,
+            show_modal: false,
+            add_relay_input: "".into(),
+        }
     }
 
     pub fn update(&mut self, message: Message, conn: &mut Connection) {
@@ -122,7 +138,31 @@ impl State {
                     }
                 }
             }
-            State::Loaded { ref mut relays } => match message {
+            State::Loaded {
+                ref mut relays,
+                ref mut show_modal,
+                ref mut add_relay_input,
+            } => match message {
+                Message::AddRelayInputChange(relay_addrs) => *add_relay_input = relay_addrs,
+                Message::CloseModal | Message::CancelButtonPressed => {
+                    *add_relay_input = "".into();
+                    *show_modal = false;
+                }
+                Message::OkButtonPressed => {
+                    match RelayUrl::try_from_str(add_relay_input) {
+                        Ok(url) => {
+                            if let Err(e) = conn.send(net::Message::AddRelay(DbRelay::new(url))) {
+                                tracing::error!("{}", e);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("{}", e);
+                        }
+                    }
+                    *add_relay_input = "".into();
+                    *show_modal = false;
+                }
+                Message::OpenAddRelayModal => *show_modal = true,
                 Message::DbEvent(ev) => match ev {
                     net::Event::GotDbRelays(db_relays) => {
                         *relays = db_relays.iter().map(|r| RelayRow::new(r)).collect()
@@ -174,14 +214,57 @@ impl State {
         let header = column![RelayRow::view_header().map(Message::RelayMessage)];
         let relays = match self {
             State::Loading => header.into(),
-            State::Loaded { relays } => relays.iter().fold(header, |col, relay| {
+            State::Loaded { relays, .. } => relays.iter().fold(header, |col, relay| {
                 col.push(relay.view().map(Message::RelayMessage))
             }),
         };
-
-        container(column![title, relays])
+        let empty = container(text("")).width(Length::Fill);
+        let add_btn = button("Add").on_press(Message::OpenAddRelayModal);
+        let add_row = row![empty, add_btn];
+        let content = container(column![title, add_row, relays])
             .width(Length::Fill)
             .height(Length::Fill)
-            .into()
+            .into();
+
+        match self {
+            State::Loading => content,
+            State::Loaded {
+                show_modal,
+                add_relay_input,
+                ..
+            } => {
+                Modal::new(*show_modal, content, || {
+                    let add_relay_input = text_input_group(
+                        "Relay Address",
+                        "wss://my-relay.com",
+                        add_relay_input,
+                        None,
+                        Message::AddRelayInputChange,
+                    );
+                    let modal_body: Element<_> = container(add_relay_input).into();
+                    Card::new(text("Add Relay"), modal_body)
+                        .foot(
+                            row![
+                                button(text("Cancel").horizontal_alignment(Horizontal::Center),)
+                                    .width(Length::Fill)
+                                    .on_press(Message::CancelButtonPressed),
+                                button(text("Ok").horizontal_alignment(Horizontal::Center),)
+                                    .width(Length::Fill)
+                                    .on_press(Message::OkButtonPressed)
+                            ]
+                            .spacing(10)
+                            .padding(5)
+                            .width(Length::Fill),
+                        )
+                        .max_width(300.0)
+                        //.width(Length::Shrink)
+                        .on_close(Message::CloseModal)
+                        .into()
+                })
+                .backdrop(Message::CloseModal)
+                .on_esc(Message::CloseModal)
+                .into()
+            }
+        }
     }
 }

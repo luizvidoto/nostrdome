@@ -61,11 +61,11 @@ pub enum Message {
     SendDMTo((XOnlyPublicKey, String)),
     ShowPublicKey,
     ShowRelays,
-    AddRelay(String),
     RemoveRelay(usize),
     ListOwnEvents,
     GetEventById(String),
     FetchRelays,
+    AddRelay(DbRelay),
     UpdateRelay(DbRelay),
     DeleteRelay(RelayUrl),
 }
@@ -194,6 +194,16 @@ pub fn nostr_connect() -> Subscription<Event> {
                                     }
                                 }
                             }
+                            Message::AddRelay(db_relay) => {
+                                match DbRelay::insert(&database.pool, db_relay).await {
+                                    Ok(_) => {
+                                        (Some(Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayCreated)), State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream})
+                                    }
+                                    Err(e) => {
+                                        (Some(Event::Error(e.to_string())), State::ConnectedAll {database,receiver, nostr_client, my_keys, notifications_stream})
+                                    }
+                                }
+                            }
                             Message::UpdateRelay(db_relay) => {
                                 match DbRelay::update(&database.pool, db_relay).await {
                                     Ok(_) => {
@@ -244,33 +254,6 @@ pub fn nostr_connect() -> Subscription<Event> {
                                         notifications_stream
                                     },
                                 )
-                            },
-                            Message::AddRelay(address) => {
-                                match nostr_client.add_relay(&address, None).await {
-                                    Ok(_) => {
-                                        tracing::warn!("added_relay: {}", address);
-                                        (
-                                            None,
-                                            State::ConnectedAll {
-                                                database,
-                                                receiver,
-                                                nostr_client,
-                                                my_keys,
-                                                notifications_stream
-                                            },
-                                        )
-                                    }
-                                    Err(e) => (
-                                        Some(Event::Error(e.to_string())),
-                                        State::ConnectedAll {
-                                            database,
-                                            receiver,
-                                            nostr_client,
-                                            my_keys,
-                                            notifications_stream
-                                        },
-                                    ),
-                                }
                             },
                             Message::RemoveRelay(id) => {
                                 tracing::warn!("remove_relay: {}", id);
