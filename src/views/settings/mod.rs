@@ -36,7 +36,7 @@ impl State {
     pub fn new(conn: &mut Connection) -> Self {
         Self::account(conn)
     }
-    fn account(conn: &mut Connection) -> Self {
+    fn account(_conn: &mut Connection) -> Self {
         let profile = Metadata::new();
         // conn.send(message)
         Self::Account {

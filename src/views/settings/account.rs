@@ -20,7 +20,7 @@ pub enum Message {
 
 #[derive(Debug, Clone)]
 pub struct State {
-    profile: Metadata,
+    // profile: Metadata,
     name: String,
     user_name: String,
     picture_url: String,
@@ -33,7 +33,7 @@ pub struct State {
 impl State {
     pub fn new(profile: Metadata) -> Self {
         Self {
-            profile: profile.clone(),
+            // profile: profile.clone(),
             name: profile.name.unwrap_or("".into()),
             user_name: profile.display_name.unwrap_or("".into()),
             picture_url: profile.picture.unwrap_or("".into()),

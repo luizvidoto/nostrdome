@@ -1,4 +1,3 @@
-use iced::widget::text;
 use iced::Element;
 
 use crate::components::text::title;

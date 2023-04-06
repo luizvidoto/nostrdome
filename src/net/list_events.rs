@@ -1,6 +1,6 @@
 use nostr_sdk::{Client, Event, Filter};
 
-pub async fn list_events(client: Client, filter: Filter) -> Result<Vec<Event>, String> {
+pub async fn _list_events(client: Client, filter: Filter) -> Result<Vec<Event>, String> {
     // let authors: Option<Vec<XOnlyPublicKey>> = sub_command_args.authors.as_ref().map(|auths| {
     //     auths
     //         .iter()

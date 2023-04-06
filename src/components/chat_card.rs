@@ -56,7 +56,7 @@ impl State {
             iced::theme::Button::Custom(Box::new(ButtonStyle {}))
         };
         let btn_content: Element<_> = if self.only_profile {
-            text("Profile Image").into()
+            text(&self.card.profile_img).into()
         } else {
             row![
                 text("Profile Image"),
@@ -121,7 +121,7 @@ struct ActiveButtonStyle;
 impl button::StyleSheet for ActiveButtonStyle {
     type Style = iced::Theme;
 
-    fn active(&self, style: &Self::Style) -> button::Appearance {
+    fn active(&self, _style: &Self::Style) -> button::Appearance {
         button::Appearance {
             border_radius: 0.0,
             background: Some(Color::from_rgb8(65, 159, 217).into()),

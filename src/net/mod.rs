@@ -1,5 +1,5 @@
 mod list_events;
-mod new;
+// mod new;
 
 use async_stream::stream;
 use iced::futures::{channel::mpsc, stream::Fuse, StreamExt};

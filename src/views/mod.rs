@@ -1,6 +1,6 @@
 use iced::Element;
 
-use crate::net::{self, Connection};
+use crate::net::Connection;
 
 mod chat;
 mod settings;
@@ -20,7 +20,7 @@ impl Router {
         let old_state = std::mem::replace(&mut self.state, next);
         self.prev_state = Some(old_state);
     }
-    fn next_state_skip(&mut self, next: State) {
+    fn _next_state_skip(&mut self, next: State) {
         self.state = next;
     }
     fn back(&mut self) {

@@ -113,7 +113,11 @@ impl State {
             Message::DMSentPress => match parse_key(self.dm_npub_receiver.clone()) {
                 Ok(hex_key) => match XOnlyPublicKey::from_str(&hex_key) {
                     Ok(pub_key) => {
-                        conn.send(net::Message::SendDMTo((pub_key, self.dm_msg.clone())));
+                        if let Err(e) =
+                            conn.send(net::Message::SendDMTo((pub_key, self.dm_msg.clone())))
+                        {
+                            println!("{}", e);
+                        }
                     }
                     Err(e) => {
                         println!("Invalid Public Key!");
@@ -130,13 +134,19 @@ impl State {
                 self.dm_npub_receiver = npub;
             }
             Message::ShowPublicKey => {
-                conn.send(net::Message::ShowPublicKey);
+                if let Err(e) = conn.send(net::Message::ShowPublicKey) {
+                    println!("{}", e);
+                }
             }
             Message::GetEventById(ev_id) => {
-                conn.send(net::Message::GetEventById(ev_id));
+                if let Err(e) = conn.send(net::Message::GetEventById(ev_id)) {
+                    println!("{}", e);
+                }
             }
             Message::ListOwnEvents => {
-                conn.send(net::Message::ListOwnEvents);
+                if let Err(e) = conn.send(net::Message::ListOwnEvents) {
+                    println!("{}", e);
+                }
             }
             Message::OnVerResize(position) => {
                 if position > 200 {
