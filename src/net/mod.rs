@@ -8,7 +8,8 @@ use nostr_sdk::prelude::*;
 use std::pin::Pin;
 use std::time::Duration;
 
-use crate::db::Database;
+use crate::db::{Database, DbRelay};
+use crate::types::RelayUrl;
 
 #[derive(Debug, Clone)]
 pub struct Connection(mpsc::UnboundedSender<Message>);
@@ -93,7 +94,7 @@ pub fn nostr_connect() -> Subscription<Event> {
                 // Create new client
                 let nostr_client = Client::new(&my_keys);
 
-                // Add relays
+                // Add relays to database
                 for r in vec![
                     "wss://eden.nostr.land",
                     "wss://relay.snort.social",
@@ -103,11 +104,35 @@ pub fn nostr_connect() -> Subscription<Event> {
                     // "wss://nostr.anchel.nl/",
                     // "ws://192.168.15.119:8080"
                 ] {
-                    if let Err(e) = nostr_client.add_relay(r, None).await {
-                        println!("Error adding relay: {}", r);
-                        println!("{:?}", e);
+                    if let Ok(url) = RelayUrl::try_from_str(r) {
+                        let db_relay = DbRelay::new(url);
+                        if let Err(e) = DbRelay::insert(&database.pool, db_relay).await {
+                            println!("{}", e);
+                        }
+                    }
+
+                    // if let Err(e) = nostr_client.add_relay(r, None).await {
+                    //     println!("Error adding relay: {}", r);
+                    //     println!("{:?}", e);
+                    // }
+                }
+
+                // fetch relays
+                let relays = match DbRelay::fetch(&database.pool, None).await {
+                    Ok(relays) => relays,
+                    Err(e) => {
+                        println!("{}", e);
+                        vec![]
+                    }
+                };
+
+                // add relays to client
+                for r in relays {
+                    if let Err(e) = nostr_client.add_relay(r.url.0, None).await {
+                        println!("{}", e);
                     }
                 }
+
                 // Connect to relays
                 nostr_client.connect().await;
 

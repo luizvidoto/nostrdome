@@ -5,7 +5,7 @@ use crate::error::Error;
 
 #[derive(Debug, Clone)]
 pub struct Database {
-    conn: SqlitePool,
+    pub pool: SqlitePool,
 }
 
 impl Database {
@@ -32,9 +32,9 @@ impl Database {
             };
 
             tracing::warn!("Connecting database");
-            let conn = SqlitePool::connect(&db_url).await?;
+            let pool = SqlitePool::connect(&db_url).await?;
 
-            let s = Self { conn };
+            let s = Self { pool };
 
             s.initial_setup().await?;
             s.check_and_upgrade().await?;
@@ -48,7 +48,7 @@ impl Database {
     async fn initial_setup(&self) -> Result<(), Error> {
         tracing::warn!("Database initial setup");
         for sql in INITIAL_SETUP {
-            sqlx::query(sql).execute(&self.conn).await?;
+            sqlx::query(sql).execute(&self.pool).await?;
         }
         Ok(())
     }
@@ -56,7 +56,7 @@ impl Database {
     async fn check_and_upgrade(&self) -> Result<(), Error> {
         let version = sqlx::query("SELECT schema_version FROM local_settings LIMIT 1")
             .map(|r: SqliteRow| r.get(0))
-            .fetch_one(&self.conn)
+            .fetch_one(&self.pool)
             .await?;
 
         tracing::warn!("DB version: {}", version);
@@ -77,14 +77,14 @@ impl Database {
             tracing::warn!("Upgrading database to version {}", version + 1);
 
             sqlx::query(UPGRADE_SQL[version as usize])
-                .execute(&self.conn)
+                .execute(&self.pool)
                 .await?;
 
             version += 1;
 
             sqlx::query("UPDATE local_settings SET schema_version = ?")
                 .bind(version)
-                .execute(&self.conn)
+                .execute(&self.pool)
                 .await?;
         }
 

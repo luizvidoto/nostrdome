@@ -7,7 +7,7 @@ use crate::{error::Error, types::RelayUrl};
 #[derive(Debug, Clone)]
 pub struct DbRelay {
     pub url: RelayUrl,
-    pub last_connected_at: Option<u64>,
+    pub last_connected_at: Option<i32>,
     pub read: bool,
     pub write: bool,
     pub advertise: bool,
@@ -24,8 +24,11 @@ impl DbRelay {
         }
     }
 
+    const FETCH_QUERY: &'static str =
+        "SELECT url, last_connected_at, read, write, advertise FROM relay";
+
     pub async fn fetch(pool: &SqlitePool, criteria: Option<&str>) -> Result<Vec<DbRelay>, Error> {
-        let sql = "SELECT url, last_connected_at, read, write, advertise FROM relay".to_owned();
+        let sql = Self::FETCH_QUERY.to_owned();
         let sql = match criteria {
             None => sql,
             Some(crit) => format!("{} WHERE {}", sql, crit),
@@ -33,102 +36,47 @@ impl DbRelay {
         let output = sqlx::query_as::<_, DbRelay>(&sql).fetch_all(pool).await?;
 
         Ok(output)
-
-        // let output: Result<Vec<DbRelay>, Error> = spawn_blocking(move || {
-        //     let maybe_db = GLOBALS.db.blocking_lock();
-        //     let db = maybe_db.as_ref().unwrap();
-
-        //     let mut stmt = db.prepare(&sql)?;
-        //     let mut rows = stmt.query([])?;
-        //     let mut output: Vec<DbRelay> = Vec::new();
-        //     while let Some(row) = rows.next()? {
-        //         let s: String = row.get(0)?;
-        //         // just skip over invalid relay URLs
-        //         if let Ok(url) = RelayUrl::try_from_str(&s) {
-        //             output.push(DbRelay {
-        //                 url,
-        //                 success_count: row.get(1)?,
-        //                 failure_count: row.get(2)?,
-        //                 rank: row.get(3)?,
-        //                 last_connected_at: row.get(4)?,
-        //                 last_general_eose_at: row.get(5)?,
-        //                 read: row.get(6)?,
-        //                 write: row.get(7)?,
-        //                 advertise: row.get(8)?,
-        //             });
-        //         }
-        //     }
-        //     Ok::<Vec<DbRelay>, Error>(output)
-        // })
-        // .await?;
-
-        // output
     }
 
-    // pub async fn fetch_one(url: &RelayUrl) -> Result<Option<DbRelay>, Error> {
-    //     let relays = DbRelay::fetch(Some(&format!("url='{}'", url.0))).await?;
+    pub async fn fetch_one(pool: &SqlitePool, url: &RelayUrl) -> Result<Option<DbRelay>, Error> {
+        let sql = format!("{} WHERE url = ?", Self::FETCH_QUERY);
+        Ok(sqlx::query_as::<_, DbRelay>(&sql)
+            .bind(url.0.as_str())
+            .fetch_optional(pool)
+            .await?)
+    }
 
-    //     if relays.is_empty() {
-    //         Ok(None)
-    //     } else {
-    //         Ok(Some(relays[0].clone()))
-    //     }
-    // }
+    pub async fn insert(pool: &SqlitePool, relay: DbRelay) -> Result<(), Error> {
+        let sql = "INSERT OR IGNORE INTO relay (url, last_connected_at, \
+                   read, write, advertise) \
+             VALUES (?1, ?2, ?3, ?4, ?5)";
 
-    // pub async fn insert(relay: DbRelay) -> Result<(), Error> {
-    //     let sql = "INSERT OR IGNORE INTO relay (url, success_count, failure_count, rank, \
-    //                last_connected_at, last_general_eose_at, read, write, advertise) \
-    //          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)";
+        sqlx::query(sql)
+            .bind(&relay.url.0)
+            .bind(&relay.last_connected_at)
+            .bind(&relay.read)
+            .bind(&relay.write)
+            .bind(&relay.advertise)
+            .execute(pool)
+            .await?;
 
-    //     spawn_blocking(move || {
-    //         let maybe_db = GLOBALS.db.blocking_lock();
-    //         let db = maybe_db.as_ref().unwrap();
+        Ok(())
+    }
 
-    //         let mut stmt = db.prepare(sql)?;
-    //         stmt.execute((
-    //             &relay.url.0,
-    //             &relay.success_count,
-    //             &relay.failure_count,
-    //             &relay.rank,
-    //             &relay.last_connected_at,
-    //             &relay.last_general_eose_at,
-    //             &relay.read,
-    //             &relay.write,
-    //             &relay.advertise,
-    //         ))?;
-    //         Ok::<(), Error>(())
-    //     })
-    //     .await??;
+    pub async fn update(pool: &SqlitePool, relay: DbRelay) -> Result<(), Error> {
+        let sql = "UPDATE relay SET last_connected_at=?, read=?, write=?, advertise=? WHERE url=?";
 
-    //     Ok(())
-    // }
+        sqlx::query(sql)
+            .bind(&relay.last_connected_at)
+            .bind(&relay.read)
+            .bind(&relay.write)
+            .bind(&relay.advertise)
+            .bind(&relay.url.0)
+            .execute(pool)
+            .await?;
 
-    // pub async fn update(relay: DbRelay) -> Result<(), Error> {
-    //     let sql = "UPDATE relay SET success_count=?, failure_count=?, rank=?, \
-    //                last_connected_at=?, last_general_eose_at=?, read=?, write=?, advertise=? WHERE url=?";
-
-    //     spawn_blocking(move || {
-    //         let maybe_db = GLOBALS.db.blocking_lock();
-    //         let db = maybe_db.as_ref().unwrap();
-
-    //         let mut stmt = db.prepare(sql)?;
-    //         stmt.execute((
-    //             &relay.success_count,
-    //             &relay.failure_count,
-    //             &relay.rank,
-    //             &relay.last_connected_at,
-    //             &relay.last_general_eose_at,
-    //             &relay.read,
-    //             &relay.write,
-    //             &relay.advertise,
-    //             &relay.url.0,
-    //         ))?;
-    //         Ok::<(), Error>(())
-    //     })
-    //     .await??;
-
-    //     Ok(())
-    // }
+        Ok(())
+    }
 }
 
 impl sqlx::FromRow<'_, SqliteRow> for DbRelay {
@@ -140,9 +88,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbRelay {
         })?;
         Ok(DbRelay {
             url,
-            last_connected_at: row
-                .try_get::<Option<i32>, &str>("last_connected_at")?
-                .map(|n| n as u64),
+            last_connected_at: row.try_get::<Option<i32>, &str>("last_connected_at")?,
             read: row.try_get::<bool, &str>("read")?,
             write: row.try_get::<bool, &str>("write")?,
             advertise: row.try_get::<bool, &str>("advertise")?,
