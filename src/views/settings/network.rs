@@ -22,7 +22,7 @@ pub enum RelayMessage {
 pub struct RelayRow {
     is_connected: bool,
     url: RelayUrl,
-    last_connected_at: Option<i32>,
+    last_connected_at: Option<i64>,
     is_read: bool,
     is_write: bool,
     is_advertise: bool,

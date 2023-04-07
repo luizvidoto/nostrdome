@@ -7,7 +7,7 @@ use crate::{error::Error, types::RelayUrl};
 #[derive(Debug, Clone)]
 pub struct DbRelay {
     pub url: RelayUrl,
-    pub last_connected_at: Option<i32>,
+    pub last_connected_at: Option<i64>,
     pub read: bool,
     pub write: bool,
     pub advertise: bool,
@@ -96,7 +96,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbRelay {
         })?;
         Ok(DbRelay {
             url,
-            last_connected_at: row.try_get::<Option<i32>, &str>("last_connected_at")?,
+            last_connected_at: row.try_get::<Option<i64>, &str>("last_connected_at")?,
             read: row.try_get::<bool, &str>("read")?,
             write: row.try_get::<bool, &str>("write")?,
             advertise: row.try_get::<bool, &str>("advertise")?,

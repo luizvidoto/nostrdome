@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-/// Errors that can occur in the nostr-proto crate
+/// Errors that can occur in the nostrdome crate
 #[derive(Error, Debug)]
 pub enum Error {
     /// Assertion failed
@@ -57,4 +57,16 @@ pub enum Error {
     /// UTF-8 error
     #[error("UTF-8 Error: {0}")]
     Utf8Error(#[from] std::str::Utf8Error),
+
+    /// Nostr Sdk Error
+    #[error("{0}")]
+    NostrSdkError(#[from] NostrSdkError),
+}
+
+/// Errors that can occur in the nostr-sdk crate
+#[derive(Error, Debug)]
+pub enum NostrSdkError {
+    /// Error converting from hex string to EventId
+    #[error("HexToEventIdError: {0}")]
+    HexToEventIdError(String),
 }
