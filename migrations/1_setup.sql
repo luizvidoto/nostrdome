@@ -1,9 +1,12 @@
-CREATE TABLE IF NOT EXISTS local_settings (
-    schema_version INTEGER DEFAULT 0,
-    encrypted_private_key TEXT DEFAULT NULL
-);
+-- Database settings
+PRAGMA encoding = "UTF-8";
 
-INSERT INTO
-    local_settings (schema_version, encrypted_private_key)
-VALUES
-    (0, "");
+PRAGMA journal_mode = WAL;
+
+PRAGMA main.synchronous = NORMAL;
+
+PRAGMA foreign_keys = ON;
+
+PRAGMA application_id = 1654008667;
+
+PRAGMA user_version = 1;

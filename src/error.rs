@@ -61,6 +61,16 @@ pub enum Error {
     /// Nostr Sdk Error
     #[error("{0}")]
     NostrSdkError(#[from] NostrSdkError),
+
+    /// Invalid Date
+    #[error("Invalid Date: {0}")]
+    InvalidDate(String),
+
+    /// Database versione newer than supported
+    #[error(
+        "Database version is newer than supported by this executable (v{current} > v{db_ver})"
+    )]
+    NewerDbVersion { current: usize, db_ver: usize },
 }
 
 /// Errors that can occur in the nostr-sdk crate

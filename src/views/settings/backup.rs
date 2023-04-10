@@ -4,7 +4,7 @@ use crate::{components::text::title, net};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    DbEvent(net::Event),
+    DbEvent(net::database::Event),
 }
 
 #[derive(Debug, Clone)]

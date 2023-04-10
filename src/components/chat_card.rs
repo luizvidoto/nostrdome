@@ -1,38 +1,40 @@
-use fake::faker::name::en::Name;
-use fake::{Dummy, Fake};
 use iced::widget::{button, column, row, text};
 use iced::{Color, Element, Length};
 
-#[derive(Debug, Dummy, Clone)]
+#[derive(Debug, Clone)]
 pub struct ChatCard {
-    id: usize,
+    id: String,
     profile_img: String,
     name: String,
     date: String,
-    sub_text: String,
+    last_message: String,
 }
 impl ChatCard {
-    pub fn new(id: usize) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        profile_image: impl Into<String>,
+    ) -> Self {
         Self {
-            id,
-            profile_img: "https://picsum.photos/60/60".into(),
-            name: Name().fake(),
+            id: id.into(),
+            profile_img: profile_image.into(),
+            name: name.into(),
             date: "15/03/2023".into(),
-            sub_text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.".into(),
+            last_message: "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.".into(),
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    UpdateActiveId(usize),
+    UpdateActiveId(String),
     ShowOnlyProfileImage,
     ShowFullCard,
 }
 
 #[derive(Debug, Clone)]
 pub struct State {
-    active_id: Option<usize>,
+    active_id: Option<String>,
     only_profile: bool,
     card: ChatCard,
 }
@@ -47,8 +49,8 @@ impl State {
     }
     pub fn view(&self) -> Element<Message> {
         let mut is_active = false;
-        if let Some(id) = self.active_id {
-            is_active = id == self.card.id;
+        if let Some(id) = &self.active_id {
+            is_active = id == &self.card.id;
         }
         let btn_style = if is_active {
             iced::theme::Button::Custom(Box::new(ActiveButtonStyle {}))
@@ -62,7 +64,7 @@ impl State {
                 text("Profile Image"),
                 column![
                     text(&self.card.name),
-                    text(&self.card.sub_text)
+                    text(&self.card.last_message)
                         .size(14.0)
                         .width(Length::Fill)
                         .height(Length::Fixed(30.0)),
@@ -74,7 +76,7 @@ impl State {
         button(btn_content)
             .width(Length::Fill)
             .height(Length::Fixed(80.0))
-            .on_press(Message::UpdateActiveId(self.card.id))
+            .on_press(Message::UpdateActiveId(self.card.id.clone()))
             .style(btn_style)
             .into()
     }

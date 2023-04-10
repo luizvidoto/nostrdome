@@ -1,82 +1,96 @@
 use std::str::FromStr;
 
-use iced::widget::{button, column, container, row, scrollable, text};
+use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length};
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 
 use crate::components;
 use crate::components::chat_card::{self, ChatCard};
 use crate::components::text_input_group::text_input_group;
-use crate::net::{self, Connection};
-use crate::utils::parse_key;
+use crate::net::database::DbConnection;
+use crate::net::nostr::NostrConnection;
+use crate::net::{self};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    DbEvent(net::Event),
     OnVerResize(u16),
     ShowRelays,
     NavSettingsPress,
     ChatCardMessage(components::chat_card::Message),
-    ListOwnEvents,
     GetEventById(String),
-    ShowPublicKey,
-    DMNPubReceiverChange(String),
     DMNMessageChange(String),
     DMSentPress,
+    DmToPubInputChange(String),
 }
 
 #[derive(Debug, Clone)]
 pub struct State {
     ver_divider_position: Option<u16>,
     chats: Vec<chat_card::State>,
-    dm_npub_receiver: String,
+    dm_hex_pub_receiver: Option<XOnlyPublicKey>,
     dm_msg: String,
+    messages: Vec<String>,
+    dm_to_pub: String,
 }
 impl State {
     pub fn new() -> Self {
+        let mut messages = vec![];
+        for idx in 0..20 {
+            messages.push(format!("Message {}", idx));
+        }
+
         let mut chats: Vec<chat_card::State> = vec![];
-        for id in 0..10 {
-            chats.push(chat_card::State::new(ChatCard::new(id)));
+        let hex_pubs = vec![
+            "8860df7d3b24bfb40fe5bdd2041663d35d3e524ce7376628aa55a7d3e624ac46",
+            "9e45b5e573adfb70be9f81e6f19e3df334fa24b3a7273859104d399ccbf64e94",
+        ];
+        for pb_key in hex_pubs {
+            let name = pb_key[0..6].to_owned();
+            let profile_image = "https://picsum.photos/60/60";
+            chats.push(chat_card::State::new(ChatCard::new(
+                pb_key,
+                name,
+                profile_image,
+            )));
         }
         Self {
+            messages,
             ver_divider_position: None,
             chats,
-            dm_npub_receiver: "".into(),
+            dm_hex_pub_receiver: None,
             dm_msg: "".into(),
+            dm_to_pub: "".into(),
         }
     }
     pub fn view(&self) -> Element<Message> {
-        let first = container(column![scrollable(
-            self.chats.iter().fold(column![].spacing(0), |col, card| {
-                col.push(card.view().map(Message::ChatCardMessage))
-            })
-        )])
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x()
-        .center_y();
+        // let first = container(column![scrollable(
+        //     self.chats.iter().fold(column![].spacing(0), |col, card| {
+        //         col.push(card.view().map(Message::ChatCardMessage))
+        //     })
+        // )])
+        // .width(Length::Fill)
+        // .height(Length::Fill)
+        // .center_x()
+        // .center_y();
 
-        let show_relay_btn = button("Show Relay").on_press(Message::ShowRelays);
-        let get_own_events_btn = button("List Own Events").on_press(Message::ListOwnEvents);
-        let show_public_btn = button("Show Public Key").on_press(Message::ShowPublicKey);
-        let dm_receiver_pubkey_input = text_input_group(
-            "DM To PubKey",
-            "npub1...",
-            &self.dm_npub_receiver,
+        let to_pub_input = text_input_group(
+            "DM To",
+            "npub...",
+            &self.dm_to_pub,
             None,
-            Message::DMNPubReceiverChange,
+            Message::DmToPubInputChange,
         );
-        let dm_msg_input = text_input_group(
-            "Message",
-            "Hello friend...",
-            &self.dm_msg,
-            None,
-            Message::DMNMessageChange,
-        );
+        let first = container(to_pub_input);
+
+        let chat_content = self
+            .messages
+            .iter()
+            .fold(column![].spacing(5), |col, msg| col.push(text(msg)));
+        let chat_row = scrollable(chat_content);
+        let dm_msg_input = text_input("", &self.dm_msg, Message::DMNMessageChange);
         let dm_send_btn = button("Send DM").on_press(Message::DMSentPress);
-        let first_row = column![show_relay_btn, get_own_events_btn, show_public_btn].spacing(10);
-        let second_row = column![dm_receiver_pubkey_input, dm_msg_input, dm_send_btn].spacing(5);
-        let second = container(column![first_row, second_row])
+        let msg_input_row = column![dm_msg_input, dm_send_btn].spacing(5);
+        let second = container(column![chat_row, msg_input_row])
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x()
@@ -104,50 +118,53 @@ impl State {
             .height(Length::Fill)
             .into()
     }
-    pub fn update(&mut self, message: Message, conn: &mut Connection) {
+    pub fn db_event(&mut self, event: net::database::Event, db_conn: &mut DbConnection) {
+        ()
+    }
+    pub fn update(
+        &mut self,
+        message: Message,
+        db_conn: &mut DbConnection,
+        nostr_conn: &mut NostrConnection,
+    ) {
         match message {
-            Message::DbEvent(_ev) => (),
+            Message::DmToPubInputChange(changed) => {
+                self.dm_to_pub = changed;
+            }
             Message::DMNMessageChange(msg) => {
                 self.dm_msg = msg;
             }
-            Message::DMSentPress => match parse_key(self.dm_npub_receiver.clone()) {
-                Ok(hex_key) => match XOnlyPublicKey::from_str(&hex_key) {
+            Message::DMSentPress => {
+                match XOnlyPublicKey::from_str(&self.dm_to_pub) {
                     Ok(pub_key) => {
-                        if let Err(e) =
-                            conn.send(net::Message::SendDMTo((pub_key, self.dm_msg.clone())))
-                        {
-                            println!("{}", e);
+                        match nostr_conn.send(net::nostr::Message::SendDMTo((
+                            pub_key,
+                            self.dm_msg.clone(),
+                        ))) {
+                            Ok(_) => {
+                                self.dm_msg = "".into();
+                            }
+                            Err(e) => {
+                                tracing::error!("{}", e);
+                            }
                         }
                     }
                     Err(e) => {
-                        println!("Invalid Public Key!");
-                        println!("{}", e.to_string());
+                        tracing::error!("{}", e);
                     }
-                },
-                Err(e) => {
-                    println!("Invalid Public Key!");
-                    println!("{}", e.to_string());
                 }
-            },
 
-            Message::DMNPubReceiverChange(npub) => {
-                self.dm_npub_receiver = npub;
+                // if let Some(pub_key) = self.dm_hex_pub_receiver {
+
+                // }
             }
-            Message::ShowPublicKey => {
-                if let Err(e) = conn.send(net::Message::ShowPublicKey) {
-                    println!("{}", e);
-                }
-            }
+
             Message::GetEventById(ev_id) => {
-                if let Err(e) = conn.send(net::Message::GetEventById(ev_id)) {
-                    println!("{}", e);
-                }
+                // if let Err(e) = db_conn.send(net::Message::GetEventById(ev_id)) {
+                //     println!("{}", e);
+                // }
             }
-            Message::ListOwnEvents => {
-                if let Err(e) = conn.send(net::Message::ListOwnEvents) {
-                    println!("{}", e);
-                }
-            }
+
             Message::OnVerResize(position) => {
                 if position > 200 {
                     self.ver_divider_position = Some(position);
@@ -165,11 +182,24 @@ impl State {
             }
             Message::NavSettingsPress => (),
             Message::ShowRelays => {
-                if let Err(e) = conn.send(net::Message::ShowRelays) {
-                    println!("{}", e);
-                }
+                // if let Err(e) = db_conn.send(net::Message::ShowRelays) {
+                //     println!("{}", e);
+                // }
             }
             Message::ChatCardMessage(msg) => {
+                match msg.clone() {
+                    chat_card::Message::UpdateActiveId(hex_pub) => {
+                        match XOnlyPublicKey::from_str(&hex_pub) {
+                            Ok(hex_pub) => {
+                                self.dm_hex_pub_receiver = Some(hex_pub.clone());
+                            }
+                            Err(e) => {
+                                tracing::error!("{}", e);
+                            }
+                        }
+                    }
+                    _ => (),
+                }
                 for c in &mut self.chats {
                     c.update(msg.clone());
                 }

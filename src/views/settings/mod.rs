@@ -2,7 +2,8 @@ use iced::widget::{button, column, container, row};
 use iced::{Color, Element, Length};
 use nostr_sdk::Metadata;
 
-use crate::net::{self, Connection};
+use crate::net::database::DbConnection;
+use crate::net::{self};
 
 mod account;
 mod appearance;
@@ -11,7 +12,6 @@ mod network;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    DbEvent(net::Event),
     AccountMessage(account::Message),
     AppearanceMessage(appearance::Message),
     NetworkMessage(network::Message),
@@ -31,10 +31,10 @@ pub enum State {
     Backup { state: backup::State },
 }
 impl State {
-    pub fn new(conn: &mut Connection) -> Self {
-        Self::account(conn)
+    pub fn new(db_conn: &mut DbConnection) -> Self {
+        Self::account(db_conn)
     }
-    fn account(_conn: &mut Connection) -> Self {
+    fn account(_db_conn: &mut DbConnection) -> Self {
         let profile = Metadata::new();
         // conn.send(message)
         Self::Account {
@@ -46,13 +46,13 @@ impl State {
             state: appearance::State::new(),
         }
     }
-    fn network_loading(conn: &mut Connection) -> Self {
+    fn network_loading(db_conn: &mut DbConnection) -> Self {
         // let mut relays = vec![];
         // for _ in 0..10 {
         //     relays.push(RelayRow::new((8..12).fake::<String>()))
         // }
         Self::Network {
-            state: network::State::loading(conn),
+            state: network::State::loading(db_conn),
         }
     }
     fn backup() -> Self {
@@ -60,15 +60,16 @@ impl State {
             state: backup::State::default(),
         }
     }
-
-    pub fn update(&mut self, message: Message, conn: &mut Connection) {
+    pub fn db_event(&mut self, event: net::database::Event, db_conn: &mut DbConnection) {
+        match self {
+            Self::Account { state } => state.update(account::Message::DbEvent(event)),
+            Self::Appearance { state } => state.update(appearance::Message::DbEvent(event)),
+            Self::Network { state } => state.update(network::Message::DbEvent(event), db_conn),
+            Self::Backup { state } => state.update(backup::Message::DbEvent(event)),
+        }
+    }
+    pub fn update(&mut self, message: Message, db_conn: &mut DbConnection) {
         match message {
-            Message::DbEvent(event) => match self {
-                Self::Account { state } => state.update(account::Message::DbEvent(event)),
-                Self::Appearance { state } => state.update(appearance::Message::DbEvent(event)),
-                Self::Network { state } => state.update(network::Message::DbEvent(event), conn),
-                Self::Backup { state } => state.update(backup::Message::DbEvent(event)),
-            },
             Message::AccountMessage(msg) => {
                 if let State::Account { state } = self {
                     state.update(msg);
@@ -81,7 +82,7 @@ impl State {
             }
             Message::NetworkMessage(msg) => {
                 if let State::Network { state } = self {
-                    state.update(msg, conn);
+                    state.update(msg, db_conn);
                 }
             }
             Message::BackupMessage(msg) => {
@@ -91,13 +92,13 @@ impl State {
             }
             Message::NavEscPress => (),
             Message::MenuAccountPress => {
-                *self = Self::account(conn);
+                *self = Self::account(db_conn);
             }
             Message::MenuAppearancePress => {
                 *self = Self::appearance();
             }
             Message::MenuNetworkPress => {
-                *self = Self::network_loading(conn);
+                *self = Self::network_loading(db_conn);
             }
             Message::MenuBackupPress => {
                 *self = Self::backup();

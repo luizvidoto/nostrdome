@@ -1,7 +1,27 @@
-use directories::ProjectDirs;
-use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
-
 use crate::error::Error;
+use directories::ProjectDirs;
+use sqlx::SqlitePool;
+use std::cmp::Ordering;
+
+/// Latest database version
+pub const DB_VERSION: usize = 1;
+
+/// Startup DB Pragmas
+pub const STARTUP_SQL: &str = r##"
+PRAGMA main.synchronous=NORMAL;
+PRAGMA foreign_keys = ON;
+PRAGMA journal_size_limit=32768;
+pragma mmap_size = 17179869184; -- cap mmap at 16GB
+"##;
+
+const INITIAL_SETUP: [&str; 6] = [
+    include_str!("../../migrations/1_setup.sql"),
+    include_str!("../../migrations/2_event.sql"),
+    include_str!("../../migrations/3_relay.sql"),
+    include_str!("../../migrations/4_tag.sql"),
+    include_str!("../../migrations/5_contact.sql"),
+    include_str!("../../migrations/6_message.sql"),
+];
 
 #[derive(Debug, Clone)]
 pub struct Database {
@@ -36,68 +56,83 @@ impl Database {
 
             let s = Self { pool };
 
-            s.initial_setup().await?;
-            s.check_and_upgrade().await?;
+            upgrade_db(&s.pool).await?;
 
             Ok(s)
         } else {
             Err(Error::DatabaseSetup("Not found project directory".into()))
         }
     }
-
-    async fn initial_setup(&self) -> Result<(), Error> {
-        tracing::warn!("Database initial setup");
-        for sql in INITIAL_SETUP {
-            sqlx::query(sql).execute(&self.pool).await?;
-        }
-        Ok(())
-    }
-
-    async fn check_and_upgrade(&self) -> Result<(), Error> {
-        let version = sqlx::query("SELECT schema_version FROM local_settings LIMIT 1")
-            .map(|r: SqliteRow| r.get(0))
-            .fetch_one(&self.pool)
-            .await?;
-
-        tracing::warn!("DB version: {}", version);
-        self.upgrade(version).await?;
-        Ok(())
-    }
-
-    async fn upgrade(&self, mut version: i32) -> Result<(), Error> {
-        if version > UPGRADE_SQL.len() as i32 {
-            panic!(
-                "Database version {} is newer than this binary which expects version {}.",
-                version,
-                UPGRADE_SQL.len()
-            );
-        }
-
-        while version < UPGRADE_SQL.len() as i32 {
-            tracing::warn!("Upgrading database to version {}", version + 1);
-
-            sqlx::query(UPGRADE_SQL[version as usize])
-                .execute(&self.pool)
-                .await?;
-
-            version += 1;
-
-            sqlx::query("UPDATE local_settings SET schema_version = ?")
-                .bind(version)
-                .execute(&self.pool)
-                .await?;
-        }
-
-        tracing::warn!("Database is at version {}", version);
-
-        Ok(())
-    }
 }
 
-const INITIAL_SETUP: [&str; 3] = [
-    include_str!("../../migrations/1_setup.sql"),
-    include_str!("../../migrations/2_event.sql"),
-    include_str!("../../migrations/3_relay.sql"),
+/// Upgrade DB to latest version, and execute pragma settings
+pub async fn upgrade_db(pool: &SqlitePool) -> Result<(), Error> {
+    // check the version.
+    let mut curr_version = curr_db_version(pool).await?;
+    tracing::info!("DB version = {:?}", curr_version);
+
+    match curr_version.cmp(&DB_VERSION) {
+        // Database is new or not current
+        Ordering::Less => {
+            // initialize from scratch
+            if curr_version == 0 {
+                curr_version = initial_setup(pool).await?;
+            }
+
+            // for initialized but out-of-date schemas, proceed to
+            // upgrade sequentially until we are current.
+            /* if curr_version == 1 {
+                curr_version = mig_1_to_2(pool).await?;
+            } */
+            /* if curr_version == 2 {
+                curr_version = mig_2_to_3(pool).await?;
+            } */
+
+            if curr_version == DB_VERSION {
+                tracing::info!("All migration scripts completed successfully (v{DB_VERSION})");
+            }
+        }
+        // Database is current, all is good
+        Ordering::Equal => {
+            tracing::debug!("Database version was already current (v{DB_VERSION})");
+        }
+        // Database is newer than what this code understands, abort
+        Ordering::Greater => {
+            return Err(Error::NewerDbVersion {
+                current: curr_version,
+                db_ver: DB_VERSION,
+            });
+        }
+    }
+
+    // Setup PRAGMA
+    sqlx::query(STARTUP_SQL).execute(pool).await?;
+    tracing::debug!("SQLite PRAGMA startup completed");
+    Ok(())
+}
+
+/// Determine the current application database schema version.
+pub async fn curr_db_version(pool: &SqlitePool) -> Result<usize, Error> {
+    let query = "PRAGMA user_version;";
+    let curr_version: u32 = sqlx::query_scalar(query).fetch_one(pool).await?;
+    Ok(curr_version as usize)
+}
+
+async fn initial_setup(pool: &SqlitePool) -> Result<usize, sqlx::Error> {
+    tracing::warn!("Database initial setup");
+    for sql in INITIAL_SETUP {
+        sqlx::query(sql).execute(pool).await?;
+    }
+    log::info!("Database schema initialized to v1");
+    Ok(1)
+}
+
+const _UPGRADE_SQL: [&str; 0] = [
+// include_str!("../../migrations/migration.sql")
 ];
 
-const UPGRADE_SQL: [&str; 1] = [include_str!("../../migrations/fake_mig.sql")];
+/* async fn mig_1_to_2(pool: &SqlitePool) -> Result<usize, Error> {
+    sqlx::query(include_str!("../migrations/002.sql")).execute(pool).await?;
+    log::info!("database schema upgraded v1 -> v2");
+    Ok(2)
+} */

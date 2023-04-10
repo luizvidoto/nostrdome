@@ -6,7 +6,8 @@ use iced_aw::{Card, Modal};
 use crate::components::text::title;
 use crate::components::text_input_group::text_input_group;
 use crate::db::DbRelay;
-use crate::net::{self, Connection};
+use crate::net::database::DbConnection;
+use crate::net::{self};
 use crate::types::RelayUrl;
 
 #[derive(Debug, Clone)]
@@ -96,7 +97,7 @@ impl From<&RelayRow> for DbRelay {
 #[derive(Debug, Clone)]
 pub enum Message {
     RelayMessage(RelayMessage),
-    DbEvent(net::Event),
+    DbEvent(net::database::Event),
     OpenAddRelayModal,
     CancelButtonPressed,
     OkButtonPressed,
@@ -114,8 +115,8 @@ pub enum State {
     },
 }
 impl State {
-    pub fn loading(conn: &mut Connection) -> Self {
-        if let Err(e) = conn.send(net::Message::FetchRelays) {
+    pub fn loading(conn: &mut DbConnection) -> Self {
+        if let Err(e) = conn.send(net::database::Message::FetchRelays) {
             tracing::error!("{}", e);
         }
         Self::Loading
@@ -129,11 +130,11 @@ impl State {
         }
     }
 
-    pub fn update(&mut self, message: Message, conn: &mut Connection) {
+    pub fn update(&mut self, message: Message, db_conn: &mut DbConnection) {
         match self {
             State::Loading => {
                 if let Message::DbEvent(ev) = message {
-                    if let net::Event::GotDbRelays(db_relays) = ev {
+                    if let net::database::Event::GotDbRelays(db_relays) = ev {
                         *self = Self::loaded(db_relays);
                     }
                 }
@@ -151,7 +152,9 @@ impl State {
                 Message::OkButtonPressed => {
                     match RelayUrl::try_from_str(add_relay_input) {
                         Ok(url) => {
-                            if let Err(e) = conn.send(net::Message::AddRelay(DbRelay::new(url))) {
+                            if let Err(e) =
+                                db_conn.send(net::database::Message::AddRelay(DbRelay::new(url)))
+                            {
                                 tracing::error!("{}", e);
                             }
                         }
@@ -164,14 +167,14 @@ impl State {
                 }
                 Message::OpenAddRelayModal => *show_modal = true,
                 Message::DbEvent(ev) => match ev {
-                    net::Event::GotDbRelays(db_relays) => {
+                    net::database::Event::GotDbRelays(db_relays) => {
                         *relays = db_relays.iter().map(|r| RelayRow::new(r)).collect()
                     }
-                    net::Event::DatabaseSuccessEvent(kind) => match kind {
-                        net::DatabaseSuccessEventKind::RelayCreated
-                        | net::DatabaseSuccessEventKind::RelayDeleted
-                        | net::DatabaseSuccessEventKind::RelayUpdated => {
-                            if let Err(e) = conn.send(net::Message::FetchRelays) {
+                    net::database::Event::DatabaseSuccessEvent(kind) => match kind {
+                        net::database::DatabaseSuccessEventKind::RelayCreated
+                        | net::database::DatabaseSuccessEventKind::RelayDeleted
+                        | net::database::DatabaseSuccessEventKind::RelayUpdated => {
+                            if let Err(e) = db_conn.send(net::database::Message::FetchRelays) {
                                 tracing::error!("{}", e);
                             }
                         }
@@ -182,25 +185,29 @@ impl State {
                 Message::RelayMessage(msg) => match msg.clone() {
                     RelayMessage::None => (),
                     RelayMessage::DeleteRelay(relay_url) => {
-                        if let Err(e) = conn.send(net::Message::DeleteRelay(relay_url)) {
+                        if let Err(e) = db_conn.send(net::database::Message::DeleteRelay(relay_url))
+                        {
                             tracing::error!("{}", e);
                         }
                     }
                     RelayMessage::ToggleRead(mut db_relay) => {
                         db_relay.read = !db_relay.read;
-                        if let Err(e) = conn.send(net::Message::UpdateRelay(db_relay)) {
+                        if let Err(e) = db_conn.send(net::database::Message::UpdateRelay(db_relay))
+                        {
                             tracing::error!("{}", e);
                         }
                     }
                     RelayMessage::ToggleWrite(mut db_relay) => {
                         db_relay.write = !db_relay.write;
-                        if let Err(e) = conn.send(net::Message::UpdateRelay(db_relay)) {
+                        if let Err(e) = db_conn.send(net::database::Message::UpdateRelay(db_relay))
+                        {
                             tracing::error!("{}", e);
                         }
                     }
                     RelayMessage::ToggleAdvertise(mut db_relay) => {
                         db_relay.advertise = !db_relay.advertise;
-                        if let Err(e) = conn.send(net::Message::UpdateRelay(db_relay)) {
+                        if let Err(e) = db_conn.send(net::database::Message::UpdateRelay(db_relay))
+                        {
                             tracing::error!("{}", e);
                         }
                     }

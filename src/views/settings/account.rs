@@ -17,7 +17,7 @@ pub enum Message {
     LNChange(String),
     NIP05Change(String),
     SubmitPress,
-    DbEvent(net::Event),
+    DbEvent(net::database::Event),
 }
 
 #[derive(Debug, Clone)]

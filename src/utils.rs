@@ -1,3 +1,4 @@
+use chrono::NaiveDateTime;
 use nostr_sdk::prelude::*;
 
 // Accepts both hex and bech32 keys and returns the hex encoded key
@@ -16,4 +17,22 @@ pub fn parse_key(key: String) -> Result<String, anyhow::Error> {
         key
     };
     Ok(parsed_key)
+}
+
+/// Convert a i64 representing milliseconds since UNIX epoch to an Option<NaiveDateTime>.
+///
+/// # Arguments
+///
+/// * `millis` - A i64 representing the number of milliseconds since the UNIX epoch (1970-01-01 00:00:00 UTC)
+///
+/// # Returns
+///
+/// * Am Option with a NaiveDateTime representing the given milliseconds since UNIX epoch
+pub fn millis_to_naive(millis: i64) -> Option<NaiveDateTime> {
+    // Calculate the seconds and nanoseconds components of the input timestamp
+    let ts_secs = millis / 1000;
+    let ts_ns = (millis % 1000) * 1_000_000;
+
+    // Convert the seconds and nanoseconds to a NaiveDateTime
+    NaiveDateTime::from_timestamp_opt(ts_secs, ts_ns as u32)
 }
