@@ -23,7 +23,7 @@ pub fn text_input_group<'a, Message: Clone + 'a>(
         text("").into()
     };
     let label_row = row![label, tooltip].spacing(4);
-    let txt_input = text_input(placeholder, value, on_change);
+    let txt_input = text_input(placeholder, value).on_input(on_change);
 
     column![label_row, txt_input].into()
 }

@@ -11,6 +11,7 @@ pub enum Message {
     SubmitPress(String),
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct State {
     secret_key_input: String,

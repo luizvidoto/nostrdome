@@ -70,7 +70,7 @@ pub fn database_connect() -> Subscription<Event> {
                         }
                     }
                     (
-                        Some(Event::Connected(DbConnection(sender))),
+                        Event::Connected(DbConnection(sender)),
                         State::Connected { database, receiver },
                     )
                 }
@@ -79,7 +79,7 @@ pub fn database_connect() -> Subscription<Event> {
                     tracing::error!("{}", e);
                     tracing::warn!("Trying again in 2 secs");
                     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                    (Some(Event::Disconnected), State::Disconnected)
+                    (Event::Disconnected, State::Disconnected)
                 }
             },
             State::Connected {
@@ -92,40 +92,40 @@ pub fn database_connect() -> Subscription<Event> {
                             Message::FetchRelays => {
                                 match DbRelay::fetch(&database.pool, None).await {
                                     Ok(relays) => {
-                                        (Some(Event::GotDbRelays(relays)), State::Connected {database,receiver})
+                                        (Event::GotDbRelays(relays), State::Connected {database,receiver})
                                     },
                                     Err(e) => {
-                                        (Some(Event::Error(e.to_string())), State::Connected {database,receiver})
+                                        (Event::Error(e.to_string()), State::Connected {database,receiver})
                                     }
                                 }
                             }
                             Message::DeleteRelay(relay_url) => {
                                 match DbRelay::delete(&database.pool, relay_url).await {
                                     Ok(_) => {
-                                        (Some(Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayDeleted)), State::Connected {database,receiver})
+                                        (Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayDeleted), State::Connected {database,receiver})
                                     }
                                     Err(e) => {
-                                        (Some(Event::Error(e.to_string())), State::Connected {database,receiver})
+                                        (Event::Error(e.to_string()), State::Connected {database,receiver})
                                     }
                                 }
                             }
                             Message::AddRelay(db_relay) => {
                                 match DbRelay::insert(&database.pool, db_relay).await {
                                     Ok(_) => {
-                                        (Some(Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayCreated)), State::Connected {database,receiver})
+                                        (Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayCreated), State::Connected {database,receiver})
                                     }
                                     Err(e) => {
-                                        (Some(Event::Error(e.to_string())), State::Connected {database,receiver})
+                                        (Event::Error(e.to_string()), State::Connected {database,receiver})
                                     }
                                 }
                             }
                             Message::UpdateRelay(db_relay) => {
                                 match DbRelay::update(&database.pool, db_relay).await {
                                     Ok(_) => {
-                                        (Some(Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayUpdated)), State::Connected {database,receiver})
+                                        (Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayUpdated), State::Connected {database,receiver})
                                     }
                                     Err(e) => {
-                                        (Some(Event::Error(e.to_string())), State::Connected {database,receiver})
+                                        (Event::Error(e.to_string()), State::Connected {database,receiver})
                                     }
                                 }
                             }

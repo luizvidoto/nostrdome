@@ -87,7 +87,7 @@ impl State {
             .iter()
             .fold(column![].spacing(5), |col, msg| col.push(text(msg)));
         let chat_row = scrollable(chat_content);
-        let dm_msg_input = text_input("", &self.dm_msg, Message::DMNMessageChange);
+        let dm_msg_input = text_input("", &self.dm_msg).on_input(Message::DMNMessageChange);
         let dm_send_btn = button("Send DM").on_press(Message::DMSentPress);
         let msg_input_row = column![dm_msg_input, dm_send_btn].spacing(5);
         let second = container(column![chat_row, msg_input_row])
@@ -118,13 +118,13 @@ impl State {
             .height(Length::Fill)
             .into()
     }
-    pub fn db_event(&mut self, event: net::database::Event, db_conn: &mut DbConnection) {
+    pub fn db_event(&mut self, _event: net::database::Event, _db_conn: &mut DbConnection) {
         ()
     }
     pub fn update(
         &mut self,
         message: Message,
-        db_conn: &mut DbConnection,
+        _db_conn: &mut DbConnection,
         nostr_conn: &mut NostrConnection,
     ) {
         match message {
@@ -159,7 +159,7 @@ impl State {
                 // }
             }
 
-            Message::GetEventById(ev_id) => {
+            Message::GetEventById(_ev_id) => {
                 // if let Err(e) = db_conn.send(net::Message::GetEventById(ev_id)) {
                 //     println!("{}", e);
                 // }
