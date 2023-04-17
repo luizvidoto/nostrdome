@@ -60,7 +60,7 @@ impl State {
             state: network::State::loading(db_conn),
         }
     }
-    fn contacts(db_conn: &mut DbConnection) -> Self {
+    pub fn contacts(db_conn: &mut DbConnection) -> Self {
         Self::Contacts {
             state: contacts::State::loading(db_conn),
         }

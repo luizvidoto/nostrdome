@@ -45,13 +45,12 @@ pub enum Event {
     DatabaseSuccessEvent(DatabaseSuccessEventKind),
     GotDbRelays(Vec<DbRelay>),
     GotMessages(Vec<ChatMessage>),
-    GotNewMessage(ChatMessage),
     GotContacts(Vec<DbContact>),
     None,
 }
 #[derive(Debug, Clone)]
 pub enum Message {
-    FetchMessages(Keys),
+    FetchMessages { keys: Keys, contact: XOnlyPublicKey },
     AddContact(DbContact),
     FetchContacts,
     UpdateContact(DbContact),
@@ -150,10 +149,10 @@ pub fn database_connect(in_memory: bool, pubkey: &str) -> Subscription<Event> {
                                         Err(e) => (Event::Error(e.to_string()), State::Connected {database, receiver}),
                                     }
                                 }
-                                Message::FetchMessages(keys) => {
+                                Message::FetchMessages {keys, contact} => {
                                     match DbEvent::fetch(
                                         &database.pool,
-                                        Some(&format!("pubkey = '{}'", &keys.public_key())),
+                                        Some(&format!("pubkey = '{}' OR pubkey = '{}'", &keys.public_key(), contact)),
                                     )
                                     .await
                                     {
@@ -168,7 +167,8 @@ pub fn database_connect(in_memory: bool, pubkey: &str) -> Subscription<Event> {
                                                     if let Kind::EncryptedDirectMessage = ev.kind {
                                                         match decrypt(&secret_key, &ev.pubkey, &ev.content) {
                                                             Ok(msg) => Some(ChatMessage::from_event(ev, msg)),
-                                                            Err(_e) => None,
+                                                            Err(_e) => Some(ChatMessage::from_event(ev, &ev.content)),
+                                                            // Err(_e) => None,
                                                         }
                                                     } else {
                                                         None

@@ -83,7 +83,7 @@ impl State {
                         *modal_pubkey_input = "".into();
                         *modal_rec_relay_input = "".into();
                     }
-                    Err(e) => {
+                    Err(_e) => {
                         tracing::error!("Every contact must have a valid pubkey.");
                     }
                 },

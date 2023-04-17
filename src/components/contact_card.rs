@@ -1,56 +1,39 @@
 use iced::widget::{button, column, row, text};
 use iced::{Color, Element, Length};
+use nostr_sdk::secp256k1::XOnlyPublicKey;
 
-#[derive(Debug, Clone)]
-pub struct ContactCard {
-    id: String,
-    profile_img: String,
-    name: String,
-    date: String,
-    last_message: String,
-}
-impl ContactCard {
-    pub fn new(
-        id: impl Into<String>,
-        name: impl Into<String>,
-        profile_image: impl Into<String>,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            profile_img: profile_image.into(),
-            name: name.into(),
-            date: "15/03/2023".into(),
-            last_message: "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.".into(),
-        }
-    }
-}
+use crate::db::DbContact;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    UpdateActiveId(String),
+    UpdateActiveId(XOnlyPublicKey),
     ShowOnlyProfileImage,
     ShowFullCard,
 }
 
 #[derive(Debug, Clone)]
 pub struct State {
-    active_id: Option<String>,
+    active_pubkey: Option<XOnlyPublicKey>,
     only_profile: bool,
-    card: ContactCard,
+    last_msg_date: Option<i64>,
+    last_msg_snippet: Option<String>,
+    contact: DbContact,
 }
 
 impl State {
-    pub fn new(card: ContactCard) -> Self {
+    pub fn from_db_contact(db_contact: &DbContact) -> Self {
         Self {
-            active_id: None,
+            active_pubkey: None,
             only_profile: false,
-            card,
+            contact: db_contact.to_owned(),
+            last_msg_date: None,
+            last_msg_snippet: None,
         }
     }
     pub fn view(&self) -> Element<Message> {
         let mut is_active = false;
-        if let Some(id) = &self.active_id {
-            is_active = id == &self.card.id;
+        if let Some(pubkey) = &self.active_pubkey {
+            is_active = pubkey == &self.contact.pubkey;
         }
         let btn_style = if is_active {
             iced::theme::Button::Custom(Box::new(ActiveButtonStyle {}))
@@ -58,32 +41,32 @@ impl State {
             iced::theme::Button::Custom(Box::new(ButtonStyle {}))
         };
         let btn_content: Element<_> = if self.only_profile {
-            text(&self.card.profile_img).into()
+            text(&self.contact.profile_image.to_owned().unwrap_or("".into())).into()
         } else {
             row![
                 text("Profile Image"),
                 column![
-                    text(&self.card.name),
-                    text(&self.card.last_message)
+                    text(&self.contact.petname.to_owned().unwrap_or("".into())),
+                    text(&self.last_msg_snippet.to_owned().unwrap_or("".into()))
                         .size(14.0)
                         .width(Length::Fill)
                         .height(Length::Fixed(30.0)),
                 ],
-                text(&self.card.date),
+                text(&self.last_msg_date.unwrap_or(0)),
             ]
             .into()
         };
         button(btn_content)
             .width(Length::Fill)
             .height(Length::Fixed(80.0))
-            .on_press(Message::UpdateActiveId(self.card.id.clone()))
+            .on_press(Message::UpdateActiveId(self.contact.pubkey.clone()))
             .style(btn_style)
             .into()
     }
     pub fn update(&mut self, message: Message) {
         match message {
             Message::UpdateActiveId(id) => {
-                self.active_id = Some(id);
+                self.active_pubkey = Some(id);
             }
             Message::ShowOnlyProfileImage => {
                 self.only_profile = true;

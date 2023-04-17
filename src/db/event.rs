@@ -10,7 +10,7 @@ use nostr_sdk::{
 
 #[derive(Debug, Clone)]
 pub struct DbEvent {
-    pub event_id: EventId,
+    pub event_hash: EventId,
     pub pubkey: XOnlyPublicKey,
     pub created_at: Timestamp,
     pub kind: Kind,
@@ -21,7 +21,7 @@ pub struct DbEvent {
 impl DbEvent {
     pub fn new(event: Event) -> DbEvent {
         DbEvent {
-            event_id: event.id,
+            event_hash: event.id,
             pubkey: event.pubkey,
             created_at: event.created_at,
             kind: event.kind,
@@ -31,7 +31,7 @@ impl DbEvent {
     }
 
     const FETCH_QUERY: &'static str =
-        "SELECT event_id, pubkey, created_at, kind, content FROM event";
+        "SELECT event_hash, pubkey, created_at, kind, content, sig FROM event";
 
     pub async fn fetch(pool: &SqlitePool, criteria: Option<&str>) -> Result<Vec<DbEvent>, Error> {
         let sql = Self::FETCH_QUERY.to_owned();
@@ -61,7 +61,7 @@ impl DbEvent {
                    VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
 
         let inserted = sqlx::query(sql)
-            .bind(&event.event_id.to_hex())
+            .bind(&event.event_hash.to_hex())
             .bind(&event.pubkey.to_string())
             .bind(&event.created_at.as_i64())
             .bind(&event.kind.as_u32())
@@ -74,14 +74,16 @@ impl DbEvent {
     }
 
     pub async fn update(pool: &SqlitePool, event: DbEvent) -> Result<(), Error> {
-        let sql = "UPDATE event SET pubkey=?, created_at=?, kind=?, content=? WHERE event_id=?";
+        let sql =
+            "UPDATE event SET pubkey=?, created_at=?, kind=?, content=?, sig=? WHERE event_hash=?";
 
         sqlx::query(sql)
             .bind(&event.pubkey.to_string())
             .bind(&event.created_at.as_i64())
             .bind(&event.kind.as_u32())
             .bind(&event.content)
-            .bind(&event.event_id.to_hex())
+            .bind(&event.sig.to_string())
+            .bind(&event.event_hash.to_hex())
             .execute(pool)
             .await?;
 
@@ -89,7 +91,7 @@ impl DbEvent {
     }
 
     pub async fn delete(pool: &SqlitePool, event_id: EventId) -> Result<(), Error> {
-        let sql = "DELETE FROM event WHERE event_id=?";
+        let sql = "DELETE FROM event WHERE event_hash=?";
 
         sqlx::query(sql)
             .bind(&event_id.to_hex())
@@ -109,7 +111,7 @@ impl From<nostr_sdk::Event> for DbEvent {
 impl From<&nostr_sdk::Event> for DbEvent {
     fn from(event: &nostr_sdk::Event) -> Self {
         Self {
-            event_id: event.id,
+            event_hash: event.id,
             pubkey: event.pubkey,
             created_at: event.created_at,
             kind: event.kind,
@@ -121,21 +123,19 @@ impl From<&nostr_sdk::Event> for DbEvent {
 
 impl sqlx::FromRow<'_, SqliteRow> for DbEvent {
     fn from_row(row: &'_ SqliteRow) -> Result<Self, sqlx::Error> {
-        let hex_ev_id = row.try_get::<String, &str>("event_hash")?;
+        let hex_hash = row.try_get::<String, &str>("event_hash")?;
         let pubkey = row.try_get::<String, &str>("pubkey")?;
         let created_at = row.try_get::<i64, &str>("created_at")?;
         let kind = row.try_get::<u32, &str>("kind")?;
         let sig = row.try_get::<String, &str>("sig")?;
         Ok(DbEvent {
-            event_id: EventId::from_hex(hex_ev_id).map_err(|e| sqlx::Error::ColumnDecode {
+            event_hash: EventId::from_hex(hex_hash).map_err(|e| sqlx::Error::ColumnDecode {
                 index: "event_hash".into(),
                 source: Box::new(e),
             })?,
-            pubkey: XOnlyPublicKey::from_slice(pubkey.as_bytes()).map_err(|e| {
-                sqlx::Error::ColumnDecode {
-                    index: "pubkey".into(),
-                    source: Box::new(e),
-                }
+            pubkey: XOnlyPublicKey::from_str(&pubkey).map_err(|e| sqlx::Error::ColumnDecode {
+                index: "pubkey".into(),
+                source: Box::new(e),
             })?,
             created_at: Timestamp::from(created_at as u64),
             kind: Kind::from(kind as u64),

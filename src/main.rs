@@ -21,7 +21,7 @@ use tracing::metadata::LevelFilter;
 use tracing_subscriber::EnvFilter;
 use views::{login, Router};
 
-const IN_MEMORY: bool = true;
+const IN_MEMORY: bool = false;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -164,10 +164,10 @@ impl Application for App {
                     db_conn,
                     router,
                     nostr_conn,
-                    ..
+                    keys,
                 } = &mut self.state
                 {
-                    router.update(msg, db_conn, nostr_conn);
+                    router.update(msg, keys, db_conn, nostr_conn);
                 }
             }
             Message::DatabaseMessage(db_ev) => match db_ev {

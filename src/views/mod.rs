@@ -33,7 +33,7 @@ impl Router {
     fn _next_state_skip(&mut self, next: ViewState) {
         self.state = next;
     }
-    fn back(&mut self) {
+    fn _back(&mut self) {
         if let Some(s) = self.previous_state.take() {
             self.state = s;
         }
@@ -61,11 +61,11 @@ impl Router {
         nostr_conn: &mut NostrConnection,
     ) {
         match event {
-            net::nostr::Event::RelaysConnected => {
-                if let Err(e) = nostr_conn.send(net::nostr::Message::ListOwnEvents) {
-                    tracing::error!("{}", e);
-                };
-            }
+            // net::nostr::Event::RelaysConnected => {
+            //     if let Err(e) = nostr_conn.send(net::nostr::Message::ListOwnEvents) {
+            //         tracing::error!("{}", e);
+            //     };
+            // }
             net::nostr::Event::GotOwnEvents(events) => {
                 tracing::info!("Got events: {}", events.len());
                 for event in events {
@@ -94,6 +94,7 @@ impl Router {
     pub fn update(
         &mut self,
         message: Message,
+        keys: &Keys,
         db_conn: &mut DbConnection,
         nostr_conn: &mut NostrConnection,
     ) {
@@ -102,17 +103,22 @@ impl Router {
             Message::ChatMsg(msg) => {
                 if let ViewState::Chat { state } = &mut self.state {
                     match msg {
+                        chat::Message::AddContactPress => {
+                            self.next_state(ViewState::settings_contacts(db_conn))
+                        }
                         chat::Message::NavSettingsPress => {
                             self.next_state(ViewState::settings(db_conn))
                         }
-                        _ => state.update(msg.clone(), db_conn, nostr_conn),
+                        _ => state.update(msg.clone(), keys, db_conn, nostr_conn),
                     }
                 }
             }
             Message::SettingsMsg(msg) => {
                 if let ViewState::Settings { state } = &mut self.state {
                     match msg {
-                        settings::Message::NavEscPress => self.back(),
+                        settings::Message::NavEscPress => {
+                            self.next_state(ViewState::chat(keys, db_conn))
+                        }
                         _ => state.update(msg.clone(), db_conn),
                     }
                 }
@@ -132,14 +138,19 @@ impl ViewState {
     pub fn loading() -> Self {
         Self::Loading
     }
-    pub fn chat(keys: &Keys, db_conn: &mut DbConnection) -> Self {
+    pub fn chat(_keys: &Keys, db_conn: &mut DbConnection) -> Self {
         Self::Chat {
-            state: chat::State::new(keys, db_conn),
+            state: chat::State::new(db_conn),
         }
     }
     pub fn settings(db_conn: &mut DbConnection) -> Self {
         Self::Settings {
             state: settings::State::new(db_conn),
+        }
+    }
+    pub fn settings_contacts(db_conn: &mut DbConnection) -> Self {
+        Self::Settings {
+            state: settings::State::contacts(db_conn),
         }
     }
     pub fn view(&self) -> Element<Message> {
