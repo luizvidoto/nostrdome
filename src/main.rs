@@ -117,8 +117,11 @@ impl Application for App {
         };
         let database_subscription = match &self.state {
             State::Login { .. } | State::OutsideError { .. } => iced::Subscription::none(),
-            State::Loading { .. } | State::LoadedDB { .. } | State::LoadedAll { .. } => {
-                database_connect(IN_MEMORY).map(Message::DatabaseMessage)
+            State::Loading { keys, .. }
+            | State::LoadedDB { keys, .. }
+            | State::LoadedAll { keys, .. } => {
+                database_connect(IN_MEMORY, &keys.public_key().to_string())
+                    .map(Message::DatabaseMessage)
             }
         };
         iced::Subscription::batch(vec![database_subscription, nostr_subscription])

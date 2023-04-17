@@ -29,7 +29,7 @@ pub struct Database {
 }
 
 impl Database {
-    pub async fn new(in_memory: bool) -> Result<Self, Error> {
+    pub async fn new(in_memory: bool, pubkey: &str) -> Result<Self, Error> {
         if let Some(dirs) = ProjectDirs::from("com", "NostrDome", "NostrDome") {
             tracing::debug!("Creating project directory");
             let project_dir = dirs.config_dir();
@@ -48,7 +48,7 @@ impl Database {
                         path_ext.push_str(&format!("/{}", p));
                     }
                 }
-                format!("sqlite://{}/nostrdome.db3?mode=rwc", &path_ext)
+                format!("sqlite://{}/{}.db3?mode=rwc", &path_ext, pubkey)
             };
 
             tracing::info!("Connecting database");

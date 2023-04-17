@@ -140,9 +140,9 @@ impl State {
                 }
             }
             State::Loaded {
-                ref mut relays,
-                ref mut show_modal,
-                ref mut add_relay_input,
+                relays,
+                show_modal,
+                add_relay_input,
             } => match message {
                 Message::AddRelayInputChange(relay_addrs) => *add_relay_input = relay_addrs,
                 Message::CloseModal | Message::CancelButtonPressed => {

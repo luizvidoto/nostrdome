@@ -79,4 +79,8 @@ pub enum NostrSdkError {
     /// Error converting from hex string to EventId
     #[error("HexToEventIdError: {0}")]
     HexToEventIdError(String),
+
+    /// Bad public key
+    #[error("Invalid Public Key")]
+    InvalidPublicKey,
 }

@@ -60,9 +60,9 @@ impl State {
             state: network::State::loading(db_conn),
         }
     }
-    fn contacts() -> Self {
+    fn contacts(db_conn: &mut DbConnection) -> Self {
         Self::Contacts {
-            state: contacts::State::default(),
+            state: contacts::State::loading(db_conn),
         }
     }
     fn backup() -> Self {
@@ -81,7 +81,7 @@ impl State {
             Self::Appearance { state } => state.update(appearance::Message::DbEvent(event)),
             Self::Network { state } => state.update(network::Message::DbEvent(event), db_conn),
             Self::Backup { state } => state.update(backup::Message::DbEvent(event)),
-            Self::Contacts { state } => state.update(contacts::Message::DbEvent(event)),
+            Self::Contacts { state } => state.update(contacts::Message::DbEvent(event), db_conn),
         }
     }
     pub fn update(&mut self, message: Message, db_conn: &mut DbConnection) {
@@ -108,7 +108,7 @@ impl State {
             }
             Message::ContactsMessage(msg) => {
                 if let State::Contacts { state } = self {
-                    state.update(msg);
+                    state.update(msg, db_conn);
                 }
             }
             Message::NavEscPress => (),
@@ -125,7 +125,7 @@ impl State {
                 *self = Self::backup();
             }
             Message::MenuContactsPress => {
-                *self = Self::contacts();
+                *self = Self::contacts(db_conn);
             }
         }
     }
