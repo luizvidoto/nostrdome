@@ -1,4 +1,6 @@
 CREATE TABLE contact (
     pubkey TEXT PRIMARY KEY,
-    name TEXT NOT NULL
+    petname TEXT,
+    recommended_relay TEXT,
+    profile_image TEXT
 );

@@ -4,7 +4,7 @@ use nostr_sdk::prelude::decrypt;
 use nostr_sdk::{Keys, Kind};
 
 use crate::db::{Database, DbEvent, DbRelay};
-use crate::types::RelayUrl;
+use crate::types::{ChatMessage, RelayUrl};
 
 #[derive(Debug, Clone)]
 pub struct DbConnection(mpsc::UnboundedSender<Message>);
@@ -27,7 +27,7 @@ pub enum DatabaseSuccessEventKind {
     RelayUpdated,
     RelayDeleted,
     EventInserted(nostr_sdk::Event),
-    NewDM(String),
+    NewDM(ChatMessage),
 }
 
 #[derive(Debug, Clone)]
@@ -37,8 +37,8 @@ pub enum Event {
     Error(String),
     DatabaseSuccessEvent(DatabaseSuccessEventKind),
     GotDbRelays(Vec<DbRelay>),
-    GotMessages(Vec<String>),
-    GotNewMessage(String),
+    GotMessages(Vec<ChatMessage>),
+    GotNewMessage(ChatMessage),
     None,
 }
 #[derive(Debug, Clone)]
@@ -115,7 +115,7 @@ pub fn database_connect(in_memory: bool) -> Subscription<Event> {
                                             .filter_map(|ev| {
                                                 if let Kind::EncryptedDirectMessage = ev.kind {
                                                     match decrypt(&secret_key, &ev.pubkey, &ev.content) {
-                                                        Ok(msg) => Some(msg),
+                                                        Ok(msg) => Some(ChatMessage::from_event(ev, msg)),
                                                         Err(_e) => None,
                                                     }
                                                 } else {
@@ -138,8 +138,9 @@ pub fn database_connect(in_memory: bool) -> Subscription<Event> {
                                                     Err(e) => return (Event::Error(e.to_string()), State::Connected {database, receiver}),
                                                 };
                                                 match decrypt(&secret_key, &event.pubkey, &event.content) {
-                                                    Ok(msg) => (Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::NewDM(msg)), State::Connected {database,receiver}),
-                                                    Err(e) => (Event::Error(e.to_string()), State::Connected {database,receiver}),
+                                                    Ok(msg) => (Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::NewDM(ChatMessage::from_event(&event, msg))), State::Connected {database,receiver}),
+                                                    Err(_e) => (Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::NewDM(ChatMessage::from_event(&event, &event.content))), State::Connected {database,receiver}),
+                                                    // Err(e) => (Event::Error(e.to_string()), State::Connected {database,receiver}),
                                                 }
                                             } else {
                                                 (Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::EventInserted(event)), State::Connected {database,receiver})

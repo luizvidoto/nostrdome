@@ -9,6 +9,7 @@ use crate::net::{self};
 mod account;
 mod appearance;
 mod backup;
+mod contacts;
 mod network;
 
 #[derive(Debug, Clone)]
@@ -17,10 +18,12 @@ pub enum Message {
     AppearanceMessage(appearance::Message),
     NetworkMessage(network::Message),
     BackupMessage(backup::Message),
+    ContactsMessage(contacts::Message),
     MenuAccountPress,
     MenuAppearancePress,
     MenuNetworkPress,
     MenuBackupPress,
+    MenuContactsPress,
     NavEscPress,
 }
 
@@ -30,6 +33,7 @@ pub enum State {
     Appearance { state: appearance::State },
     Network { state: network::State },
     Backup { state: backup::State },
+    Contacts { state: contacts::State },
 }
 impl State {
     pub fn new(db_conn: &mut DbConnection) -> Self {
@@ -56,6 +60,11 @@ impl State {
             state: network::State::loading(db_conn),
         }
     }
+    fn contacts() -> Self {
+        Self::Contacts {
+            state: contacts::State::default(),
+        }
+    }
     fn backup() -> Self {
         Self::Backup {
             state: backup::State::default(),
@@ -72,6 +81,7 @@ impl State {
             Self::Appearance { state } => state.update(appearance::Message::DbEvent(event)),
             Self::Network { state } => state.update(network::Message::DbEvent(event), db_conn),
             Self::Backup { state } => state.update(backup::Message::DbEvent(event)),
+            Self::Contacts { state } => state.update(contacts::Message::DbEvent(event)),
         }
     }
     pub fn update(&mut self, message: Message, db_conn: &mut DbConnection) {
@@ -96,6 +106,11 @@ impl State {
                     state.update(msg);
                 }
             }
+            Message::ContactsMessage(msg) => {
+                if let State::Contacts { state } = self {
+                    state.update(msg);
+                }
+            }
             Message::NavEscPress => (),
             Message::MenuAccountPress => {
                 *self = Self::account(db_conn);
@@ -109,6 +124,9 @@ impl State {
             Message::MenuBackupPress => {
                 *self = Self::backup();
             }
+            Message::MenuContactsPress => {
+                *self = Self::contacts();
+            }
         }
     }
 
@@ -118,6 +136,7 @@ impl State {
             Self::Appearance { state } => state.view().map(Message::AppearanceMessage),
             Self::Network { state } => state.view().map(Message::NetworkMessage),
             Self::Backup { state } => state.view().map(Message::BackupMessage),
+            Self::Contacts { state } => state.view().map(Message::ContactsMessage),
         };
 
         let account_btn = button("Account")
@@ -152,6 +171,14 @@ impl State {
             .width(Length::Fill)
             .padding(10)
             .on_press(Message::MenuBackupPress);
+        let contacts_btn = button("Contacts")
+            .style(match self {
+                Self::Contacts { .. } => iced::theme::Button::Custom(Box::new(ActiveMenuBtn {})),
+                _ => iced::theme::Button::Custom(Box::new(InactiveMenuBtn {})),
+            })
+            .width(Length::Fill)
+            .padding(10)
+            .on_press(Message::MenuContactsPress);
         let esc_btn = button("Esc")
             .padding(10)
             .on_press(Message::NavEscPress)
@@ -164,7 +191,8 @@ impl State {
                 account_btn,
                 appearance_btn,
                 network_btn,
-                backup_btn
+                backup_btn,
+                contacts_btn
             ]
             .spacing(3),
         )

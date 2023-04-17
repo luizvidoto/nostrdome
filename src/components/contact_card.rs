@@ -2,14 +2,14 @@ use iced::widget::{button, column, row, text};
 use iced::{Color, Element, Length};
 
 #[derive(Debug, Clone)]
-pub struct ChatCard {
+pub struct ContactCard {
     id: String,
     profile_img: String,
     name: String,
     date: String,
     last_message: String,
 }
-impl ChatCard {
+impl ContactCard {
     pub fn new(
         id: impl Into<String>,
         name: impl Into<String>,
@@ -36,11 +36,11 @@ pub enum Message {
 pub struct State {
     active_id: Option<String>,
     only_profile: bool,
-    card: ChatCard,
+    card: ContactCard,
 }
 
 impl State {
-    pub fn new(card: ChatCard) -> Self {
+    pub fn new(card: ContactCard) -> Self {
         Self {
             active_id: None,
             only_profile: false,

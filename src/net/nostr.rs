@@ -77,12 +77,19 @@ pub fn nostr_connect(keys: Keys) -> Subscription<Event> {
                 // Create new client
                 let nostr_client = Client::new(&keys);
 
-                let subscription = Filter::new()
+                let recv_msgs_sub = Filter::new()
                     .pubkey(keys.public_key())
                     .kind(Kind::EncryptedDirectMessage)
                     .since(Timestamp::now());
 
-                nostr_client.subscribe(vec![subscription]).await;
+                let sent_msgs_sub = Filter::new()
+                    .author(keys.public_key().to_string())
+                    .kind(Kind::EncryptedDirectMessage)
+                    .since(Timestamp::now());
+
+                nostr_client
+                    .subscribe(vec![recv_msgs_sub, sent_msgs_sub])
+                    .await;
 
                 let mut notifications = nostr_client.notifications();
                 let notifications_stream = stream! {
@@ -124,8 +131,8 @@ pub fn nostr_connect(keys: Keys) -> Subscription<Event> {
                                     }
                                 }
                             }
-                            Message::SendDMTo((pub_key, msg)) => {
-                                match nostr_client.send_direct_msg(pub_key, msg).await {
+                            Message::SendDMTo((pubkey, msg)) => {
+                                match nostr_client.send_direct_msg(pubkey, msg).await {
                                     Ok(ev_id)=> {
                                         (Event::SomeEventSuccessId(ev_id), State::Connected {receiver, nostr_client, keys, notifications_stream})
                                     }
@@ -160,13 +167,18 @@ pub fn nostr_connect(keys: Keys) -> Subscription<Event> {
                                 (Event::RelayRemoved(id), State::Connected {receiver, nostr_client, keys, notifications_stream})
                             },
                             Message::ListOwnEvents => {
-                                let sub = Filter::new()
+                                let recv_msgs_sub = Filter::new()
                                     .pubkey(keys.public_key())
-                                    // .author(keys.public_key().to_string())
-                                    // .since(Timestamp::from(1678050565))
+                                    .kind(Kind::EncryptedDirectMessage)
                                     .until(Timestamp::now());
+
+                                let sent_msgs_sub = Filter::new()
+                                    .author(keys.public_key().to_string())
+                                    .kind(Kind::EncryptedDirectMessage)
+                                    .until(Timestamp::now());
+
                                 let timeout = Duration::from_secs(10);
-                                match nostr_client.get_events_of(vec![sub], Some(timeout)).await {
+                                match nostr_client.get_events_of(vec![recv_msgs_sub, sent_msgs_sub], Some(timeout)).await {
                                     Ok(events) => (Event::GotOwnEvents(events), State::Connected {receiver, nostr_client, keys, notifications_stream}),
                                     Err(e) => (Event::Error(e.to_string()), State::Connected {receiver, nostr_client, keys, notifications_stream}),
                                 }
