@@ -11,11 +11,12 @@ CREATE TABLE IF NOT EXISTS event (
     -- serialized json of event object 
     content TEXT NOT NULL,
     -- event signature
-    sig TEXT NOT NULL -- nip03
-    -- ots TEXT
+    sig TEXT NOT NULL
 );
 
 -- Events Indexes
+CREATE UNIQUE INDEX IF NOT EXISTS event_hash_index ON event(event_hash);
+
 CREATE INDEX IF NOT EXISTS pubkey_index ON event(pubkey);
 
 CREATE INDEX IF NOT EXISTS kind_index ON event(kind);

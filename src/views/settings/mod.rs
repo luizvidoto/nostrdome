@@ -3,6 +3,7 @@ use iced::{Color, Element, Length};
 use nostr_sdk::Metadata;
 
 use crate::net::database::DbConnection;
+use crate::net::nostr::NostrConnection;
 use crate::net::{self};
 
 mod account;
@@ -60,7 +61,12 @@ impl State {
             state: backup::State::default(),
         }
     }
-    pub fn db_event(&mut self, event: net::database::Event, db_conn: &mut DbConnection) {
+    pub fn db_event(
+        &mut self,
+        event: net::database::Event,
+        db_conn: &mut DbConnection,
+        _nostr_conn: &mut NostrConnection,
+    ) {
         match self {
             Self::Account { state } => state.update(account::Message::DbEvent(event)),
             Self::Appearance { state } => state.update(appearance::Message::DbEvent(event)),

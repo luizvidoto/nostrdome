@@ -1,4 +1,4 @@
 CREATE TABLE contact (
-    pub_key TEXT PRIMARY KEY,
+    pubkey TEXT PRIMARY KEY,
     name TEXT NOT NULL
 );

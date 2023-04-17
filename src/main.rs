@@ -21,6 +21,8 @@ use tracing::metadata::LevelFilter;
 use tracing_subscriber::EnvFilter;
 use views::{login, Router};
 
+const IN_MEMORY: bool = true;
+
 #[derive(Debug, Clone)]
 pub enum Message {
     RouterMessage(views::Message),
@@ -68,12 +70,13 @@ impl State {
     pub fn loaded_db(keys: Keys, db_conn: DbConnection) -> Self {
         Self::LoadedDB { keys, db_conn }
     }
-    pub fn loaded_all(keys: Keys, db_conn: DbConnection, nostr_conn: NostrConnection) -> Self {
+    pub fn loaded_all(keys: Keys, mut db_conn: DbConnection, nostr_conn: NostrConnection) -> Self {
+        let router = Router::new(&keys, &mut db_conn);
         Self::LoadedAll {
             keys,
             db_conn,
             nostr_conn,
-            router: Router::default(),
+            router,
         }
     }
 }
@@ -115,11 +118,10 @@ impl Application for App {
         let database_subscription = match &self.state {
             State::Login { .. } | State::OutsideError { .. } => iced::Subscription::none(),
             State::Loading { .. } | State::LoadedDB { .. } | State::LoadedAll { .. } => {
-                database_connect().map(Message::DatabaseMessage)
+                database_connect(IN_MEMORY).map(Message::DatabaseMessage)
             }
         };
         iced::Subscription::batch(vec![database_subscription, nostr_subscription])
-        // iced::Subscription::none()
     }
     fn view(&self) -> Element<Self::Message> {
         let content: Element<_> = match &self.state {
@@ -180,10 +182,13 @@ impl Application for App {
                 }
                 ev => {
                     if let State::LoadedAll {
-                        router, db_conn, ..
+                        router,
+                        db_conn,
+                        nostr_conn,
+                        ..
                     } = &mut self.state
                     {
-                        router.db_event(ev, db_conn);
+                        router.db_event(ev, db_conn, nostr_conn);
                     }
                 }
             },
@@ -201,9 +206,10 @@ impl Application for App {
                     db_conn,
                     nostr_conn,
                     router,
+                    keys,
                     ..
                 } => {
-                    router.nostr_event(nostr_ev, db_conn, nostr_conn);
+                    router.nostr_event(nostr_ev, &keys, db_conn, nostr_conn);
                 }
                 _ => {
                     tracing::error!("Not possible!");
@@ -219,7 +225,7 @@ impl Application for App {
 #[tokio::main]
 async fn main() {
     if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "warn");
+        std::env::set_var("RUST_LOG", "info");
     }
 
     let env_filter = EnvFilter::from_default_env();
@@ -235,7 +241,7 @@ async fn main() {
         .with_env_filter(env_filter)
         .init();
 
-    tracing::warn!("Starting up");
+    tracing::info!("Starting up");
 
     App::run(Settings {
         id: Some(String::from("nostrdome")),

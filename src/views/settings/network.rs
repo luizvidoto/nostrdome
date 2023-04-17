@@ -177,7 +177,8 @@ impl State {
                             if let Err(e) = db_conn.send(net::database::Message::FetchRelays) {
                                 tracing::error!("{}", e);
                             }
-                        } // _ => (),
+                        }
+                        _ => (),
                     },
                     _ => (),
                 },

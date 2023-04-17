@@ -3,6 +3,7 @@ use std::str::FromStr;
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length};
 use nostr_sdk::secp256k1::XOnlyPublicKey;
+use nostr_sdk::{Keys, Kind};
 
 use crate::components;
 use crate::components::chat_card::{self, ChatCard};
@@ -33,10 +34,9 @@ pub struct State {
     dm_to_pub: String,
 }
 impl State {
-    pub fn new() -> Self {
-        let mut messages = vec![];
-        for idx in 0..20 {
-            messages.push(format!("Message {}", idx));
+    pub fn new(keys: &Keys, db_conn: &mut DbConnection) -> Self {
+        if let Err(e) = db_conn.send(net::database::Message::FetchMessages(keys.clone())) {
+            tracing::error!("{}", e);
         }
 
         let mut chats: Vec<chat_card::State> = vec![];
@@ -54,7 +54,7 @@ impl State {
             )));
         }
         Self {
-            messages,
+            messages: vec![],
             ver_divider_position: None,
             chats,
             dm_hex_pub_receiver: None,
@@ -118,8 +118,28 @@ impl State {
             .height(Length::Fill)
             .into()
     }
-    pub fn db_event(&mut self, _event: net::database::Event, _db_conn: &mut DbConnection) {
-        ()
+    pub fn db_event(
+        &mut self,
+        event: net::database::Event,
+        _db_conn: &mut DbConnection,
+        _nostr_conn: &mut NostrConnection,
+    ) {
+        match event {
+            net::database::Event::DatabaseSuccessEvent(kind) => match kind {
+                net::database::DatabaseSuccessEventKind::NewDM(message) => {
+                    self.messages.push(message);
+                }
+                _ => (),
+            },
+            net::database::Event::GotMessages(messages) => {
+                tracing::info!("{:?}", &messages);
+                self.messages = messages;
+            }
+            net::database::Event::GotNewMessage(message) => {
+                self.messages.push(message);
+            }
+            _ => (),
+        }
     }
     pub fn update(
         &mut self,

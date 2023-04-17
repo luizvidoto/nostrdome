@@ -1,7 +1,12 @@
+use std::str::FromStr;
+
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
 use crate::error::Error;
-use nostr_sdk::{secp256k1::XOnlyPublicKey, Event, EventId, Kind, Timestamp};
+use nostr_sdk::{
+    secp256k1::{schnorr::Signature, XOnlyPublicKey},
+    Event, EventId, Kind, Timestamp,
+};
 
 #[derive(Debug, Clone)]
 pub struct DbEvent {
@@ -10,6 +15,7 @@ pub struct DbEvent {
     pub created_at: Timestamp,
     pub kind: Kind,
     pub content: String,
+    pub sig: Signature,
 }
 
 impl DbEvent {
@@ -20,6 +26,7 @@ impl DbEvent {
             created_at: event.created_at,
             kind: event.kind,
             content: event.content,
+            sig: event.sig,
         }
     }
 
@@ -48,20 +55,22 @@ impl DbEvent {
             .await?)
     }
 
-    pub async fn insert(pool: &SqlitePool, event: DbEvent) -> Result<(), Error> {
-        let sql = "INSERT OR IGNORE INTO event (event_id, pubkey, created_at, kind, content) \
-                   VALUES (?1, ?2, ?3, ?4, ?5)";
+    pub async fn insert(pool: &SqlitePool, event: DbEvent) -> Result<u64, Error> {
+        let sql =
+            "INSERT OR IGNORE INTO event (event_hash, pubkey, created_at, kind, content, sig) \
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
 
-        sqlx::query(sql)
+        let inserted = sqlx::query(sql)
             .bind(&event.event_id.to_hex())
             .bind(&event.pubkey.to_string())
             .bind(&event.created_at.as_i64())
             .bind(&event.kind.as_u32())
             .bind(&event.content)
+            .bind(&event.sig.to_string())
             .execute(pool)
             .await?;
 
-        Ok(())
+        Ok(inserted.rows_affected())
     }
 
     pub async fn update(pool: &SqlitePool, event: DbEvent) -> Result<(), Error> {
@@ -91,15 +100,35 @@ impl DbEvent {
     }
 }
 
+impl From<nostr_sdk::Event> for DbEvent {
+    fn from(event: nostr_sdk::Event) -> Self {
+        event.into()
+    }
+}
+
+impl From<&nostr_sdk::Event> for DbEvent {
+    fn from(event: &nostr_sdk::Event) -> Self {
+        Self {
+            event_id: event.id,
+            pubkey: event.pubkey,
+            created_at: event.created_at,
+            kind: event.kind,
+            content: event.content.clone(),
+            sig: event.sig,
+        }
+    }
+}
+
 impl sqlx::FromRow<'_, SqliteRow> for DbEvent {
     fn from_row(row: &'_ SqliteRow) -> Result<Self, sqlx::Error> {
-        let hex_ev_id = row.try_get::<String, &str>("event_id")?;
+        let hex_ev_id = row.try_get::<String, &str>("event_hash")?;
         let pubkey = row.try_get::<String, &str>("pubkey")?;
         let created_at = row.try_get::<i64, &str>("created_at")?;
         let kind = row.try_get::<u32, &str>("kind")?;
+        let sig = row.try_get::<String, &str>("sig")?;
         Ok(DbEvent {
             event_id: EventId::from_hex(hex_ev_id).map_err(|e| sqlx::Error::ColumnDecode {
-                index: "event_id".into(),
+                index: "event_hash".into(),
                 source: Box::new(e),
             })?,
             pubkey: XOnlyPublicKey::from_slice(pubkey.as_bytes()).map_err(|e| {
@@ -111,6 +140,10 @@ impl sqlx::FromRow<'_, SqliteRow> for DbEvent {
             created_at: Timestamp::from(created_at as u64),
             kind: Kind::from(kind as u64),
             content: row.try_get::<String, &str>("content")?,
+            sig: Signature::from_str(&sig).map_err(|e| sqlx::Error::ColumnDecode {
+                index: "sig".into(),
+                source: Box::new(e),
+            })?,
         })
     }
 }

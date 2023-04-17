@@ -1,7 +1,9 @@
 use iced::futures::{channel::mpsc, StreamExt};
 use iced::{subscription, Subscription};
+use nostr_sdk::prelude::decrypt;
+use nostr_sdk::{Keys, Kind};
 
-use crate::db::{Database, DbRelay};
+use crate::db::{Database, DbEvent, DbRelay};
 use crate::types::RelayUrl;
 
 #[derive(Debug, Clone)]
@@ -12,7 +14,7 @@ impl DbConnection {
     }
 }
 pub enum State {
-    Disconnected,
+    Disconnected(bool),
     Connected {
         database: Database,
         receiver: mpsc::UnboundedReceiver<Message>,
@@ -24,6 +26,8 @@ pub enum DatabaseSuccessEventKind {
     RelayCreated,
     RelayUpdated,
     RelayDeleted,
+    EventInserted(nostr_sdk::Event),
+    NewDM(String),
 }
 
 #[derive(Debug, Clone)]
@@ -33,22 +37,27 @@ pub enum Event {
     Error(String),
     DatabaseSuccessEvent(DatabaseSuccessEventKind),
     GotDbRelays(Vec<DbRelay>),
+    GotMessages(Vec<String>),
+    GotNewMessage(String),
+    None,
 }
 #[derive(Debug, Clone)]
 pub enum Message {
+    FetchMessages(Keys),
+    InsertEvent { keys: Keys, event: nostr_sdk::Event },
     FetchRelays,
     AddRelay(DbRelay),
     UpdateRelay(DbRelay),
     DeleteRelay(RelayUrl),
 }
 
-pub fn database_connect() -> Subscription<Event> {
+pub fn database_connect(in_memory: bool) -> Subscription<Event> {
     struct DBConnect;
     let id = std::any::TypeId::of::<DBConnect>();
 
-    subscription::unfold(id, State::Disconnected, |state| async move {
+    subscription::unfold(id, State::Disconnected(in_memory), |state| async move {
         match state {
-            State::Disconnected => match Database::new(true).await {
+            State::Disconnected(in_memory) => match Database::new(in_memory).await {
                 Ok(database) => {
                     let (sender, receiver) = mpsc::unbounded();
                     // Add relays to database
@@ -79,7 +88,7 @@ pub fn database_connect() -> Subscription<Event> {
                     tracing::error!("{}", e);
                     tracing::warn!("Trying again in 2 secs");
                     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                    (Event::Disconnected, State::Disconnected)
+                    (Event::Disconnected, State::Disconnected(in_memory))
                 }
             },
             State::Connected {
@@ -89,6 +98,61 @@ pub fn database_connect() -> Subscription<Event> {
                 futures::select! {
                     message = receiver.select_next_some() => {
                         match message {
+                            Message::FetchMessages(keys) => {
+                                match DbEvent::fetch(
+                                    &database.pool,
+                                    Some(&format!("pubkey = '{}'", &keys.public_key())),
+                                )
+                                .await
+                                {
+                                    Ok(events) => {
+                                        let secret_key = match keys.secret_key() {
+                                            Ok(sk) => sk,
+                                            Err(e) => return (Event::Error(e.to_string()), State::Connected {database, receiver}),
+                                        };
+                                        let messages:Vec<_> = events
+                                            .iter()
+                                            .filter_map(|ev| {
+                                                if let Kind::EncryptedDirectMessage = ev.kind {
+                                                    match decrypt(&secret_key, &ev.pubkey, &ev.content) {
+                                                        Ok(msg) => Some(msg),
+                                                        Err(_e) => None,
+                                                    }
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                            .collect();
+                                            (Event::GotMessages(messages), State::Connected {database,receiver})
+                                    }
+                                    Err(e) => (Event::Error(e.to_string()), State::Connected {database,receiver}),
+                                }
+                            },
+                            Message::InsertEvent {keys,event} => {
+                                match DbEvent::insert(&database.pool, DbEvent::from(&event)).await {
+                                    Ok(rows_changed) => {
+                                        if rows_changed > 0 {
+                                            if let Kind::EncryptedDirectMessage = event.kind {
+                                                let secret_key = match keys.secret_key() {
+                                                    Ok(sk) => sk,
+                                                    Err(e) => return (Event::Error(e.to_string()), State::Connected {database, receiver}),
+                                                };
+                                                match decrypt(&secret_key, &event.pubkey, &event.content) {
+                                                    Ok(msg) => (Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::NewDM(msg)), State::Connected {database,receiver}),
+                                                    Err(e) => (Event::Error(e.to_string()), State::Connected {database,receiver}),
+                                                }
+                                            } else {
+                                                (Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::EventInserted(event)), State::Connected {database,receiver})
+                                            }
+                                        } else {
+                                            (Event::None, State::Connected {database,receiver})
+                                        }
+                                    },
+                                    Err(e) => {
+                                        (Event::Error(e.to_string()), State::Connected {database,receiver})
+                                    }
+                                }
+                            }
                             Message::FetchRelays => {
                                 match DbRelay::fetch(&database.pool, None).await {
                                     Ok(relays) => {

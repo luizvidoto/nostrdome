@@ -1,17 +1,24 @@
 -- Tags Table
-CREATE TABLE IF NOT EXISTS tags (
+CREATE TABLE IF NOT EXISTS tag (
     tag_id INTEGER PRIMARY KEY,
-    event_id BLOB NOT NULL,
+    -- an event ID that contains a tag.
+    event_id INTEGER NOT NULL,
     -- the tag name ("p", "e", whatever)
-    kind TEXT NOT NULL,
-    -- tag contents
-    value BLOB,
+    name TEXT,
+    -- the tag value, if not hex.
+    value TEXT,
+    -- when the event was authored
+    created_at INTEGER NOT NULL,
+    -- event kind
+    kind INTEGER NOT NULL,
     FOREIGN KEY(event_id) REFERENCES event(event_id) ON UPDATE CASCADE ON DELETE CASCADE
 );
 
 -- Tags Indexes
-CREATE INDEX IF NOT EXISTS tag_val_index ON tags(value);
+CREATE INDEX IF NOT EXISTS tag_val_index ON tag(value);
 
-CREATE UNIQUE INDEX IF NOT EXISTS tag_composite_index ON tags(event_id, kind, value);
+CREATE INDEX IF NOT EXISTS tag_composite_index ON tag(event_id, name, value);
 
-CREATE UNIQUE INDEX IF NOT EXISTS tag_kind_eid_index ON tags(kind, event_id, value);
+CREATE INDEX IF NOT EXISTS tag_name_eid_index ON tag(name, event_id, value);
+
+CREATE INDEX IF NOT EXISTS tag_covering_index ON tag(name, kind, value, created_at, event_id);

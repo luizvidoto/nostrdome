@@ -1,7 +1,10 @@
 use async_stream::stream;
 use iced::futures::{channel::mpsc, stream::Fuse, StreamExt};
 use iced::{subscription, Subscription};
-use nostr_sdk::prelude::*;
+use nostr_sdk::secp256k1::XOnlyPublicKey;
+use nostr_sdk::{
+    Client, EventId, Filter, Keys, Kind, Relay, RelayMessage, RelayPoolNotification, Timestamp,
+};
 use std::pin::Pin;
 use std::time::Duration;
 
@@ -32,14 +35,14 @@ pub enum Event {
     Disconnected,
     Error(String),
     GotRelays(Vec<Relay>),
-    GotOwnEvents(Vec<nostr::Event>),
-    DirectMessage(String),
-    NostrEvent(nostr_sdk::Event),
+    GotOwnEvents(Vec<nostr_sdk::Event>),
     GotPublicKey(XOnlyPublicKey),
     SomeEventSuccessId(EventId),
     GotEvent(String),
     RelayRemoved(String),
-    None,
+    NostrEvent(nostr_sdk::Event),
+    RelayMessage(RelayMessage),
+    Shutdown,
 }
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -76,6 +79,7 @@ pub fn nostr_connect(keys: Keys) -> Subscription<Event> {
 
                 let subscription = Filter::new()
                     .pubkey(keys.public_key())
+                    .kind(Kind::EncryptedDirectMessage)
                     .since(Timestamp::now());
 
                 nostr_client.subscribe(vec![subscription]).await;
@@ -152,13 +156,14 @@ pub fn nostr_connect(keys: Keys) -> Subscription<Event> {
                                 )
                             },
                             Message::RemoveRelay(id) => {
-                                tracing::warn!("remove_relay: {}", id);
+                                tracing::info!("remove_relay: {}", id);
                                 (Event::RelayRemoved(id), State::Connected {receiver, nostr_client, keys, notifications_stream})
                             },
                             Message::ListOwnEvents => {
                                 let sub = Filter::new()
-                                    .author(keys.public_key().to_string())
-                                    .since(Timestamp::from(1678050565))
+                                    .pubkey(keys.public_key())
+                                    // .author(keys.public_key().to_string())
+                                    // .since(Timestamp::from(1678050565))
                                     .until(Timestamp::now());
                                 let timeout = Duration::from_secs(10);
                                 match nostr_client.get_events_of(vec![sub], Some(timeout)).await {
@@ -169,23 +174,19 @@ pub fn nostr_connect(keys: Keys) -> Subscription<Event> {
                         }
                     }
                     notification = notifications_stream.select_next_some() => {
-                        if let RelayPoolNotification::Event(_url, event) = notification {
-                            tracing::warn!("url: {}", _url);
-                            tracing::warn!("event: {:?}", event);
-                            if event.kind == Kind::EncryptedDirectMessage {
-                                let secret_key = match keys.secret_key() {
-                                    Ok(sk) => sk,
-                                    Err(e) => return (Event::Error(e.to_string()), State::Connected {receiver, nostr_client, keys, notifications_stream}),
-                                };
-                                match decrypt(&secret_key, &event.pubkey, &event.content) {
-                                    Ok(msg) => return (Event::DirectMessage(msg), State::Connected {receiver, nostr_client, keys, notifications_stream}),
-                                    Err(e) => return (Event::Error(format!("Impossible to decrypt message: {}", e.to_string())), State::Connected {receiver, nostr_client, keys, notifications_stream})
-                                }
-                            } else {
-                                return (Event::NostrEvent(event), State::Connected {receiver, nostr_client, keys, notifications_stream})
+                        match notification {
+                            RelayPoolNotification::Event(_url, event) => {
+                                // tracing::info!("url: {}", _url);
+                                // tracing::info!("event: {:?}", event);
+                                (Event::NostrEvent(event), State::Connected {receiver, nostr_client, keys, notifications_stream})
+                            },
+                            RelayPoolNotification::Message(_url, relay_msg) => {
+                                (Event::RelayMessage(relay_msg), State::Connected {receiver, nostr_client, keys, notifications_stream})
+                            }
+                            RelayPoolNotification::Shutdown => {
+                                (Event::Shutdown, State::Connected {receiver, nostr_client, keys, notifications_stream})
                             }
                         }
-                        (Event::None, State::Connected {receiver, nostr_client, keys, notifications_stream})
                     },
                 }
             }

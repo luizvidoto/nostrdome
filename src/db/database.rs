@@ -6,13 +6,13 @@ use std::cmp::Ordering;
 /// Latest database version
 pub const DB_VERSION: usize = 1;
 
-/// Startup DB Pragmas
-pub const STARTUP_SQL: &str = r##"
-PRAGMA main.synchronous=NORMAL;
-PRAGMA foreign_keys = ON;
-PRAGMA journal_size_limit=32768;
-pragma mmap_size = 17179869184; -- cap mmap at 16GB
-"##;
+// /// Startup DB Pragmas
+// pub const STARTUP_SQL: &str = r##"
+// PRAGMA main.synchronous=NORMAL;
+// PRAGMA foreign_keys = ON;
+// PRAGMA journal_size_limit=32768;
+// pragma mmap_size = 17179869184; -- cap mmap at 16GB
+// "##;
 
 const INITIAL_SETUP: [&str; 6] = [
     include_str!("../../migrations/1_setup.sql"),
@@ -31,11 +31,11 @@ pub struct Database {
 impl Database {
     pub async fn new(in_memory: bool) -> Result<Self, Error> {
         if let Some(dirs) = ProjectDirs::from("com", "NostrDome", "NostrDome") {
-            tracing::warn!("Creating project directory");
+            tracing::debug!("Creating project directory");
             let project_dir = dirs.config_dir();
             std::fs::create_dir_all(project_dir)?;
 
-            tracing::warn!("Creating database");
+            tracing::debug!("Creating database");
             let db_url = if in_memory {
                 "sqlite::memory:".to_owned()
             } else {
@@ -51,7 +51,7 @@ impl Database {
                 format!("sqlite://{}/nostrdome.db3?mode=rwc", &path_ext)
             };
 
-            tracing::warn!("Connecting database");
+            tracing::info!("Connecting database");
             let pool = SqlitePool::connect(&db_url).await?;
 
             let s = Self { pool };
@@ -106,8 +106,8 @@ pub async fn upgrade_db(pool: &SqlitePool) -> Result<(), Error> {
     }
 
     // Setup PRAGMA
-    sqlx::query(STARTUP_SQL).execute(pool).await?;
-    tracing::debug!("SQLite PRAGMA startup completed");
+    // sqlx::query(STARTUP_SQL).execute(pool).await?;
+    // tracing::debug!("SQLite PRAGMA startup completed");
     Ok(())
 }
 
@@ -119,7 +119,7 @@ pub async fn curr_db_version(pool: &SqlitePool) -> Result<usize, Error> {
 }
 
 async fn initial_setup(pool: &SqlitePool) -> Result<usize, sqlx::Error> {
-    tracing::warn!("Database initial setup");
+    tracing::info!("Database initial setup");
     for sql in INITIAL_SETUP {
         sqlx::query(sql).execute(pool).await?;
     }
