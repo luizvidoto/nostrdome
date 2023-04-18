@@ -2,13 +2,12 @@ use iced::alignment::Horizontal;
 use iced::widget::{button, column, container, row, text};
 use iced::{Command, Element, Length, Subscription};
 use iced_aw::{Card, Modal};
+use nostr_sdk::Url;
 
 use crate::components::text::title;
 use crate::components::text_input_group::text_input_group;
 use crate::components::{relay_row, RelayRow};
-use crate::db::DbRelay;
 use crate::net::{self, BackEndConnection};
-use crate::types::RelayUrl;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -57,11 +56,12 @@ impl State {
                 self.show_modal = false;
             }
             Message::OkButtonPressed => {
-                match RelayUrl::try_from_str(&self.add_relay_input) {
+                match Url::try_from(self.add_relay_input.as_str()) {
                     Ok(url) => {
-                        back_conn.send(net::Message::AddRelay(DbRelay::new(url)));
+                        back_conn.send(net::Message::AddRelay(url));
                     }
                     Err(e) => {
+                        // SOME VALIDATION TO THE USER
                         tracing::error!("{}", e);
                     }
                 }
@@ -71,10 +71,10 @@ impl State {
             Message::OpenAddRelayModal => self.show_modal = true,
             Message::BackEndEvent(ev) => match ev {
                 net::Event::GotRelays(mut rls) => {
-                    rls.sort_by(|a, b| a.1.url.cmp(&b.1.url));
+                    rls.sort_by(|a, b| a.url().cmp(&b.url()));
                     self.relays = rls
                         .into_iter()
-                        .filter_map(|(r, db_r)| RelayRow::new(r, db_r).ok())
+                        .filter_map(|r| RelayRow::new(r).ok())
                         .collect();
                 }
                 net::Event::DatabaseSuccessEvent(kind) => match kind {
