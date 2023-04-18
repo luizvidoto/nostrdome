@@ -21,7 +21,7 @@ impl RelayRowConnection {
 pub enum Message {
     None,
     ConnectToRelay(Url),
-    UpdateStatus((Url, RelayStatus)),
+    UpdateStatus((Url, RelayStatus, i64)),
     DeleteRelay(Url),
     ToggleRead((Url, bool)),
     ToggleWrite((Url, bool)),
@@ -89,11 +89,15 @@ impl RelayRow {
                         let input = receiver.select_next_some().await;
 
                         let relay_status = match input {
-                            Input::GetStatus => (relay.status().await),
+                            Input::GetStatus => relay.status().await,
                         };
 
                         (
-                            Message::UpdateStatus((url.clone(), relay_status)),
+                            Message::UpdateStatus((
+                                url.clone(),
+                                relay_status,
+                                relay.stats().connected_at().as_i64(),
+                            )),
                             State::Idle { url, relay },
                         )
                     }
@@ -112,9 +116,10 @@ impl RelayRow {
             Message::ConnectToRelay(url) => {
                 back_conn.send(net::Message::ConnectToRelay(url));
             }
-            Message::UpdateStatus((url, status)) => {
+            Message::UpdateStatus((url, status, last_connected_at)) => {
                 if self.url == url {
                     self.status = status;
+                    self.last_connected_at = last_connected_at;
                     // self.last_connected_at = Some(last_connected_at);
                     // back_conn.send(net::Message::UpdateRelay(self.into_db_relay()));
                 }

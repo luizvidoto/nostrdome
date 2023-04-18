@@ -60,6 +60,7 @@ pub enum Event {
     RelayMessage(RelayMessage),
     Shutdown,
     RelayConnected(Url),
+    UpdatedRelay,
 
     // DATABASE EVENTS
     DatabaseSuccessEvent(DatabaseSuccessEventKind),
@@ -120,12 +121,10 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
             match state {
                 State::Disconnected { keys, in_memory } => {
                     // Create new client
+                    tracing::info!("Creating Nostr Client");
                     let nostr_client = Client::new(&keys);
-                    let recv_msgs_sub = Filter::new()
-                        .pubkey(keys.public_key())
-                        .kind(Kind::EncryptedDirectMessage)
-                        .since(Timestamp::now());
 
+                    tracing::info!("Adding relays to client");
                     // Add relays to client
                     for r in vec![
                         "wss://eden.nostr.land",
@@ -135,10 +134,22 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                         // "wss://relay.damus.io",
                         // "wss://nostr.anchel.nl/",
                         // "ws://192.168.15.119:8080"
-                        "ws://192.168.15.151:8080",
+                        // "ws://192.168.15.151:8080",
+                        "ws://0.0.0.0:8080",
                     ] {
-                        nostr_client.add_relay(r, None);
+                        match nostr_client.add_relay(r, None).await {
+                            Ok(_) => tracing::info!("Added: {}", r),
+                            Err(e) => tracing::error!("{}", e),
+                        }
                     }
+                    tracing::info!("Connecting to relays");
+                    nostr_client.connect().await;
+
+                    tracing::info!("Subscribing to filters");
+                    let recv_msgs_sub = Filter::new()
+                        .pubkey(keys.public_key())
+                        .kind(Kind::EncryptedDirectMessage)
+                        .since(Timestamp::now());
                     nostr_client.subscribe(vec![recv_msgs_sub]).await;
 
                     let mut notifications = nostr_client.notifications();
@@ -352,6 +363,18 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                     )
                                     .await
                                 }
+                                Message::ToggleRelayRead((url, read)) => {
+                                    process_async_fn(
+                                        toggle_read_for_relay(&nostr_client, &url, read),
+                                        |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayUpdated)
+                                    ).await
+                                }
+                                Message::ToggleRelayWrite((url, write)) => {
+                                    process_async_fn(
+                                        toggle_write_for_relay(&nostr_client, &url, write),
+                                        |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayUpdated)
+                                    ).await
+                                }
                             };
                             (event, State::Connected {database, receiver, nostr_client, keys, notifications_stream})
                         }
@@ -384,7 +407,7 @@ async fn fetch_relays(nostr_client: &Client) -> Result<Vec<Relay>, Error> {
     Ok(relays.into_iter().map(|(_url, r)| r).collect())
 }
 async fn add_relay(nostr_client: &Client, url: &Url) -> Result<(), Error> {
-    nostr_client.add_relay(url.as_str(), None).await;
+    nostr_client.add_relay(url.as_str(), None).await?;
     Ok(())
 }
 async fn update_relay_db_and_client(
@@ -399,7 +422,24 @@ async fn connect_relays(nostr_client: &Client) -> Result<(), Error> {
     nostr_client.connect().await;
     Ok(())
 }
-
+async fn toggle_read_for_relay(nostr_client: &Client, url: &Url, read: bool) -> Result<(), Error> {
+    let mut relays = nostr_client.relays().await;
+    if let Some(relay) = relays.get_mut(url) {
+        relay.opts().set_read(read)
+    }
+    Ok(())
+}
+async fn toggle_write_for_relay(
+    nostr_client: &Client,
+    url: &Url,
+    write: bool,
+) -> Result<(), Error> {
+    let mut relays = nostr_client.relays().await;
+    if let Some(relay) = relays.get_mut(url) {
+        relay.opts().set_write(write)
+    }
+    Ok(())
+}
 async fn process_async_fn<T, E>(
     operation: impl Future<Output = Result<T, E>>,
     success_event_fn: impl Fn(T) -> Event,

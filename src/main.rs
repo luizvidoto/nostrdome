@@ -178,7 +178,7 @@ impl Application for App {
 #[tokio::main]
 async fn main() {
     if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "error");
+        std::env::set_var("RUST_LOG", "info");
     }
 
     let env_filter = EnvFilter::from_default_env();
