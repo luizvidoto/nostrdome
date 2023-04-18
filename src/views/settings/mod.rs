@@ -62,7 +62,7 @@ impl State {
     }
     pub fn contacts(back_conn: &mut BackEndConnection) -> Self {
         Self::Contacts {
-            state: contacts::State::loading(back_conn),
+            state: contacts::State::new(back_conn),
         }
     }
     fn backup() -> Self {

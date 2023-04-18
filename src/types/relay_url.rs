@@ -13,9 +13,6 @@ impl fmt::Display for RelayUrl {
 
 impl RelayUrl {
     const URL_PATTERN: &'static str = r"(?i)^(wss?://)(([a-z0-9-]+\.)+[a-z]{2,}|([0-9]{1,3}\.){3}[0-9]{1,3})(:[0-9]+)?(/[\w/?=-]*)?$";
-    pub fn to_sdk_url(&self) -> nostr_sdk::Url {
-        nostr_sdk::Url()
-    }
     pub fn is_url_valid(url: &str) -> bool {
         let re = Regex::new(Self::URL_PATTERN).unwrap();
         re.is_match(url)

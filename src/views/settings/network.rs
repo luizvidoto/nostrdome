@@ -9,6 +9,8 @@ use crate::components::text_input_group::text_input_group;
 use crate::components::{relay_row, RelayRow};
 use crate::net::{self, BackEndConnection};
 
+const CARD_MAX_WIDTH: f32 = 300.0;
+
 #[derive(Debug, Clone)]
 pub enum Message {
     RelayMessage(relay_row::Message),
@@ -133,7 +135,7 @@ impl State {
                     .padding(5)
                     .width(Length::Fill),
                 )
-                .max_width(300.0)
+                .max_width(CARD_MAX_WIDTH)
                 //.width(Length::Shrink)
                 .on_close(Message::CloseModal)
                 .into()

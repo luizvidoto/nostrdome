@@ -10,7 +10,8 @@ use iced::{subscription, Subscription};
 use nostr_sdk::prelude::decrypt;
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 use nostr_sdk::{
-    Client, EventId, Filter, Keys, Kind, Relay, RelayMessage, RelayPoolNotification, Timestamp, Url,
+    Client, Contact, EventId, Filter, Keys, Kind, Relay, RelayMessage, RelayPoolNotification,
+    Timestamp, Url,
 };
 use sqlx::SqlitePool;
 use std::pin::Pin;
@@ -42,33 +43,68 @@ pub enum State {
             Fuse<Pin<Box<dyn futures::Stream<Item = RelayPoolNotification> + Send>>>,
     },
 }
-
 #[derive(Debug, Clone)]
 pub enum Event {
+    /// Event triggered when a connection to the back-end is established
     Connected(BackEndConnection),
+
+    /// Event triggered when the connection to the back-end is lost
     Disconnected,
+
+    /// Event triggered when an error occurs
     Error(String),
-    // NOSTR CLIENT EVENTS
+
+    /// NOSTR CLIENT EVENTS
+    /// Event triggered when relays are connected
     RelaysConnected,
+
+    /// Event triggered when a list of relays is received
     GotRelays(Vec<Relay>),
+
+    /// Event triggered when a list of own events is received
     GotOwnEvents(Vec<nostr_sdk::Event>),
+
+    /// Event triggered when a public key is received
     GotPublicKey(XOnlyPublicKey),
+
+    /// Event triggered when an event is successfully processed
     SomeEventSuccessId(EventId),
+
+    /// Event triggered when an event string is received
     GotEvent(String),
+
+    /// Event triggered when a relay is removed
     RelayRemoved(String),
+
+    /// Event triggered when a Nostr event is received
     NostrEvent(nostr_sdk::Event),
+
+    /// Event triggered when a relay message is received
     RelayMessage(RelayMessage),
+
+    /// Event triggered when the system is shutting down
     Shutdown,
+
+    /// Event triggered when a relay is connected
     RelayConnected(Url),
+
+    /// Event triggered when a relay is updated
     UpdatedRelay,
 
-    // DATABASE EVENTS
+    /// DATABASE EVENTS
+    /// Event triggered when a database operation is successful
     DatabaseSuccessEvent(DatabaseSuccessEventKind),
-    // GotDbRelays(Vec<DbRelay>),
+
+    /// Event triggered when a list of chat messages is received
     GotMessages(Vec<ChatMessage>),
+
+    /// Event triggered when a list of contacts is received
     GotContacts(Vec<DbContact>),
+
+    /// Event triggered when no event is to be processed
     None,
 }
+
 #[derive(Debug, Clone)]
 pub enum Message {
     // NOSTR CLIENT MESSAGES
@@ -87,6 +123,7 @@ pub enum Message {
     // DATABASE MESSAGES
     FetchMessages(XOnlyPublicKey),
     AddContact(DbContact),
+    SetContactList(Vec<Contact>),
     FetchContacts,
     UpdateContact(DbContact),
     DeleteContact(XOnlyPublicKey),
@@ -124,26 +161,8 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                     tracing::info!("Creating Nostr Client");
                     let nostr_client = Client::new(&keys);
 
-                    tracing::info!("Adding relays to client");
-                    // Add relays to client
-                    for r in vec![
-                        "wss://eden.nostr.land",
-                        "wss://relay.snort.social",
-                        // "wss://relay.nostr.band",
-                        // "wss://nostr.fmt.wiz.biz",
-                        // "wss://relay.damus.io",
-                        // "wss://nostr.anchel.nl/",
-                        // "ws://192.168.15.119:8080"
-                        // "ws://192.168.15.151:8080",
-                        "ws://0.0.0.0:8080",
-                    ] {
-                        match nostr_client.add_relay(r, None).await {
-                            Ok(_) => tracing::info!("Added: {}", r),
-                            Err(e) => tracing::error!("{}", e),
-                        }
-                    }
-                    tracing::info!("Connecting to relays");
-                    nostr_client.connect().await;
+                    // tracing::info!("Connecting to relays");
+                    // nostr_client.connect().await;
 
                     tracing::info!("Subscribing to filters");
                     let recv_msgs_sub = Filter::new()
@@ -224,6 +243,12 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                         |contacts| Event::GotContacts(contacts),
                                     )
                                     .await
+                                }
+                                Message::SetContactList(contacts) => {
+                                    process_async_fn(
+                                        set_contact_list(&nostr_client, contacts),
+                                        |_|Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::ContactUpdated)
+                                    ).await
                                 }
                                 Message::FetchMessages (contact) => {
                                     process_async_fn(
@@ -401,6 +426,17 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
     )
 }
 
+async fn _fetch_contacts_from_relays(nostr_client: &Client) -> Result<Vec<Contact>, Error> {
+    let contacts = nostr_client
+        .get_contact_list(Some(Duration::from_secs(10)))
+        .await?;
+    Ok(contacts)
+}
+async fn set_contact_list(nostr_client: &Client, contacts: Vec<Contact>) -> Result<(), Error> {
+    nostr_client.set_contact_list(contacts).await?;
+    Ok(())
+}
+
 async fn fetch_relays(nostr_client: &Client) -> Result<Vec<Relay>, Error> {
     let relays = nostr_client.relays().await;
 
@@ -419,6 +455,26 @@ async fn update_relay_db_and_client(
 }
 
 async fn connect_relays(nostr_client: &Client) -> Result<(), Error> {
+    tracing::info!("Adding relays to client");
+    // Add relays to client
+    for r in vec![
+        "wss://eden.nostr.land",
+        "wss://relay.snort.social",
+        // "wss://relay.nostr.band",
+        // "wss://nostr.fmt.wiz.biz",
+        // "wss://relay.damus.io",
+        // "wss://nostr.anchel.nl/",
+        // "ws://192.168.15.119:8080"
+        "ws://192.168.15.151:8080",
+        // "ws://0.0.0.0:8080",
+    ] {
+        match nostr_client.add_relay(r, None).await {
+            Ok(_) => tracing::info!("Added: {}", r),
+            Err(e) => tracing::error!("{}", e),
+        }
+    }
+
+    tracing::info!("Connecting to relays");
     nostr_client.connect().await;
     Ok(())
 }

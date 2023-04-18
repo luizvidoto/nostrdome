@@ -19,6 +19,12 @@ pub fn parse_key(key: String) -> Result<String, anyhow::Error> {
     Ok(parsed_key)
 }
 
+pub fn format_pubkey(pubkey: &str) -> String {
+    let prefix = &pubkey[0..4];
+    let suffix = &pubkey[pubkey.len().saturating_sub(4)..];
+    format!("{}..{}", prefix, suffix)
+}
+
 /// Convert a i64 representing milliseconds since UNIX epoch to an Option<NaiveDateTime>.
 ///
 /// # Arguments
