@@ -2,9 +2,7 @@ use iced::widget::{button, column, container, row};
 use iced::{Color, Element, Length};
 use nostr_sdk::Metadata;
 
-use crate::net::database::DbConnection;
-use crate::net::nostr::NostrConnection;
-use crate::net::{self};
+use crate::net::{self, BackEndConnection};
 
 mod account;
 mod appearance;
@@ -36,10 +34,10 @@ pub enum State {
     Contacts { state: contacts::State },
 }
 impl State {
-    pub fn new(db_conn: &mut DbConnection) -> Self {
-        Self::account(db_conn)
+    pub fn new(back_conn: &mut BackEndConnection) -> Self {
+        Self::account(back_conn)
     }
-    fn account(_db_conn: &mut DbConnection) -> Self {
+    fn account(_back_conn: &mut BackEndConnection) -> Self {
         let profile = Metadata::new();
         // conn.send(message)
         Self::Account {
@@ -51,18 +49,18 @@ impl State {
             state: appearance::State::new(),
         }
     }
-    fn network_loading(db_conn: &mut DbConnection) -> Self {
+    fn network_loading(back_conn: &mut BackEndConnection) -> Self {
         // let mut relays = vec![];
         // for _ in 0..10 {
         //     relays.push(RelayRow::new((8..12).fake::<String>()))
         // }
         Self::Network {
-            state: network::State::loading(db_conn),
+            state: network::State::loading(back_conn),
         }
     }
-    pub fn contacts(db_conn: &mut DbConnection) -> Self {
+    pub fn contacts(back_conn: &mut BackEndConnection) -> Self {
         Self::Contacts {
-            state: contacts::State::loading(db_conn),
+            state: contacts::State::loading(back_conn),
         }
     }
     fn backup() -> Self {
@@ -70,21 +68,20 @@ impl State {
             state: backup::State::default(),
         }
     }
-    pub fn db_event(
-        &mut self,
-        event: net::database::Event,
-        db_conn: &mut DbConnection,
-        _nostr_conn: &mut NostrConnection,
-    ) {
+    pub fn back_end_event(&mut self, event: net::Event, back_conn: &mut BackEndConnection) {
         match self {
-            Self::Account { state } => state.update(account::Message::DbEvent(event)),
-            Self::Appearance { state } => state.update(appearance::Message::DbEvent(event)),
-            Self::Network { state } => state.update(network::Message::DbEvent(event), db_conn),
-            Self::Backup { state } => state.update(backup::Message::DbEvent(event)),
-            Self::Contacts { state } => state.update(contacts::Message::DbEvent(event), db_conn),
+            Self::Account { state } => state.update(account::Message::BackEndEvent(event)),
+            Self::Appearance { state } => state.update(appearance::Message::BackEndEvent(event)),
+            Self::Network { state } => {
+                state.update(network::Message::BackEndEvent(event), back_conn)
+            }
+            Self::Backup { state } => state.update(backup::Message::BackEndEvent(event)),
+            Self::Contacts { state } => {
+                state.update(contacts::Message::BackEndEvent(event), back_conn)
+            }
         }
     }
-    pub fn update(&mut self, message: Message, db_conn: &mut DbConnection) {
+    pub fn update(&mut self, message: Message, back_conn: &mut BackEndConnection) {
         match message {
             Message::AccountMessage(msg) => {
                 if let State::Account { state } = self {
@@ -98,7 +95,7 @@ impl State {
             }
             Message::NetworkMessage(msg) => {
                 if let State::Network { state } = self {
-                    state.update(msg, db_conn);
+                    state.update(msg, back_conn);
                 }
             }
             Message::BackupMessage(msg) => {
@@ -108,24 +105,24 @@ impl State {
             }
             Message::ContactsMessage(msg) => {
                 if let State::Contacts { state } = self {
-                    state.update(msg, db_conn);
+                    state.update(msg, back_conn);
                 }
             }
             Message::NavEscPress => (),
             Message::MenuAccountPress => {
-                *self = Self::account(db_conn);
+                *self = Self::account(back_conn);
             }
             Message::MenuAppearancePress => {
                 *self = Self::appearance();
             }
             Message::MenuNetworkPress => {
-                *self = Self::network_loading(db_conn);
+                *self = Self::network_loading(back_conn);
             }
             Message::MenuBackupPress => {
                 *self = Self::backup();
             }
             Message::MenuContactsPress => {
-                *self = Self::contacts(db_conn);
+                *self = Self::contacts(back_conn);
             }
         }
     }

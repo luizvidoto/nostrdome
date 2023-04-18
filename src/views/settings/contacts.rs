@@ -5,7 +5,7 @@ use iced_aw::{Card, Modal};
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 
 use crate::components::text_input_group::text_input_group;
-use crate::net::database::DbConnection;
+use crate::net::BackEndConnection;
 use crate::{components::text::title, db::DbContact, net};
 
 #[derive(Debug, Clone)]
@@ -13,7 +13,7 @@ pub enum Message {
     CloseAddContactModal,
     SubmitNewContact,
     OpenAddContactModal,
-    DbEvent(net::database::Event),
+    BackEndEvent(net::Event),
     ModalPetNameInputChange(String),
     ModalPubKeyInputChange(String),
     ModalRecRelayInputChange(String),
@@ -32,10 +32,8 @@ pub enum State {
     },
 }
 impl State {
-    pub fn loading(db_conn: &mut DbConnection) -> Self {
-        if let Err(e) = db_conn.send(net::database::Message::FetchContacts) {
-            tracing::error!("{}", e);
-        };
+    pub fn loading(back_conn: &mut BackEndConnection) -> Self {
+        back_conn.send(net::Message::FetchContacts);
         Self::Loading
     }
     pub fn loaded(contacts: &[DbContact]) -> Self {
@@ -48,11 +46,11 @@ impl State {
         }
     }
 
-    pub fn update(&mut self, message: Message, db_conn: &mut DbConnection) {
+    pub fn update(&mut self, message: Message, db_conn: &mut BackEndConnection) {
         match self {
             Self::Loading => {
-                if let Message::DbEvent(db_ev) = message {
-                    if let net::database::Event::GotContacts(db_contacts) = db_ev {
+                if let Message::BackEndEvent(db_ev) = message {
+                    if let net::Event::GotContacts(db_contacts) = db_ev {
                         *self = Self::loaded(&db_contacts);
                     }
                 }
@@ -65,19 +63,14 @@ impl State {
                 modal_rec_relay_input,
             } => match message {
                 Message::DeleteContact(pubkey) => {
-                    if let Err(e) = db_conn.send(net::database::Message::DeleteContact(pubkey)) {
-                        tracing::error!("{}", e);
-                    }
+                    db_conn.send(net::Message::DeleteContact(pubkey));
                 }
                 Message::SubmitNewContact => match DbContact::from_str(modal_pubkey_input) {
                     Ok(mut db_contact) => {
                         db_contact = db_contact
                             .petname(modal_petname_input)
                             .recommended_relay(modal_rec_relay_input);
-                        if let Err(e) = db_conn.send(net::database::Message::AddContact(db_contact))
-                        {
-                            tracing::error!("{}", e);
-                        }
+                        db_conn.send(net::Message::AddContact(db_contact));
                         *show_modal = false;
                         *modal_petname_input = "".into();
                         *modal_pubkey_input = "".into();
@@ -102,17 +95,15 @@ impl State {
                 Message::CloseAddContactModal => {
                     *show_modal = false;
                 }
-                Message::DbEvent(db_ev) => match db_ev {
-                    net::database::Event::GotContacts(db_contacts) => {
+                Message::BackEndEvent(db_ev) => match db_ev {
+                    net::Event::GotContacts(db_contacts) => {
                         *contacts = db_contacts;
                     }
-                    net::database::Event::DatabaseSuccessEvent(kind) => match kind {
-                        net::database::DatabaseSuccessEventKind::ContactCreated
-                        | net::database::DatabaseSuccessEventKind::ContactDeleted
-                        | net::database::DatabaseSuccessEventKind::ContactUpdated => {
-                            if let Err(e) = db_conn.send(net::database::Message::FetchContacts) {
-                                tracing::error!("{}", e);
-                            }
+                    net::Event::DatabaseSuccessEvent(kind) => match kind {
+                        net::DatabaseSuccessEventKind::ContactCreated
+                        | net::DatabaseSuccessEventKind::ContactDeleted
+                        | net::DatabaseSuccessEventKind::ContactUpdated => {
+                            db_conn.send(net::Message::FetchContacts);
                         }
                         _ => (),
                     },

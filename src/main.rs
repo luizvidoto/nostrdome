@@ -12,22 +12,16 @@ use iced::{
     widget::{button, column, container, text},
     window, Application, Command, Element, Length, Settings,
 };
-use net::{
-    database::{database_connect, DbConnection},
-    nostr::{nostr_connect, NostrConnection},
-};
+use net::{backend_connect, BackEndConnection};
 use nostr_sdk::{prelude::FromSkStr, Keys};
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::EnvFilter;
 use views::{login, Router};
 
-const IN_MEMORY: bool = false;
-
 #[derive(Debug, Clone)]
 pub enum Message {
     RouterMessage(views::Message),
-    DatabaseMessage(net::database::Event),
-    NostrClientMessage(net::nostr::Event),
+    BackEndEvent(net::Event),
     LoginMessage(login::Message),
     ToLogin,
 }
@@ -39,14 +33,9 @@ pub enum State {
     Loading {
         keys: Keys,
     },
-    LoadedDB {
+    Loaded {
         keys: Keys,
-        db_conn: DbConnection,
-    },
-    LoadedAll {
-        keys: Keys,
-        db_conn: DbConnection,
-        nostr_conn: NostrConnection,
+        back_conn: BackEndConnection,
         router: Router,
     },
     OutsideError {
@@ -67,15 +56,11 @@ impl State {
             },
         }
     }
-    pub fn loaded_db(keys: Keys, db_conn: DbConnection) -> Self {
-        Self::LoadedDB { keys, db_conn }
-    }
-    pub fn loaded_all(keys: Keys, mut db_conn: DbConnection, nostr_conn: NostrConnection) -> Self {
-        let router = Router::new(&keys, &mut db_conn);
-        Self::LoadedAll {
+    pub fn loaded(keys: Keys, mut back_conn: BackEndConnection) -> Self {
+        let router = Router::new(&mut back_conn);
+        Self::Loaded {
             keys,
-            db_conn,
-            nostr_conn,
+            back_conn,
             router,
         }
     }
@@ -107,31 +92,19 @@ impl Application for App {
         String::from("NostrDome")
     }
     fn subscription(&self) -> iced::Subscription<Self::Message> {
-        let nostr_subscription = match &self.state {
-            State::Login { .. } | State::OutsideError { .. } | State::Loading { .. } => {
-                iced::Subscription::none()
-            }
-            State::LoadedDB { keys, .. } | State::LoadedAll { keys, .. } => {
-                nostr_connect(keys.to_owned()).map(Message::NostrClientMessage)
-            }
-        };
-        let database_subscription = match &self.state {
+        let backend_subscription = match &self.state {
             State::Login { .. } | State::OutsideError { .. } => iced::Subscription::none(),
-            State::Loading { keys, .. }
-            | State::LoadedDB { keys, .. }
-            | State::LoadedAll { keys, .. } => {
-                database_connect(IN_MEMORY, &keys.public_key().to_string())
-                    .map(Message::DatabaseMessage)
+            State::Loading { keys, .. } | State::Loaded { keys, .. } => {
+                backend_connect(keys).map(Message::BackEndEvent)
             }
         };
-        iced::Subscription::batch(vec![database_subscription, nostr_subscription])
+        iced::Subscription::batch(vec![backend_subscription])
     }
     fn view(&self) -> Element<Self::Message> {
         let content: Element<_> = match &self.state {
             State::Login { state } => state.view().map(Message::LoginMessage),
-            State::Loading { .. } => text("Loading database...").into(),
-            State::LoadedDB { .. } => text("Loading nostr...").into(),
-            State::LoadedAll { router, .. } => router.view().map(Message::RouterMessage),
+            State::Loading { .. } => text("Loading app...").into(),
+            State::Loaded { router, .. } => router.view().map(Message::RouterMessage),
             State::OutsideError { message } => {
                 let error_msg = text(message);
                 let back_btn = button("Login").on_press(Message::ToLogin);
@@ -160,63 +133,33 @@ impl Application for App {
                 }
             }
             Message::RouterMessage(msg) => {
-                if let State::LoadedAll {
-                    db_conn,
-                    router,
-                    nostr_conn,
-                    keys,
+                if let State::Loaded {
+                    back_conn, router, ..
                 } = &mut self.state
                 {
-                    router.update(msg, keys, db_conn, nostr_conn);
+                    router.update(msg, back_conn);
                 }
             }
-            Message::DatabaseMessage(db_ev) => match db_ev {
-                net::database::Event::Connected(db_conn) => {
+            Message::BackEndEvent(event) => match event {
+                net::Event::Connected(back_conn) => {
                     if let State::Loading { keys } = &mut self.state {
-                        self.state = State::loaded_db(keys.clone(), db_conn);
+                        self.state = State::loaded(keys.clone(), back_conn);
                     }
-                    println!("Received Database Connected Event");
+                    tracing::info!("Received BackEnd Connected Event");
                 }
-                net::database::Event::Disconnected => {
+                net::Event::Disconnected => {
                     self.state = State::login();
                 }
-                net::database::Event::Error(e) => {
+                net::Event::Error(e) => {
                     tracing::error!("{}", e);
                 }
                 ev => {
-                    if let State::LoadedAll {
-                        router,
-                        db_conn,
-                        nostr_conn,
-                        ..
+                    if let State::Loaded {
+                        router, back_conn, ..
                     } = &mut self.state
                     {
-                        router.db_event(ev, db_conn, nostr_conn);
+                        router.back_end_event(ev, back_conn);
                     }
-                }
-            },
-            Message::NostrClientMessage(nostr_ev) => match &mut self.state {
-                State::LoadedDB { keys, db_conn } => {
-                    if let net::nostr::Event::Connected(mut nostr_conn) = nostr_ev {
-                        if let Err(e) = nostr_conn.send(net::nostr::Message::ConnectRelays) {
-                            tracing::error!("{}", e);
-                        }
-                        self.state =
-                            State::loaded_all(keys.to_owned(), db_conn.to_owned(), nostr_conn);
-                    }
-                }
-                State::LoadedAll {
-                    db_conn,
-                    nostr_conn,
-                    router,
-                    keys,
-                    ..
-                } => {
-                    router.nostr_event(nostr_ev, &keys, db_conn, nostr_conn);
-                }
-                _ => {
-                    tracing::error!("Not possible!");
-                    tracing::error!("{:?}", nostr_ev);
                 }
             },
         }
@@ -258,27 +201,3 @@ async fn main() {
     })
     .expect("Failed to run app");
 }
-
-// net::Event::SomeEventSuccessId(ev_id) => {
-//     println!("Success! Event id: {}", ev_id);
-// }
-// net::Event::GotPublicKey(pb_key) => {
-//     println!("Public key: {}", pb_key);
-// }
-// net::Event::DirectMessage(msg) => {
-//     println!("New DM {}", msg);
-// }
-// net::Event::NostrEvent(event) => {
-//     println!("{:?}", event);
-// }
-// net::Event::GotRelays(relays) => {
-//     for r in relays {
-//         println!("{}", r.url());
-//     }
-// }
-// net::Event::GotOwnEvents(events) => {
-//     println!("Got Own events");
-//     for (idx, e) in events.iter().enumerate() {
-//         println!("{}: {:?}", idx, e)
-//     }
-// }

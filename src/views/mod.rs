@@ -1,8 +1,6 @@
-use iced::widget::text;
 use iced::Element;
-use nostr_sdk::Keys;
 
-use crate::net::{self, database::DbConnection, nostr::NostrConnection};
+use crate::net::{self, BackEndConnection};
 
 mod chat;
 pub mod login;
@@ -20,10 +18,10 @@ pub struct Router {
     state: ViewState,
 }
 impl Router {
-    pub fn new(keys: &Keys, db_conn: &mut DbConnection) -> Self {
+    pub fn new(back_conn: &mut BackEndConnection) -> Self {
         Self {
             previous_state: None,
-            state: ViewState::chat(keys, db_conn),
+            state: ViewState::chat(back_conn),
         }
     }
     fn next_state(&mut self, next: ViewState) {
@@ -41,75 +39,41 @@ impl Router {
     pub fn view(&self) -> Element<Message> {
         self.state.view()
     }
-    pub fn db_event(
-        &mut self,
-        event: net::database::Event,
-        db_conn: &mut DbConnection,
-        nostr_conn: &mut NostrConnection,
-    ) {
-        match &mut self.state {
-            ViewState::Loading => (),
-            ViewState::Chat { state } => state.db_event(event, db_conn, nostr_conn),
-            ViewState::Settings { state } => state.db_event(event, db_conn, nostr_conn),
-        }
-    }
-    pub fn nostr_event(
-        &mut self,
-        event: net::nostr::Event,
-        keys: &Keys,
-        db_conn: &mut DbConnection,
-        nostr_conn: &mut NostrConnection,
-    ) {
+    pub fn back_end_event(&mut self, event: net::Event, back_conn: &mut BackEndConnection) {
         match event {
-            // net::nostr::Event::RelaysConnected => {
-            //     if let Err(e) = nostr_conn.send(net::nostr::Message::ListOwnEvents) {
-            //         tracing::error!("{}", e);
-            //     };
-            // }
-            net::nostr::Event::GotOwnEvents(events) => {
+            net::Event::GotOwnEvents(events) => {
                 tracing::info!("Got events: {}", events.len());
                 for event in events {
-                    if let Err(e) = db_conn.send(net::database::Message::InsertEvent {
-                        keys: keys.clone(),
-                        event,
-                    }) {
-                        tracing::error!("{}", e);
-                    }
+                    back_conn.send(net::Message::InsertEvent(event))
                 }
             }
-            net::nostr::Event::NostrEvent(event) => {
+            net::Event::NostrEvent(event) => {
                 tracing::info!("Nostr Event: {:?}", event);
-                if let Err(e) = db_conn.send(net::database::Message::InsertEvent {
-                    keys: keys.clone(),
-                    event,
-                }) {
-                    tracing::error!("{}", e);
-                }
+                back_conn.send(net::Message::InsertEvent(event))
             }
             event => {
                 println!("Other: {:?}", event);
+                match &mut self.state {
+                    ViewState::Chat { state } => state.back_end_event(event, back_conn),
+                    ViewState::Settings { state } => state.back_end_event(event, back_conn),
+                }
             }
         }
     }
-    pub fn update(
-        &mut self,
-        message: Message,
-        keys: &Keys,
-        db_conn: &mut DbConnection,
-        nostr_conn: &mut NostrConnection,
-    ) {
+
+    pub fn update(&mut self, message: Message, back_conn: &mut BackEndConnection) {
         match message {
             Message::ChangeView => (),
             Message::ChatMsg(msg) => {
                 if let ViewState::Chat { state } = &mut self.state {
                     match msg {
                         chat::Message::AddContactPress => {
-                            self.next_state(ViewState::settings_contacts(db_conn))
+                            self.next_state(ViewState::settings_contacts(back_conn))
                         }
                         chat::Message::NavSettingsPress => {
-                            self.next_state(ViewState::settings(db_conn))
+                            self.next_state(ViewState::settings(back_conn))
                         }
-                        _ => state.update(msg.clone(), keys, db_conn, nostr_conn),
+                        _ => state.update(msg.clone(), back_conn),
                     }
                 }
             }
@@ -117,9 +81,9 @@ impl Router {
                 if let ViewState::Settings { state } = &mut self.state {
                     match msg {
                         settings::Message::NavEscPress => {
-                            self.next_state(ViewState::chat(keys, db_conn))
+                            self.next_state(ViewState::chat(back_conn))
                         }
-                        _ => state.update(msg.clone(), db_conn),
+                        _ => state.update(msg.clone(), back_conn),
                     }
                 }
             }
@@ -131,31 +95,26 @@ impl Router {
 pub enum ViewState {
     Chat { state: chat::State },
     Settings { state: settings::State },
-    Loading,
 }
 
 impl ViewState {
-    pub fn loading() -> Self {
-        Self::Loading
-    }
-    pub fn chat(_keys: &Keys, db_conn: &mut DbConnection) -> Self {
+    pub fn chat(back_conn: &mut BackEndConnection) -> Self {
         Self::Chat {
-            state: chat::State::new(db_conn),
+            state: chat::State::new(back_conn),
         }
     }
-    pub fn settings(db_conn: &mut DbConnection) -> Self {
+    pub fn settings(back_conn: &mut BackEndConnection) -> Self {
         Self::Settings {
-            state: settings::State::new(db_conn),
+            state: settings::State::new(back_conn),
         }
     }
-    pub fn settings_contacts(db_conn: &mut DbConnection) -> Self {
+    pub fn settings_contacts(back_conn: &mut BackEndConnection) -> Self {
         Self::Settings {
-            state: settings::State::contacts(db_conn),
+            state: settings::State::contacts(back_conn),
         }
     }
     pub fn view(&self) -> Element<Message> {
         match self {
-            Self::Loading => text("Loading").into(),
             Self::Chat { state } => state.view().map(Message::ChatMsg),
             Self::Settings { state } => state.view().map(Message::SettingsMsg),
         }

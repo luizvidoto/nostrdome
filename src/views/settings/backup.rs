@@ -4,7 +4,7 @@ use crate::{components::text::title, net};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    DbEvent(net::database::Event),
+    BackEndEvent(net::Event),
 }
 
 #[derive(Debug, Clone)]
@@ -16,7 +16,7 @@ impl State {
 
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::DbEvent(_ev) => (),
+            Message::BackEndEvent(_ev) => (),
         }
     }
 

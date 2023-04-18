@@ -1,12 +1,9 @@
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length};
 use nostr_sdk::secp256k1::XOnlyPublicKey;
-use nostr_sdk::Keys;
 
 use crate::components::contact_card;
-use crate::net::database::DbConnection;
-use crate::net::nostr::NostrConnection;
-use crate::net::{self};
+use crate::net::{self, BackEndConnection};
 use crate::types::ChatMessage;
 
 #[derive(Debug, Clone)]
@@ -28,11 +25,8 @@ pub struct State {
     messages: Vec<ChatMessage>,
 }
 impl State {
-    pub fn new(db_conn: &mut DbConnection) -> Self {
-        if let Err(e) = db_conn.send(net::database::Message::FetchContacts) {
-            tracing::error!("{}", e);
-        }
-
+    pub fn new(back_conn: &mut BackEndConnection) -> Self {
+        back_conn.send(net::Message::FetchContacts);
         Self {
             contacts: vec![],
             messages: vec![],
@@ -101,27 +95,22 @@ impl State {
             .height(Length::Fill)
             .into()
     }
-    pub fn db_event(
-        &mut self,
-        event: net::database::Event,
-        _db_conn: &mut DbConnection,
-        _nostr_conn: &mut NostrConnection,
-    ) {
+    pub fn back_end_event(&mut self, event: net::Event, _back_conn: &mut BackEndConnection) {
         match event {
-            net::database::Event::DatabaseSuccessEvent(kind) => match kind {
-                net::database::DatabaseSuccessEventKind::NewDM(message) => {
+            net::Event::DatabaseSuccessEvent(kind) => match kind {
+                net::DatabaseSuccessEventKind::NewDM(message) => {
                     self.messages.push(message);
                     self.messages
                         .sort_by(|a, b| a.created_at.cmp(&b.created_at))
                 }
                 _ => (),
             },
-            net::database::Event::GotMessages(chat_msgs) => {
+            net::Event::GotMessages(chat_msgs) => {
                 self.messages = chat_msgs;
                 self.messages
                     .sort_by(|a, b| a.created_at.cmp(&b.created_at))
             }
-            net::database::Event::GotContacts(db_contacts) => {
+            net::Event::GotContacts(db_contacts) => {
                 self.contacts = db_contacts
                     .iter()
                     .map(|c| contact_card::State::from_db_contact(c))
@@ -131,13 +120,7 @@ impl State {
         }
     }
 
-    pub fn update(
-        &mut self,
-        message: Message,
-        keys: &Keys,
-        db_conn: &mut DbConnection,
-        nostr_conn: &mut NostrConnection,
-    ) {
+    pub fn update(&mut self, message: Message, back_conn: &mut BackEndConnection) {
         match message {
             Message::AddContactPress => (),
             Message::DMNMessageChange(text) => {
@@ -145,7 +128,7 @@ impl State {
             }
             Message::DMSentPress => {
                 if let Some(pub_key) = self.contact_pubkey_active {
-                    match nostr_conn.send(net::nostr::Message::SendDMTo((
+                    match back_conn.try_send(net::Message::SendDMTo((
                         pub_key.clone(),
                         self.dm_msg.clone(),
                     ))) {
@@ -180,14 +163,7 @@ impl State {
                     contact_card::Message::UpdateActiveId(hex_pub) => {
                         if let Some(active_hex) = self.contact_pubkey_active {
                             if active_hex != hex_pub {
-                                if let Err(e) =
-                                    db_conn.send(net::database::Message::FetchMessages {
-                                        keys: keys.clone(),
-                                        contact: hex_pub,
-                                    })
-                                {
-                                    tracing::error!("{}", e);
-                                }
+                                back_conn.send(net::Message::FetchMessages(hex_pub));
                                 self.messages = vec![];
                             }
                         }

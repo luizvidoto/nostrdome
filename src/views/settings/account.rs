@@ -17,7 +17,7 @@ pub enum Message {
     LNChange(String),
     NIP05Change(String),
     SubmitPress,
-    DbEvent(net::database::Event),
+    BackEndEvent(net::Event),
 }
 
 #[derive(Debug, Clone)]
@@ -49,7 +49,7 @@ impl State {
 
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::DbEvent(_ev) => (),
+            Message::BackEndEvent(_ev) => (),
             Message::ProfileNameChange(name) => self.name = name,
             Message::UserNameChange(user_name) => self.user_name = user_name,
             Message::PictureUrlChange(pic_url) => self.picture_url = pic_url,

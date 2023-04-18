@@ -59,8 +59,12 @@ pub enum Error {
     Utf8Error(#[from] std::str::Utf8Error),
 
     /// Nostr Sdk Error
-    #[error("{0}")]
-    NostrSdkError(#[from] NostrSdkError),
+    #[error("Nostr Sdk Client Error: {0}")]
+    NostrSdkError(#[from] nostr_sdk::client::Error),
+
+    /// Nostr secp256k1 Error
+    #[error("Nostr secp256k1 Error: {0}")]
+    NostrSecp256k1Error(#[from] nostr_sdk::secp256k1::Error),
 
     /// Invalid Date
     #[error("Invalid Date: {0}")]
@@ -71,16 +75,4 @@ pub enum Error {
         "Database version is newer than supported by this executable (v{current} > v{db_ver})"
     )]
     NewerDbVersion { current: usize, db_ver: usize },
-}
-
-/// Errors that can occur in the nostr-sdk crate
-#[derive(Error, Debug)]
-pub enum NostrSdkError {
-    /// Error converting from hex string to EventId
-    #[error("HexToEventIdError: {0}")]
-    HexToEventIdError(String),
-
-    /// Bad public key
-    #[error("Invalid Public Key")]
-    InvalidPublicKey,
 }

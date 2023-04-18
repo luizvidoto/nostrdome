@@ -4,7 +4,7 @@ use nostr_sdk::secp256k1::XOnlyPublicKey;
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
-use crate::error::{Error, NostrSdkError};
+use crate::error::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbContact {
@@ -16,8 +16,7 @@ pub struct DbContact {
 
 impl DbContact {
     pub fn from_str(pubkey: &str) -> Result<Self, Error> {
-        let pubkey = XOnlyPublicKey::from_str(pubkey)
-            .map_err(|_| Error::NostrSdkError(NostrSdkError::InvalidPublicKey))?;
+        let pubkey = XOnlyPublicKey::from_str(pubkey)?;
         Ok(Self {
             pubkey,
             recommended_relay: None,

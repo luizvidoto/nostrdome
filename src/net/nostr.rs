@@ -76,7 +76,6 @@ pub fn nostr_connect(keys: Keys) -> Subscription<Event> {
             State::Disconnected { keys } => {
                 // Create new client
                 let nostr_client = Client::new(&keys);
-
                 let recv_msgs_sub = Filter::new()
                     .pubkey(keys.public_key())
                     .kind(Kind::EncryptedDirectMessage)
