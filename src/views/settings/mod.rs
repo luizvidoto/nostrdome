@@ -1,5 +1,5 @@
 use iced::widget::{button, column, container, row};
-use iced::{Color, Element, Length};
+use iced::{Color, Command, Element, Length, Subscription};
 use nostr_sdk::Metadata;
 
 use crate::net::{self, BackEndConnection};
@@ -34,6 +34,12 @@ pub enum State {
     Contacts { state: contacts::State },
 }
 impl State {
+    pub fn subscription(&self) -> Subscription<Message> {
+        match self {
+            State::Network { state } => state.subscription().map(Message::NetworkMessage),
+            _ => Subscription::none(),
+        }
+    }
     pub fn new(back_conn: &mut BackEndConnection) -> Self {
         Self::account(back_conn)
     }
@@ -49,13 +55,9 @@ impl State {
             state: appearance::State::new(),
         }
     }
-    fn network_loading(back_conn: &mut BackEndConnection) -> Self {
-        // let mut relays = vec![];
-        // for _ in 0..10 {
-        //     relays.push(RelayRow::new((8..12).fake::<String>()))
-        // }
+    fn network(back_conn: &mut BackEndConnection) -> Self {
         Self::Network {
-            state: network::State::loading(back_conn),
+            state: network::State::new(back_conn),
         }
     }
     pub fn contacts(back_conn: &mut BackEndConnection) -> Self {
@@ -68,20 +70,31 @@ impl State {
             state: backup::State::default(),
         }
     }
-    pub fn back_end_event(&mut self, event: net::Event, back_conn: &mut BackEndConnection) {
+    pub fn back_end_event(
+        &mut self,
+        event: net::Event,
+        back_conn: &mut BackEndConnection,
+    ) -> Command<Message> {
         match self {
             Self::Account { state } => state.update(account::Message::BackEndEvent(event)),
             Self::Appearance { state } => state.update(appearance::Message::BackEndEvent(event)),
             Self::Network { state } => {
-                state.update(network::Message::BackEndEvent(event), back_conn)
+                return state
+                    .update(network::Message::BackEndEvent(event), back_conn)
+                    .map(Message::NetworkMessage);
             }
             Self::Backup { state } => state.update(backup::Message::BackEndEvent(event)),
             Self::Contacts { state } => {
                 state.update(contacts::Message::BackEndEvent(event), back_conn)
             }
         }
+        Command::none()
     }
-    pub fn update(&mut self, message: Message, back_conn: &mut BackEndConnection) {
+    pub fn update(
+        &mut self,
+        message: Message,
+        back_conn: &mut BackEndConnection,
+    ) -> Command<Message> {
         match message {
             Message::AccountMessage(msg) => {
                 if let State::Account { state } = self {
@@ -95,7 +108,7 @@ impl State {
             }
             Message::NetworkMessage(msg) => {
                 if let State::Network { state } = self {
-                    state.update(msg, back_conn);
+                    return state.update(msg, back_conn).map(Message::NetworkMessage);
                 }
             }
             Message::BackupMessage(msg) => {
@@ -116,7 +129,7 @@ impl State {
                 *self = Self::appearance();
             }
             Message::MenuNetworkPress => {
-                *self = Self::network_loading(back_conn);
+                *self = Self::network(back_conn);
             }
             Message::MenuBackupPress => {
                 *self = Self::backup();
@@ -125,6 +138,7 @@ impl State {
                 *self = Self::contacts(back_conn);
             }
         }
+        Command::none()
     }
 
     pub fn view(&self) -> Element<Message> {

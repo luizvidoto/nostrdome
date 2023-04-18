@@ -1,256 +1,175 @@
 use iced::alignment::Horizontal;
-use iced::widget::{button, checkbox, column, container, row, text};
-use iced::{Element, Length};
+use iced::time::Instant;
+use iced::widget::{button, column, container, row, text};
+use iced::{Command, Element, Length, Subscription};
 use iced_aw::{Card, Modal};
 
 use crate::components::text::title;
 use crate::components::text_input_group::text_input_group;
+use crate::components::{relay_row, RelayRow};
 use crate::db::DbRelay;
 use crate::net::{self, BackEndConnection};
 use crate::types::RelayUrl;
 
 #[derive(Debug, Clone)]
-pub enum RelayMessage {
-    None,
-    DeleteRelay(RelayUrl),
-    ToggleRead(DbRelay),
-    ToggleWrite(DbRelay),
-    ToggleAdvertise(DbRelay),
-}
-
-#[derive(Debug, Clone)]
-pub struct RelayRow {
-    is_connected: bool,
-    url: RelayUrl,
-    last_connected_at: Option<i64>,
-    is_read: bool,
-    is_write: bool,
-    is_advertise: bool,
-}
-impl RelayRow {
-    pub fn new(relay: &DbRelay) -> Self {
-        Self {
-            is_connected: false,
-            url: relay.url.clone(),
-            last_connected_at: relay.last_connected_at,
-            is_read: relay.read,
-            is_write: relay.write,
-            is_advertise: relay.advertise,
-        }
-    }
-    pub fn view<'a>(&'a self) -> Element<'a, RelayMessage> {
-        row![
-            text(if self.is_connected {
-                "Online"
-            } else {
-                "Offline"
-            })
-            .width(Length::Fill),
-            container(text(&self.url)).width(Length::Fill),
-            container(text(format!("{}s", self.last_connected_at.unwrap_or(0))))
-                .width(Length::Fill),
-            container(checkbox("", self.is_read, |_| RelayMessage::ToggleRead(
-                self.into()
-            )))
-            .width(Length::Fill),
-            container(checkbox("", self.is_write, |_| RelayMessage::ToggleWrite(
-                self.into()
-            )))
-            .width(Length::Fill),
-            container(checkbox("", self.is_advertise, |_| {
-                RelayMessage::ToggleAdvertise(self.into())
-            }))
-            .width(Length::Fill),
-            button("Remove")
-                .on_press(RelayMessage::DeleteRelay(self.url.clone()))
-                .width(Length::Fill),
-        ]
-        .into()
-    }
-    pub fn view_header() -> Element<'static, RelayMessage> {
-        row![
-            text("Status").width(Length::Fill),
-            text("Address").width(Length::Fill),
-            text("Last Active").width(Length::Fill),
-            text("Read").width(Length::Fill),
-            text("Write").width(Length::Fill),
-            text("Advertise").width(Length::Fill),
-            text("").width(Length::Fill)
-        ]
-        .into()
-    }
-}
-
-impl From<&RelayRow> for DbRelay {
-    fn from(row: &RelayRow) -> Self {
-        Self {
-            url: row.url.to_owned(),
-            last_connected_at: row.last_connected_at,
-            read: row.is_read,
-            write: row.is_write,
-            advertise: row.is_advertise,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
 pub enum Message {
-    RelayMessage(RelayMessage),
+    RelayMessage(relay_row::Message),
     BackEndEvent(net::Event),
     OpenAddRelayModal,
     CancelButtonPressed,
     OkButtonPressed,
     CloseModal,
     AddRelayInputChange(String),
+    Tick(Instant),
 }
 
 #[derive(Debug, Clone)]
-pub enum State {
-    Loading,
-    Loaded {
-        relays: Vec<RelayRow>,
-        show_modal: bool,
-        add_relay_input: String,
-    },
+pub struct State {
+    relays: Vec<RelayRow>,
+    show_modal: bool,
+    add_relay_input: String,
 }
 impl State {
-    pub fn loading(back_conn: &mut BackEndConnection) -> Self {
-        back_conn.send(net::Message::FetchRelays);
-        Self::Loading
+    pub fn subscription(&self) -> Subscription<Message> {
+        // iced::time::every(Duration::from_secs(1)).map(Message::Tick)
+        let relay_subs: Vec<_> = self
+            .relays
+            .iter()
+            .map(|r| r.subscription().map(Message::RelayMessage))
+            .collect();
+        iced::Subscription::batch(relay_subs)
     }
-    pub fn loaded(relays: Vec<DbRelay>) -> Self {
-        let relays = relays.iter().map(|r| RelayRow::new(r)).collect();
-        Self::Loaded {
-            relays,
+    pub fn new(back_conn: &mut BackEndConnection) -> Self {
+        back_conn.send(net::Message::FetchRelays);
+        Self {
+            relays: vec![],
             show_modal: false,
             add_relay_input: "".into(),
         }
     }
 
-    pub fn update(&mut self, message: Message, db_conn: &mut BackEndConnection) {
-        match self {
-            State::Loading => {
-                if let Message::BackEndEvent(ev) = message {
-                    if let net::Event::GotDbRelays(db_relays) = ev {
-                        *self = Self::loaded(db_relays);
-                    }
-                }
+    pub fn update(
+        &mut self,
+        message: Message,
+        db_conn: &mut BackEndConnection,
+    ) -> Command<Message> {
+        match message {
+            Message::Tick(_) => {
+                // for r in self.relays {
+
+                // }
             }
-            State::Loaded {
-                relays,
-                show_modal,
-                add_relay_input,
-            } => match message {
-                Message::AddRelayInputChange(relay_addrs) => *add_relay_input = relay_addrs,
-                Message::CloseModal | Message::CancelButtonPressed => {
-                    *add_relay_input = "".into();
-                    *show_modal = false;
-                }
-                Message::OkButtonPressed => {
-                    match RelayUrl::try_from_str(add_relay_input) {
-                        Ok(url) => {
-                            db_conn.send(net::Message::AddRelay(DbRelay::new(url)));
-                        }
-                        Err(e) => {
-                            tracing::error!("{}", e);
-                        }
+            Message::AddRelayInputChange(relay_addrs) => self.add_relay_input = relay_addrs,
+            Message::CloseModal | Message::CancelButtonPressed => {
+                self.add_relay_input = "".into();
+                self.show_modal = false;
+            }
+            Message::OkButtonPressed => {
+                match RelayUrl::try_from_str(&self.add_relay_input) {
+                    Ok(url) => {
+                        db_conn.send(net::Message::AddRelay(DbRelay::new(url)));
                     }
-                    *add_relay_input = "".into();
-                    *show_modal = false;
-                }
-                Message::OpenAddRelayModal => *show_modal = true,
-                Message::BackEndEvent(ev) => match ev {
-                    net::Event::GotDbRelays(db_relays) => {
-                        *relays = db_relays.iter().map(|r| RelayRow::new(r)).collect()
+                    Err(e) => {
+                        tracing::error!("{}", e);
                     }
-                    net::Event::DatabaseSuccessEvent(kind) => match kind {
-                        net::DatabaseSuccessEventKind::RelayCreated
-                        | net::DatabaseSuccessEventKind::RelayDeleted
-                        | net::DatabaseSuccessEventKind::RelayUpdated => {
-                            db_conn.send(net::Message::FetchRelays);
-                        }
-                        _ => (),
-                    },
+                }
+                self.add_relay_input = "".into();
+                self.show_modal = false;
+            }
+            Message::OpenAddRelayModal => self.show_modal = true,
+            Message::BackEndEvent(ev) => match ev {
+                net::Event::GotRelays(rls) => {
+                    self.relays = rls
+                        .into_iter()
+                        .filter_map(|r| RelayRow::new(r).ok())
+                        .collect();
+                }
+                net::Event::DatabaseSuccessEvent(kind) => match kind {
+                    net::DatabaseSuccessEventKind::RelayCreated
+                    | net::DatabaseSuccessEventKind::RelayDeleted
+                    | net::DatabaseSuccessEventKind::RelayUpdated => {
+                        db_conn.send(net::Message::FetchRelays);
+                    }
                     _ => (),
                 },
-                Message::RelayMessage(msg) => match msg.clone() {
-                    RelayMessage::None => (),
-                    RelayMessage::DeleteRelay(relay_url) => {
-                        db_conn.send(net::Message::DeleteRelay(relay_url));
-                    }
-                    RelayMessage::ToggleRead(mut db_relay) => {
-                        db_relay.read = !db_relay.read;
-                        db_conn.send(net::Message::UpdateRelay(db_relay));
-                    }
-                    RelayMessage::ToggleWrite(mut db_relay) => {
-                        db_relay.write = !db_relay.write;
-                        db_conn.send(net::Message::UpdateRelay(db_relay));
-                    }
-                    RelayMessage::ToggleAdvertise(mut db_relay) => {
-                        db_relay.advertise = !db_relay.advertise;
-                        db_conn.send(net::Message::UpdateRelay(db_relay));
-                    }
-                },
+                _ => (),
+            },
+            Message::RelayMessage(msg) => match msg.clone() {
+                relay_row::Message::None => (),
+                relay_row::Message::DeleteRelay(relay_url) => {
+                    db_conn.send(net::Message::DeleteRelay(relay_url));
+                }
+                relay_row::Message::ToggleRead => {
+                    // db_relay.read = !db_relay.read;
+                    // db_relay.opts().set_read(!db_relay.opts().read());
+                    // db_conn.send(net::Message::UpdateRelay(db_relay));
+                }
+                relay_row::Message::ToggleWrite => {
+                    // db_relay.write = !db_relay.write;
+                    // db_relay.opts().set_write(!db_relay.opts().write());
+                    // db_conn.send(net::Message::UpdateRelay(db_relay));
+                }
+                relay_row::Message::ToggleAdvertise => {
+                    // db_relay.advertise = !db_relay.advertise;
+                    // db_conn.send(net::Message::UpdateRelay(db_relay));
+                }
+                relay_row::Message::UpdateStatus(_) => {
+                    self.relays.iter_mut().for_each(|r| {
+                        r.update(msg.clone());
+                    });
+                }
+                relay_row::Message::Ready(mut conn) => {
+                    conn.send(relay_row::Input::GetStatus);
+                }
             },
         }
+        Command::none()
     }
 
     pub fn view(&self) -> Element<Message> {
         let title = title("Network");
         let header = column![RelayRow::view_header().map(Message::RelayMessage)];
-        let relays = match self {
-            State::Loading => header.into(),
-            State::Loaded { relays, .. } => relays.iter().fold(header, |col, relay| {
-                col.push(relay.view().map(Message::RelayMessage))
-            }),
-        };
+        let relays = self.relays.iter().fold(header, |col, relay| {
+            col.push(relay.view().map(Message::RelayMessage))
+        });
         let empty = container(text("")).width(Length::Fill);
         let add_btn = button("Add").on_press(Message::OpenAddRelayModal);
         let add_row = row![empty, add_btn];
-        let content = container(column![title, add_row, relays])
+        let content: Element<_> = container(column![title, add_row, relays])
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
 
-        match self {
-            State::Loading => content,
-            State::Loaded {
-                show_modal,
-                add_relay_input,
-                ..
-            } => {
-                Modal::new(*show_modal, content, || {
-                    let add_relay_input = text_input_group(
-                        "Relay Address",
-                        "wss://my-relay.com",
-                        add_relay_input,
-                        None,
-                        Message::AddRelayInputChange,
-                    );
-                    let modal_body: Element<_> = container(add_relay_input).into();
-                    Card::new(text("Add Relay"), modal_body)
-                        .foot(
-                            row![
-                                button(text("Cancel").horizontal_alignment(Horizontal::Center),)
-                                    .width(Length::Fill)
-                                    .on_press(Message::CancelButtonPressed),
-                                button(text("Ok").horizontal_alignment(Horizontal::Center),)
-                                    .width(Length::Fill)
-                                    .on_press(Message::OkButtonPressed)
-                            ]
-                            .spacing(10)
-                            .padding(5)
-                            .width(Length::Fill),
-                        )
-                        .max_width(300.0)
-                        //.width(Length::Shrink)
-                        .on_close(Message::CloseModal)
-                        .into()
-                })
-                .backdrop(Message::CloseModal)
-                .on_esc(Message::CloseModal)
+        Modal::new(self.show_modal, content, || {
+            let add_relay_input = text_input_group(
+                "Relay Address",
+                "wss://my-relay.com",
+                &self.add_relay_input,
+                None,
+                Message::AddRelayInputChange,
+            );
+            let modal_body: Element<_> = container(add_relay_input).into();
+            Card::new(text("Add Relay"), modal_body)
+                .foot(
+                    row![
+                        button(text("Cancel").horizontal_alignment(Horizontal::Center),)
+                            .width(Length::Fill)
+                            .on_press(Message::CancelButtonPressed),
+                        button(text("Ok").horizontal_alignment(Horizontal::Center),)
+                            .width(Length::Fill)
+                            .on_press(Message::OkButtonPressed)
+                    ]
+                    .spacing(10)
+                    .padding(5)
+                    .width(Length::Fill),
+                )
+                .max_width(300.0)
+                //.width(Length::Shrink)
+                .on_close(Message::CloseModal)
                 .into()
-            }
-        }
+        })
+        .backdrop(Message::CloseModal)
+        .on_esc(Message::CloseModal)
+        .into()
     }
 }

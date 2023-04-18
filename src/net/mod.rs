@@ -17,6 +17,7 @@ use nostr_sdk::secp256k1::XOnlyPublicKey;
 use nostr_sdk::{
     Client, EventId, Filter, Keys, Kind, Relay, RelayMessage, RelayPoolNotification, Timestamp,
 };
+use sqlx::SqlitePool;
 use std::pin::Pin;
 use std::time::Duration;
 
@@ -63,9 +64,10 @@ pub enum Event {
     NostrEvent(nostr_sdk::Event),
     RelayMessage(RelayMessage),
     Shutdown,
+
     // DATABASE EVENTS
     DatabaseSuccessEvent(DatabaseSuccessEventKind),
-    GotDbRelays(Vec<DbRelay>),
+    // GotDbRelays(Vec<DbRelay>),
     GotMessages(Vec<ChatMessage>),
     GotContacts(Vec<DbContact>),
     None,
@@ -79,6 +81,7 @@ pub enum Message {
     ShowRelays,
     ListOwnEvents,
     RemoveRelay(String),
+
     // DATABASE MESSAGES
     FetchMessages(XOnlyPublicKey),
     AddContact(DbContact),
@@ -88,7 +91,7 @@ pub enum Message {
     InsertEvent(nostr_sdk::Event),
     FetchRelays,
     AddRelay(DbRelay),
-    UpdateRelay(DbRelay),
+    UpdateRelay(Relay),
     DeleteRelay(RelayUrl),
 }
 
@@ -125,8 +128,8 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                         Ok(database) => {
                             // Add relays to database
                             for r in vec![
-                                // "wss://eden.nostr.land",
-                                // "wss://relay.snort.social",
+                                "wss://eden.nostr.land",
+                                "wss://relay.snort.social",
                                 // "wss://relay.nostr.band",
                                 // "wss://nostr.fmt.wiz.biz",
                                 // "wss://relay.damus.io",
@@ -136,10 +139,11 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                             ] {
                                 if let Ok(url) = RelayUrl::try_from_str(r) {
                                     let db_relay = DbRelay::new(url);
-                                    if let Err(e) = DbRelay::insert(&database.pool, db_relay).await
+                                    if let Err(e) = DbRelay::insert(&database.pool, &db_relay).await
                                     {
                                         tracing::error!("{}", e);
                                     }
+                                    println!("Inserted relay: {}", &db_relay.url.as_str());
                                 }
                             }
 
@@ -305,35 +309,43 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                 }
                                 Message::FetchRelays => {
                                     process_async_fn(
-                                        DbRelay::fetch(&database.pool, None),
-                                        |relays| Event::GotDbRelays(relays),
+                                        fetch_relays(&nostr_client),
+                                        |relays| Event::GotRelays(relays),
                                     )
                                     .await
                                 }
+                                // Message::FetchDbRelays => {
+                                //     process_async_fn(
+                                //         DbRelay::fetch(&database.pool, None),
+                                //         |relays| Event::GotDbRelays(relays),
+                                //     )
+                                //     .await
+                                // }
                                 Message::DeleteRelay(relay_url) => {
                                     process_async_fn(
-                                        DbRelay::delete(&database.pool, relay_url),
+                                        DbRelay::delete(&database.pool, &relay_url),
                                         |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayDeleted),
                                     )
                                     .await
                                 }
                                 Message::AddRelay(db_relay) => {
                                     process_async_fn(
-                                        DbRelay::insert(&database.pool, db_relay),
+                                        DbRelay::insert(&database.pool, &db_relay),
                                         |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayCreated),
                                     )
                                     .await
                                 }
-                                Message::UpdateRelay(db_relay) => {
-                                    process_async_fn(
-                                        DbRelay::update(&database.pool, db_relay),
-                                        |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayUpdated),
-                                    )
-                                    .await
+                                Message::UpdateRelay(_db_relay) => {
+                                    // process_async_fn(
+                                    //     DbRelay::update(&database.pool, db_relay),
+                                    //     |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayUpdated),
+                                    // )
+                                    // .await
+                                    Event::None
                                 }
                                 Message::ConnectRelays => {
                                     process_async_fn(
-                                        add_and_connect(&nostr_client),
+                                        add_and_connect(&database.pool, &nostr_client),
                                         |_| Event::RelaysConnected,
                                     )
                                     .await
@@ -397,10 +409,18 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
     )
 }
 
-async fn add_and_connect(nostr_client: &Client) -> Result<(), Error> {
-    nostr_client
-        .add_relay("ws://192.168.15.151:8080", None)
-        .await?;
+async fn fetch_relays(nostr_client: &Client) -> Result<Vec<Relay>, Error> {
+    let relays = nostr_client.relays().await;
+    let relays: Vec<_> = relays.into_iter().map(|(_url, relay)| relay).collect();
+    Ok(relays)
+}
+
+async fn add_and_connect(pool: &SqlitePool, nostr_client: &Client) -> Result<(), Error> {
+    let relays = DbRelay::fetch(pool, None).await?;
+    for r in relays {
+        println!("{}", &r.url);
+        nostr_client.add_relay(r.url.as_str(), None).await?;
+    }
     nostr_client.connect().await;
     Ok(())
 }

@@ -98,7 +98,11 @@ impl Application for App {
                 backend_connect(keys).map(Message::BackEndEvent)
             }
         };
-        iced::Subscription::batch(vec![backend_subscription])
+        let app_sub = match &self.state {
+            State::Loaded { router, .. } => router.subscription().map(Message::RouterMessage),
+            _ => iced::Subscription::none(),
+        };
+        iced::Subscription::batch(vec![backend_subscription, app_sub])
     }
     fn view(&self) -> Element<Self::Message> {
         let content: Element<_> = match &self.state {
@@ -137,15 +141,16 @@ impl Application for App {
                     back_conn, router, ..
                 } = &mut self.state
                 {
-                    router.update(msg, back_conn);
+                    return router.update(msg, back_conn).map(Message::RouterMessage);
                 }
             }
             Message::BackEndEvent(event) => match event {
-                net::Event::Connected(back_conn) => {
+                net::Event::Connected(mut back_conn) => {
+                    tracing::info!("Received BackEnd Connected Event");
                     if let State::Loading { keys } = &mut self.state {
+                        back_conn.send(net::Message::ConnectRelays);
                         self.state = State::loaded(keys.clone(), back_conn);
                     }
-                    tracing::info!("Received BackEnd Connected Event");
                 }
                 net::Event::Disconnected => {
                     self.state = State::login();
@@ -158,7 +163,9 @@ impl Application for App {
                         router, back_conn, ..
                     } = &mut self.state
                     {
-                        router.back_end_event(ev, back_conn);
+                        return router
+                            .back_end_event(ev, back_conn)
+                            .map(Message::RouterMessage);
                     }
                 }
             },
@@ -171,7 +178,7 @@ impl Application for App {
 #[tokio::main]
 async fn main() {
     if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "info");
+        std::env::set_var("RUST_LOG", "error");
     }
 
     let env_filter = EnvFilter::from_default_env();

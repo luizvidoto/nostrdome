@@ -44,10 +44,7 @@ impl RelayUrl {
 
 #[cfg(test)]
 mod test {
-    use std::str::FromStr;
-
     use super::*;
-    use url::Url;
 
     #[test]
     fn regex_test() {
@@ -67,7 +64,7 @@ mod test {
 
     #[test]
     fn test_url_case() {
-        let url = Url::from_str("Wss://MyRelay.example.COM/PATH?Query").unwrap();
+        let url = RelayUrl::try_from_str("Wss://MyRelay.example.COM/PATH?Query").unwrap();
         assert_eq!(url.as_str(), "wss://myrelay.example.com/PATH?Query");
     }
 

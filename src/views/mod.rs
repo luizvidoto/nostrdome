@@ -1,4 +1,4 @@
-use iced::Element;
+use iced::{Command, Element, Subscription};
 
 use crate::net::{self, BackEndConnection};
 
@@ -36,10 +36,17 @@ impl Router {
             self.state = s;
         }
     }
+    pub fn subscription(&self) -> Subscription<Message> {
+        self.state.subscription()
+    }
     pub fn view(&self) -> Element<Message> {
         self.state.view()
     }
-    pub fn back_end_event(&mut self, event: net::Event, back_conn: &mut BackEndConnection) {
+    pub fn back_end_event(
+        &mut self,
+        event: net::Event,
+        back_conn: &mut BackEndConnection,
+    ) -> Command<Message> {
         match event {
             net::Event::GotOwnEvents(events) => {
                 tracing::info!("Got events: {}", events.len());
@@ -51,17 +58,23 @@ impl Router {
                 tracing::info!("Nostr Event: {:?}", event);
                 back_conn.send(net::Message::InsertEvent(event))
             }
-            event => {
-                println!("Other: {:?}", event);
-                match &mut self.state {
-                    ViewState::Chat { state } => state.back_end_event(event, back_conn),
-                    ViewState::Settings { state } => state.back_end_event(event, back_conn),
+            event => match &mut self.state {
+                ViewState::Chat { state } => state.back_end_event(event, back_conn),
+                ViewState::Settings { state } => {
+                    return state
+                        .back_end_event(event, back_conn)
+                        .map(Message::SettingsMsg);
                 }
-            }
+            },
         }
+        Command::none()
     }
 
-    pub fn update(&mut self, message: Message, back_conn: &mut BackEndConnection) {
+    pub fn update(
+        &mut self,
+        message: Message,
+        back_conn: &mut BackEndConnection,
+    ) -> Command<Message> {
         match message {
             Message::ChangeView => (),
             Message::ChatMsg(msg) => {
@@ -83,11 +96,16 @@ impl Router {
                         settings::Message::NavEscPress => {
                             self.next_state(ViewState::chat(back_conn))
                         }
-                        _ => state.update(msg.clone(), back_conn),
+                        _ => {
+                            return state
+                                .update(msg.clone(), back_conn)
+                                .map(Message::SettingsMsg);
+                        }
                     }
                 }
             }
         };
+        Command::none()
     }
 }
 
@@ -98,6 +116,12 @@ pub enum ViewState {
 }
 
 impl ViewState {
+    pub fn subscription(&self) -> Subscription<Message> {
+        match self {
+            ViewState::Settings { state } => state.subscription().map(Message::SettingsMsg),
+            _ => Subscription::none(),
+        }
+    }
     pub fn chat(back_conn: &mut BackEndConnection) -> Self {
         Self::Chat {
             state: chat::State::new(back_conn),

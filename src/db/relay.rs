@@ -46,7 +46,7 @@ impl DbRelay {
             .await?)
     }
 
-    pub async fn insert(pool: &SqlitePool, relay: DbRelay) -> Result<(), Error> {
+    pub async fn insert(pool: &SqlitePool, relay: &DbRelay) -> Result<(), Error> {
         let sql = "INSERT OR IGNORE INTO relay (url, last_connected_at, \
                    read, write, advertise) \
              VALUES (?1, ?2, ?3, ?4, ?5)";
@@ -63,7 +63,7 @@ impl DbRelay {
         Ok(())
     }
 
-    pub async fn update(pool: &SqlitePool, relay: DbRelay) -> Result<(), Error> {
+    pub async fn update(pool: &SqlitePool, relay: &DbRelay) -> Result<(), Error> {
         let sql = "UPDATE relay SET last_connected_at=?, read=?, write=?, advertise=? WHERE url=?";
 
         sqlx::query(sql)
@@ -78,7 +78,7 @@ impl DbRelay {
         Ok(())
     }
 
-    pub async fn delete(pool: &SqlitePool, relay_url: RelayUrl) -> Result<(), Error> {
+    pub async fn delete(pool: &SqlitePool, relay_url: &RelayUrl) -> Result<(), Error> {
         let sql = "DELETE FROM relay WHERE url=?";
 
         sqlx::query(sql).bind(&relay_url.0).execute(pool).await?;
