@@ -1,9 +1,11 @@
+use crate::db::{DbRelay, DbRelayStatus};
 use crate::error::Error;
+use crate::net::{self, BackEndConnection};
 use crate::types::RelayUrl;
 use iced::widget::{button, checkbox, container, row, text};
 use iced::{Command, Element, Length, Subscription};
 use iced_native::futures::channel::mpsc;
-use nostr_sdk::{Relay, RelayStatus};
+use nostr_sdk::Relay;
 
 #[derive(Debug, Clone)]
 pub struct RelayRowConnection(mpsc::UnboundedSender<Input>);
@@ -18,11 +20,12 @@ impl RelayRowConnection {
 #[derive(Debug, Clone)]
 pub enum Message {
     None,
-    UpdateStatus((RelayUrl, RelayStatus)),
+    ConnectToRelay(RelayUrl),
+    UpdateStatus((RelayUrl, DbRelayStatus, i64)),
     DeleteRelay(RelayUrl),
-    ToggleRead,
-    ToggleWrite,
-    ToggleAdvertise,
+    ToggleRead(DbRelay),
+    ToggleWrite(DbRelay),
+    ToggleAdvertise(DbRelay),
     Ready(RelayRowConnection),
 }
 
@@ -43,21 +46,19 @@ pub enum State {
 
 #[derive(Debug, Clone)]
 pub struct RelayRow {
-    status: RelayStatus,
     url: RelayUrl,
-    last_connected_at: i64,
+    status: DbRelayStatus,
+    last_connected_at: Option<i64>,
     is_read: bool,
     is_write: bool,
-    is_advertise: bool,
+    _is_advertise: bool,
     relay: Relay,
 }
 
 impl RelayRow {
     pub fn subscription(&self) -> Subscription<Message> {
-        struct RelayRowSub;
-        let id = std::any::TypeId::of::<RelayRowSub>();
         iced::subscription::unfold(
-            id,
+            self.url.clone(),
             State::Idle {
                 url: self.url.clone(),
                 relay: self.relay.clone(),
@@ -87,12 +88,18 @@ impl RelayRow {
 
                         let input = receiver.select_next_some().await;
 
-                        let status = match input {
-                            Input::GetStatus => relay.status().await,
+                        let (relay_status, last_connected_at) = match input {
+                            Input::GetStatus => {
+                                (relay.status().await, relay.stats().connected_at())
+                            }
                         };
 
                         (
-                            Message::UpdateStatus((url.clone(), status)),
+                            Message::UpdateStatus((
+                                url.clone(),
+                                DbRelayStatus::new(relay_status),
+                                last_connected_at.as_i64(),
+                            )),
                             State::Idle { url, relay },
                         )
                     }
@@ -100,45 +107,93 @@ impl RelayRow {
             },
         )
     }
-    pub fn update(&mut self, message: Message) -> Command<Message> {
+    pub fn into_db_relay(&self) -> DbRelay {
+        DbRelay {
+            url: self.url.clone(),
+            read: self.is_read,
+            write: self.is_write,
+            last_connected_at: self.last_connected_at,
+            status: self.status.clone(),
+            advertise: self._is_advertise,
+        }
+    }
+    pub fn update(
+        &mut self,
+        message: Message,
+        back_conn: &mut BackEndConnection,
+    ) -> Command<Message> {
         match message {
-            Message::UpdateStatus((url, status)) => {
+            Message::None => (),
+            Message::ConnectToRelay(url) => {
+                back_conn.send(net::Message::ConnectToRelay(url));
+            }
+            Message::UpdateStatus((url, status, last_connected_at)) => {
                 if self.url == url {
                     self.status = status;
+                    self.last_connected_at = Some(last_connected_at);
+                    back_conn.send(net::Message::UpdateRelay(self.into_db_relay()));
                 }
             }
-            _ => (),
+            Message::DeleteRelay(relay_url) => {
+                back_conn.send(net::Message::DeleteRelay(relay_url));
+            }
+            Message::ToggleRead(mut db_relay) => {
+                db_relay.read = !db_relay.read;
+                back_conn.send(net::Message::UpdateRelay(db_relay));
+            }
+            Message::ToggleWrite(mut db_relay) => {
+                db_relay.write = !db_relay.write;
+                back_conn.send(net::Message::UpdateRelay(db_relay));
+            }
+            Message::ToggleAdvertise(mut db_relay) => {
+                db_relay.advertise = !db_relay.advertise;
+                back_conn.send(net::Message::UpdateRelay(db_relay));
+            }
+            Message::Ready(mut conn) => {
+                conn.send(Input::GetStatus);
+            }
         }
         Command::none()
     }
-    pub fn new(relay: Relay) -> Result<Self, Error> {
-        let url = RelayUrl::try_from_str(relay.url().as_str())?;
+    pub fn new(relay: Relay, db_relay: DbRelay) -> Result<Self, Error> {
         Ok(Self {
-            status: RelayStatus::Disconnected,
-            url,
-            last_connected_at: relay.stats().connected_at().as_i64(),
-            is_read: relay.opts().read(),
-            is_write: relay.opts().write(),
-            is_advertise: false,
+            status: db_relay.status,
+            url: db_relay.url,
+            last_connected_at: db_relay.last_connected_at,
+            is_read: db_relay.read,
+            is_write: db_relay.write,
+            _is_advertise: false,
             relay,
         })
     }
     fn seconds_since_last_conn(&self) -> i64 {
         let now = chrono::Utc::now().timestamp_millis() / 1000;
-        now - self.last_connected_at
+        if let Some(last_connected_at) = self.last_connected_at {
+            now - last_connected_at
+        } else {
+            0
+        }
     }
     pub fn view<'a>(&'a self) -> Element<'a, Message> {
         row![
             text(&self.status).width(Length::Fill),
             container(text(&self.url)).width(Length::Fill),
             container(text(format!("{}s", self.seconds_since_last_conn()))).width(Length::Fill),
-            container(checkbox("", self.is_read, |_| Message::ToggleRead)).width(Length::Fill),
-            container(checkbox("", self.is_write, |_| { Message::ToggleWrite }))
-                .width(Length::Fill),
-            container(checkbox("", self.is_advertise, |_| {
-                Message::ToggleAdvertise
-            }))
+            container(checkbox("", self.is_read, |_| Message::ToggleRead(
+                self.into_db_relay()
+            )))
             .width(Length::Fill),
+            container(checkbox("", self.is_write, |_| Message::ToggleWrite(
+                self.into_db_relay()
+            )))
+            .width(Length::Fill),
+            // container(checkbox("", self.is_advertise, |_| {
+            //     Message::ToggleAdvertise
+            // }))
+            // .width(Length::Fill),
+            button("Connect")
+                .on_press(Message::ConnectToRelay(self.url.clone()))
+                .width(Length::Fill),
             button("Remove")
                 .on_press(Message::DeleteRelay(self.url.clone()))
                 .width(Length::Fill),
@@ -152,7 +207,8 @@ impl RelayRow {
             text("Last Active").width(Length::Fill),
             text("Read").width(Length::Fill),
             text("Write").width(Length::Fill),
-            text("Advertise").width(Length::Fill),
+            // text("Advertise").width(Length::Fill),
+            text("").width(Length::Fill),
             text("").width(Length::Fill)
         ]
         .into()
