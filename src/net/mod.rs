@@ -458,8 +458,8 @@ async fn connect_relays(nostr_client: &Client) -> Result<(), Error> {
     tracing::info!("Adding relays to client");
     // Add relays to client
     for r in vec![
-        "wss://eden.nostr.land",
-        "wss://relay.snort.social",
+        // "wss://eden.nostr.land",
+        // "wss://relay.snort.social",
         // "wss://relay.nostr.band",
         // "wss://nostr.fmt.wiz.biz",
         // "wss://relay.damus.io",

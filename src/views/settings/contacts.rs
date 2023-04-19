@@ -1,18 +1,18 @@
-use iced::alignment::Horizontal;
+use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{button, column, container, row, scrollable, text, Column};
 use iced::{Element, Length};
 use iced_aw::{Card, Modal};
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 
 use crate::components::text_input_group::text_input_group;
-use crate::components::{contact_row, ContactRow};
+use crate::components::{contact_row, file_importer, ContactRow, FileImporter};
 use crate::net::BackEndConnection;
 use crate::{components::text::title, db::DbContact, net};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    CloseAddContactModal,
     SubmitNewContact,
+    CloseAddContactModal,
     OpenAddContactModal,
     BackEndEvent(net::Event),
     ModalPetNameInputChange(String),
@@ -20,12 +20,23 @@ pub enum Message {
     ModalRecRelayInputChange(String),
     DeleteContact(XOnlyPublicKey),
     ContactRowMessage(contact_row::Message),
+    FileImporterMessage(file_importer::Message),
+    OpenImportContactModal,
+    CloseImportContactModal,
+}
+
+#[derive(Debug, Clone)]
+enum ModalState {
+    AddContact,
+    ImportList,
+    Off,
 }
 
 #[derive(Debug, Clone)]
 pub struct State {
     contacts: Vec<DbContact>,
-    show_modal: bool,
+    file_importer: FileImporter,
+    modal_state: ModalState,
     modal_petname_input: String,
     modal_pubkey_input: String,
     modal_rec_relay_input: String,
@@ -35,11 +46,21 @@ impl State {
         back_conn.send(net::Message::FetchContacts);
         Self {
             contacts: vec![],
-            show_modal: false,
+            file_importer: FileImporter::new("/path/to/contacts.json")
+                .file_filter("JSON File", &["json"]),
+            modal_state: ModalState::Off,
             modal_petname_input: "".into(),
             modal_pubkey_input: "".into(),
             modal_rec_relay_input: "".into(),
         }
+    }
+
+    pub fn reset_inputs(&mut self) {
+        self.modal_state = ModalState::Off;
+        self.modal_petname_input = "".into();
+        self.modal_pubkey_input = "".into();
+        self.modal_rec_relay_input = "".into();
+        self.file_importer.reset_inputs();
     }
 
     pub fn update(&mut self, message: Message, back_conn: &mut BackEndConnection) {
@@ -58,10 +79,7 @@ impl State {
                         .petname(&self.modal_petname_input)
                         .recommended_relay(&self.modal_rec_relay_input);
                     back_conn.send(net::Message::AddContact(db_contact));
-                    self.show_modal = false;
-                    self.modal_petname_input = "".into();
-                    self.modal_pubkey_input = "".into();
-                    self.modal_rec_relay_input = "".into();
+                    self.reset_inputs();
                 }
                 Err(_e) => {
                     tracing::error!("Every contact must have a valid pubkey.");
@@ -77,10 +95,23 @@ impl State {
                 self.modal_rec_relay_input = text_change;
             }
             Message::OpenAddContactModal => {
-                self.show_modal = true;
+                self.modal_state = ModalState::AddContact;
             }
             Message::CloseAddContactModal => {
-                self.show_modal = false;
+                self.reset_inputs();
+            }
+            Message::OpenImportContactModal => {
+                self.modal_state = ModalState::ImportList;
+            }
+            Message::CloseImportContactModal => {
+                self.reset_inputs();
+            }
+            Message::FileImporterMessage(msg) => {
+                if let Some(returned_msg) = self.file_importer.update(msg) {
+                    if let file_importer::Message::OnChoose(path) = returned_msg {
+                        println!("path: {}", path);
+                    }
+                }
             }
             Message::BackEndEvent(db_ev) => match db_ev {
                 net::Event::GotContacts(db_contacts) => {
@@ -109,9 +140,8 @@ impl State {
             container(text("")).width(Length::Fill),
         ];
         let add_contact_btn = button("Add").on_press(Message::OpenAddContactModal);
-        let import_list_btn = button("Import List").on_press(Message::OpenAddContactModal);
-        let import_from_relay_btn = button("Import Relay").on_press(Message::OpenAddContactModal);
-        let btn_row = row![add_contact_btn, import_list_btn, import_from_relay_btn,]
+        let import_btn = button("Import").on_press(Message::OpenImportContactModal);
+        let btn_row = row![add_contact_btn, import_btn]
             .spacing(5)
             .width(Length::Fill);
         let contact_list: Element<_> = self
@@ -123,57 +153,101 @@ impl State {
             })
             .into();
         let contact_list_scroller = column![table_header, scrollable(contact_list)];
-        let content: Element<_> = column![title, btn_row, contact_list_scroller]
+        let primary_content: Element<_> = column![title, btn_row, contact_list_scroller]
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
-        Modal::new(self.show_modal, content, || {
-            let add_relay_input = text_input_group(
-                "Contact Name",
-                "",
-                &self.modal_petname_input,
-                None,
-                Message::ModalPetNameInputChange,
-            );
-            let add_pubkey_input = text_input_group(
-                "Contact PubKey",
-                "",
-                &self.modal_pubkey_input,
-                None,
-                Message::ModalPubKeyInputChange,
-            );
-            let add_rec_relay_input = text_input_group(
-                "Recommended Relay",
-                "",
-                &self.modal_rec_relay_input,
-                None,
-                Message::ModalRecRelayInputChange,
-            );
-            let modal_body: Element<_> =
-                column![add_relay_input, add_pubkey_input, add_rec_relay_input]
-                    .spacing(4)
-                    .into();
-            Card::new(text("Add Contact"), modal_body)
-                .foot(
-                    row![
-                        button(text("Cancel").horizontal_alignment(Horizontal::Center),)
-                            .width(Length::Fill)
-                            .on_press(Message::CloseAddContactModal),
-                        button(text("Ok").horizontal_alignment(Horizontal::Center),)
-                            .width(Length::Fill)
-                            .on_press(Message::SubmitNewContact)
-                    ]
-                    .spacing(10)
-                    .padding(5)
-                    .width(Length::Fill),
-                )
-                .max_width(300.0)
-                //.width(Length::Shrink)
-                .on_close(Message::CloseAddContactModal)
+
+        let content: Element<_> = match self.modal_state {
+            ModalState::AddContact => {
+                Modal::new(true, primary_content, || {
+                    let add_relay_input = text_input_group(
+                        "Contact Name",
+                        "",
+                        &self.modal_petname_input,
+                        None,
+                        Message::ModalPetNameInputChange,
+                    );
+                    let add_pubkey_input = text_input_group(
+                        "Contact PubKey",
+                        "",
+                        &self.modal_pubkey_input,
+                        None,
+                        Message::ModalPubKeyInputChange,
+                    );
+                    let add_rec_relay_input = text_input_group(
+                        "Recommended Relay",
+                        "",
+                        &self.modal_rec_relay_input,
+                        None,
+                        Message::ModalRecRelayInputChange,
+                    );
+                    let modal_body: Element<_> =
+                        column![add_relay_input, add_pubkey_input, add_rec_relay_input]
+                            .spacing(4)
+                            .into();
+                    Card::new(text("Add Contact"), modal_body)
+                        .foot(
+                            row![
+                                button(text("Cancel").horizontal_alignment(Horizontal::Center),)
+                                    .width(Length::Fill)
+                                    .on_press(Message::CloseAddContactModal),
+                                button(text("Ok").horizontal_alignment(Horizontal::Center),)
+                                    .width(Length::Fill)
+                                    .on_press(Message::SubmitNewContact)
+                            ]
+                            .spacing(10)
+                            .padding(5)
+                            .width(Length::Fill),
+                        )
+                        .max_width(ADD_CONTACT_MODAL_WIDTH)
+                        //.width(Length::Shrink)
+                        .on_close(Message::CloseAddContactModal)
+                        .into()
+                })
+                .backdrop(Message::CloseAddContactModal)
+                .on_esc(Message::CloseAddContactModal)
                 .into()
-        })
-        .backdrop(Message::CloseAddContactModal)
-        .on_esc(Message::CloseAddContactModal)
-        .into()
+            }
+            ModalState::ImportList => {
+                Modal::new(true, primary_content, || {
+                    let modal_body: Element<_> =
+                        column![self.file_importer.view().map(Message::FileImporterMessage)]
+                            .spacing(4)
+                            .into();
+                    Card::new(text("Import Contacts"), modal_body)
+                        .foot(
+                            row![
+                                button(text("Cancel").horizontal_alignment(Horizontal::Center),)
+                                    .width(Length::Fill)
+                                    .on_press(Message::CloseImportContactModal),
+                                button(text("Ok").horizontal_alignment(Horizontal::Center),)
+                                    .width(Length::Fill)
+                                    .on_press(Message::SubmitNewContact)
+                            ]
+                            .spacing(10)
+                            .padding(5)
+                            .width(Length::Fill),
+                        )
+                        .max_width(IMPORT_MODAL_WIDTH)
+                        //.width(Length::Shrink)
+                        .on_close(Message::CloseImportContactModal)
+                        .into()
+                })
+                .backdrop(Message::CloseImportContactModal)
+                .on_esc(Message::CloseImportContactModal)
+                .into()
+            }
+            ModalState::Off => primary_content.into(),
+        };
+        container(content)
+            .center_x()
+            .center_y()
+            .align_x(Horizontal::Center)
+            .align_y(Vertical::Center)
+            .into()
     }
 }
+
+const ADD_CONTACT_MODAL_WIDTH: f32 = 400.0;
+const IMPORT_MODAL_WIDTH: f32 = 400.0;

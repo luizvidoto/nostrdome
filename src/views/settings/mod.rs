@@ -25,7 +25,7 @@ pub enum Message {
     NavEscPress,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum State {
     Account { state: account::State },
     Appearance { state: appearance::State },

@@ -14,7 +14,7 @@ futures = "0.3.21"
 iced = { version="0.9.0", features = ["tokio", "debug"] }
 iced_style = "0.8.0"
 iced_native = { version="0.10.1" }
-iced_aw = { version="0.5.0", features = ["split", "modal"] }
+iced_aw = { version="0.5.0", features = ["split", "modal", "spinner"] }
 nostr-sdk = {version = "0.21.0", features = ["all-nips"]}
 num-format = "0.4.3"
 rand = "0.8.5"
@@ -33,3 +33,4 @@ sqlx = { version="0.6.3", features = ["sqlite", "runtime-tokio-native-tls"] }
 log = "0.4.17"
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.16", features = [ "std", "env-filter" ] }
+rfd = "0.11.3"
