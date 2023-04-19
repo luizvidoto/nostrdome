@@ -101,6 +101,7 @@ pub enum Event {
     /// Event triggered when a list of contacts is received
     GotContacts(Vec<DbContact>),
 
+    RequestedEvents,
     /// Event triggered when no event is to be processed
     None,
 }
@@ -123,6 +124,7 @@ pub enum Message {
     // DATABASE MESSAGES
     FetchMessages(XOnlyPublicKey),
     AddContact(DbContact),
+    ImportContacts(Vec<DbContact>),
     SetContactList(Vec<Contact>),
     FetchContacts,
     UpdateContact(DbContact),
@@ -219,6 +221,13 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                 Message::AddContact(db_contact) => {
                                     process_async_fn(
                                         DbContact::insert(&database.pool, &db_contact),
+                                        |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::ContactCreated),
+                                    )
+                                    .await
+                                }
+                                Message::ImportContacts(db_contacts) => {
+                                    process_async_fn(
+                                        DbContact::insert_batch(&database.pool, &db_contacts),
                                         |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::ContactCreated),
                                     )
                                     .await
@@ -334,15 +343,9 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                     Event::GotPublicKey(pb_key)
                                 }
                                 Message::ListOwnEvents => {
-                                    let recv_msgs_sub = Filter::new()
-                                        .pubkey(keys.public_key())
-                                        .kind(Kind::EncryptedDirectMessage)
-                                        .until(Timestamp::now());
-                                    let timeout = Duration::from_secs(10);
                                     process_async_fn(
-                                        nostr_client.get_events_of(vec![recv_msgs_sub], Some(timeout)),
-                                        |events| Event::GotOwnEvents(events),
-
+                                        request_events(&nostr_client, &keys.public_key()),
+                                        |_| Event::RequestedEvents,
                                     )
                                     .await
                                 }
@@ -507,4 +510,15 @@ where
         Ok(result) => success_event_fn(result),
         Err(e) => Event::Error(e.to_string()),
     }
+}
+async fn request_events(nostr_client: &Client, pubkey: &XOnlyPublicKey) -> Result<(), Error> {
+    let recv_msgs_sub = Filter::new()
+        .pubkey(pubkey.to_owned())
+        .kind(Kind::EncryptedDirectMessage)
+        .until(Timestamp::now());
+    let timeout = Duration::from_secs(10);
+    nostr_client
+        .req_events_of(vec![recv_msgs_sub], Some(timeout))
+        .await;
+    Ok(())
 }

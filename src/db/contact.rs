@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use nostr_sdk::secp256k1::XOnlyPublicKey;
+use nostr_sdk::{secp256k1::XOnlyPublicKey, Tag};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
@@ -15,14 +15,40 @@ pub struct DbContact {
 }
 
 impl DbContact {
-    pub fn from_str(pubkey: &str) -> Result<Self, Error> {
-        let pubkey = XOnlyPublicKey::from_str(pubkey)?;
-        Ok(Self {
-            pubkey,
+    pub fn new(pubkey: &XOnlyPublicKey) -> Self {
+        Self {
+            pubkey: pubkey.clone(),
             recommended_relay: None,
             petname: None,
             profile_image: None,
-        })
+        }
+    }
+    pub fn from_str(pubkey: &str) -> Result<Self, Error> {
+        let pubkey = XOnlyPublicKey::from_str(pubkey)?;
+        Ok(Self::new(&pubkey))
+    }
+    pub fn from_tag(tag: &Tag) -> Result<Self, Error> {
+        match tag {
+            Tag::PubKey(pk, relay_url) => Ok(Self::new(pk)
+                .with_recommended_relay(relay_url.to_owned().map(|url| url.to_string()))),
+            Tag::ContactList {
+                pk,
+                relay_url,
+                alias,
+            } => Ok(Self::new(pk)
+                .with_recommended_relay(relay_url.to_owned().map(|url| url.to_string()))
+                .with_petname(alias)),
+            _ => Err(Error::TagToContactError),
+        }
+    }
+    fn with_recommended_relay(mut self, relay_url: Option<String>) -> Self {
+        self.recommended_relay = relay_url;
+        self
+    }
+
+    fn with_petname(mut self, petname: &Option<String>) -> Self {
+        self.petname = petname.clone();
+        self
     }
     pub fn recommended_relay(self, relay: &str) -> Self {
         if relay.is_empty() {
@@ -89,6 +115,30 @@ impl DbContact {
             .bind(&contact.profile_image)
             .execute(pool)
             .await?;
+
+        Ok(())
+    }
+
+    pub async fn insert_batch(pool: &SqlitePool, contacts: &[DbContact]) -> Result<(), Error> {
+        let sql = "INSERT OR IGNORE INTO contact (pubkey, recommended_relay, \
+               petname, profile_image) \
+         VALUES (?1, ?2, ?3, ?4)";
+
+        // Iniciar a transação
+        let mut tx = pool.begin().await?;
+
+        for contact in contacts {
+            sqlx::query(sql)
+                .bind(&contact.pubkey.to_string())
+                .bind(&contact.recommended_relay)
+                .bind(&contact.petname)
+                .bind(&contact.profile_image)
+                .execute(&mut tx)
+                .await?;
+        }
+
+        // Fazer commit da transação
+        tx.commit().await?;
 
         Ok(())
     }

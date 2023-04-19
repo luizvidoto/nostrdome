@@ -1,5 +1,14 @@
+use std::{
+    fs::File,
+    io::{self, BufReader, Read},
+    path::Path,
+};
+
 use chrono::NaiveDateTime;
 use nostr_sdk::prelude::*;
+use serde::de::DeserializeOwned;
+
+use crate::error::Error;
 
 // Accepts both hex and bech32 keys and returns the hex encoded key
 pub fn parse_key(key: String) -> Result<String, anyhow::Error> {
@@ -17,6 +26,29 @@ pub fn parse_key(key: String) -> Result<String, anyhow::Error> {
         key
     };
     Ok(parsed_key)
+}
+
+pub fn json_reader<P, T: DeserializeOwned>(path: P) -> Result<T, Error>
+where
+    P: AsRef<Path>,
+{
+    // Open the file in read-only mode with buffer.
+    let file = File::open(path)?;
+    let buf_reader = BufReader::new(file);
+    let content = serde_json::from_reader(buf_reader)?;
+    Ok(content)
+}
+
+pub fn json_to_string<P>(path: P) -> Result<String, io::Error>
+where
+    P: AsRef<Path>,
+{
+    // Open the file in read-only mode with buffer.
+    let file = File::open(path)?;
+    let mut buf_reader = BufReader::new(file);
+    let mut contents = String::new();
+    buf_reader.read_to_string(&mut contents)?;
+    Ok(contents)
 }
 
 pub fn format_pubkey(pubkey: &str) -> String {

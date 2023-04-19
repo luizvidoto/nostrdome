@@ -1,3 +1,4 @@
+use nostr_sdk::prelude::TagKind;
 use thiserror::Error;
 
 /// Errors that can occur in the nostrdome crate
@@ -75,4 +76,12 @@ pub enum Error {
         "Database version is newer than supported by this executable (v{current} > v{db_ver})"
     )]
     NewerDbVersion { current: usize, db_ver: usize },
+
+    /// Error when converting nostr_sdk::Tag into DbContact. TagKind is not P.
+    #[error("TagKind is not P: {0}")]
+    TagKindToContactError(TagKind),
+
+    /// Error when converting nostr_sdk::Tag into DbContact. Other type of Tag.
+    #[error("Other type of Tag")]
+    TagToContactError,
 }
