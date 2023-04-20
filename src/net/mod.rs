@@ -1,5 +1,5 @@
-use crate::crypto::{decrypt_local_message, encrypt_local_message};
-use crate::db::{Database, DbContact, DbEvent};
+use crate::crypto::encrypt_local_message;
+use crate::db::{Database, DbContact, DbEvent, DbMessage};
 use crate::error::Error;
 use crate::types::ChatMessage;
 use async_stream::stream;
@@ -8,8 +8,7 @@ use futures::Future;
 use iced::futures::stream::Fuse;
 use iced::futures::{channel::mpsc, StreamExt};
 use iced::{subscription, Subscription};
-use nostr_sdk::prelude::decrypt;
-use nostr_sdk::secp256k1::{SecretKey, XOnlyPublicKey};
+use nostr_sdk::secp256k1::XOnlyPublicKey;
 use nostr_sdk::{
     Client, Contact, EventId, Filter, Keys, Kind, Relay, RelayMessage, RelayPoolNotification,
     Timestamp, Url,
@@ -141,8 +140,8 @@ pub enum DatabaseSuccessEventKind {
     ContactCreated,
     ContactUpdated,
     ContactDeleted,
-    EventInserted(nostr_sdk::Event),
-    NewDM(ChatMessage),
+    EventInserted(DbEvent),
+    NewDM(DbMessage),
 }
 
 const IN_MEMORY: bool = true;
@@ -219,6 +218,7 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                     futures::select! {
                         message = receiver.select_next_some() => {
                             let event = match message {
+
                                 Message::AddContact(db_contact) => {
                                     process_async_fn(
                                         DbContact::insert(&database.pool, &db_contact),
@@ -262,34 +262,9 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                 }
                                 Message::FetchMessages (contact) => {
                                     process_async_fn(
-                                        DbEvent::fetch(
-                                            &database.pool,
-                                            Some(&format!(
-                                                "pubkey = '{}' OR pubkey = '{}'",
-                                                &keys.public_key(),
-                                                contact
-                                            )),
-                                        ),
-                                        |events| {
-                                            let secret_key = match keys.secret_key() {
-                                                Ok(sk) => sk,
-                                                Err(e) => return Event::Error(e.to_string()),
-                                            };
-                                            let messages: Vec<_> = events
-                                                .iter()
-                                                .filter_map(|ev| {
-                                                    if let Kind::EncryptedDirectMessage = ev.kind {
-                                                        match decrypt(&secret_key, &ev.pubkey, &ev.content) {
-                                                            Ok(msg) => Some(ChatMessage::from_event(ev, msg)),
-                                                            Err(_e) => Some(ChatMessage::from_event(ev, &ev.content)),
-                                                            // Err(_e) => None,
-                                                        }
-                                                    } else {
-                                                        None
-                                                    }
-                                                })
-                                                .collect();
-                                            Event::GotMessages(messages)
+                                        fetch_and_decrypt_chat(&keys, &database.pool, &contact),
+                                        |messages| {
+                                            Event::GotMessages(messages.iter().map(|db_message|ChatMessage::from_db_message(db_message)).collect())
                                         },
 
                                     )
@@ -297,40 +272,9 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                 }
                                 Message::InsertEvent(event) => {
                                     process_async_fn(
-                                        DbEvent::insert(&database.pool, DbEvent::from(&event)),
-                                        |rows_changed| {
-                                            if rows_changed > 0 {
-                                                if let Kind::EncryptedDirectMessage = event.kind {
-                                                    let secret_key = match keys.secret_key() {
-                                                        Ok(sk) => sk,
-                                                        Err(e) => return Event::Error(e.to_string()),
-                                                    };
-                                                    match decrypt(&secret_key, &event.pubkey, &event.content) {
-                                                        Ok(msg) => Event::DatabaseSuccessEvent(
-                                                            DatabaseSuccessEventKind::NewDM(ChatMessage::from_event(
-                                                                &event, msg,
-                                                            )),
-                                                        ),
-                                                        Err(_e) => Event::DatabaseSuccessEvent(
-                                                            DatabaseSuccessEventKind::NewDM(ChatMessage::from_event(
-                                                                &event,
-                                                                &event.content,
-                                                            )),
-                                                        ),
-                                                        // Err(e) => (Event::Error(e.to_string()), State::Connected {database, receiver, nostr_client, keys, notifications_stream}),
-                                                    }
-                                                } else {
-                                                    Event::DatabaseSuccessEvent(
-                                                        DatabaseSuccessEventKind::EventInserted(event.clone()),
-                                                    )
-                                                }
-                                            } else {
-                                                Event::None
-                                            }
-                                        },
-
-                                    )
-                                    .await
+                                        insert_event( &database.pool, event),
+                                        |event| event
+                                    ).await
                                 }
                                 Message::SendDMTo((pubkey, msg)) => {
                                     process_async_fn(
@@ -410,12 +354,7 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                         notification = notifications_stream.select_next_some() => {
                             let event = match notification {
                                 RelayPoolNotification::Event(_url, event) => {
-                                    // tracing::info!("url: {}", _url);
-                                    // tracing::info!("event: {:?}", event);
-                                    Event::NostrEvent(event)
-                                    // TODO:
-                                    // front end receives and says to insert event
-                                    // do it all from here
+                                    process_async_fn(insert_event(&database.pool, event), |event| event).await
                                 },
                                 RelayPoolNotification::Message(_url, relay_msg) => {
                                     Event::RelayMessage(relay_msg)
@@ -549,26 +488,85 @@ async fn send_and_store_dm(
     pool: &SqlitePool,
     nostr_client: &Client,
     keys: &Keys,
-    pubkey: XOnlyPublicKey,
+    to_pubkey: XOnlyPublicKey,
     message: &str,
 ) -> Result<EventId, Error> {
     let secret_key = keys.secret_key()?;
-    let event_id = nostr_client.send_direct_msg(pubkey, message).await?;
+    // Send to relays
+    let event_id = nostr_client
+        .send_direct_msg(to_pubkey.clone(), message)
+        .await?;
 
     // Encrypt the message for local storage
-    let locally_encrypted_message = encrypt_local_message(&secret_key, message)?;
+    let encrypted_content = encrypt_local_message(&secret_key, message)?;
     // Store the locally encrypted message in the local database
-    store_in_local_database(&locally_encrypted_message).await?;
+    // store_in_local_database(&locally_encrypted_message).await?;
+    let db_message = DbMessage::new_local(&keys.public_key(), &to_pubkey, &encrypted_content)?;
+    DbMessage::insert_message(pool, &db_message).await?;
 
     Ok(event_id)
 }
 
-fn read_message_from_database(message_id: i64, secret_key: &SecretKey) -> Result<String, Error> {
-    // Fetch the encrypted message from the local database
-    let encrypted_message = get_message_from_database(message_id)?;
+// fn read_message_from_database(message_id: i64, secret_key: &SecretKey) -> Result<String, Error> {
+//     // Fetch the encrypted message from the local database
+//     let encrypted_message = get_message_from_database(message_id)?;
 
-    // Decrypt the locally encrypted message
-    let decrypted_message = decrypt_local_message(secret_key, &encrypted_message)?;
+//     // Decrypt the locally encrypted message
+//     let decrypted_message = decrypt_local_message(secret_key, &encrypted_message)?;
 
-    Ok(decrypted_message)
+//     Ok(decrypted_message)
+// }
+
+async fn insert_event(pool: &SqlitePool, event: nostr_sdk::Event) -> Result<Event, Error> {
+    let mut db_event = DbEvent::from_event(event)?;
+    let (row_id, rows_changed) = DbEvent::insert(pool, &db_event).await?;
+    db_event.event_id = Some(row_id);
+    match rows_changed {
+        0 => Ok(Event::None),
+        _ => match db_event.kind {
+            Kind::EncryptedDirectMessage => {
+                let db_message = DbMessage::from_db_event(db_event)?;
+                DbMessage::insert_message(pool, &db_message).await?;
+                Ok(Event::DatabaseSuccessEvent(
+                    DatabaseSuccessEventKind::NewDM(db_message),
+                ))
+            }
+            _ => Ok(Event::DatabaseSuccessEvent(
+                DatabaseSuccessEventKind::EventInserted(db_event.clone()),
+            )),
+        },
+    }
+}
+
+// let secret_key = match keys.secret_key() {
+//     Ok(sk) => sk,
+//     Err(e) => return Event::Error(e.to_string()),
+// };
+// match decrypt(&secret_key, &event.pubkey, &event.content) {
+//     Ok(msg) => Event::DatabaseSuccessEvent(
+//         DatabaseSuccessEventKind::NewDM(ChatMessage::from_event(
+//             &event, msg,
+//         )),
+//     ),
+//     Err(_e) => Event::DatabaseSuccessEvent(
+//         DatabaseSuccessEventKind::NewDM(ChatMessage::from_event(
+//             &event,
+//             &event.content,
+//         )),
+//     ),
+//     // Err(e) => (Event::Error(e.to_string()), State::Connected {database, receiver, nostr_client, keys, notifications_stream}),
+// }
+
+async fn fetch_and_decrypt_chat(
+    keys: &Keys,
+    pool: &SqlitePool,
+    contact: &XOnlyPublicKey,
+) -> Result<Vec<DbMessage>, Error> {
+    let secret_key = keys.secret_key()?;
+    let own_pubkey = keys.public_key();
+    let mut messages = DbMessage::fetch_chat(pool, &own_pubkey, contact).await?;
+    for m in &mut messages {
+        m.decrypt_message(&secret_key, &own_pubkey);
+    }
+    Ok(messages)
 }

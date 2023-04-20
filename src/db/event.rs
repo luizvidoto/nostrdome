@@ -1,37 +1,48 @@
 use std::str::FromStr;
 
+use chrono::NaiveDateTime;
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
-use crate::error::Error;
+use crate::{
+    error::Error,
+    utils::{event_tt_to_naive, handle_decode_error},
+};
 use nostr_sdk::{
     secp256k1::{schnorr::Signature, XOnlyPublicKey},
-    Event, EventId, Kind, Timestamp,
+    Event, EventId, Kind, Tag,
 };
 
 #[derive(Debug, Clone)]
 pub struct DbEvent {
+    pub event_id: Option<i32>,
     pub event_hash: EventId,
     pub pubkey: XOnlyPublicKey,
-    pub created_at: Timestamp,
+    pub created_at: NaiveDateTime,
+    pub tags: Vec<nostr_sdk::Tag>,
     pub kind: Kind,
     pub content: String,
     pub sig: Signature,
 }
 
 impl DbEvent {
-    pub fn new(event: Event) -> DbEvent {
-        DbEvent {
-            event_hash: event.id,
-            pubkey: event.pubkey,
-            created_at: event.created_at,
-            kind: event.kind,
-            content: event.content,
-            sig: event.sig,
+    pub fn from_event(event: Event) -> Result<Self, Error> {
+        if let Some(created_at) = event_tt_to_naive(event.created_at) {
+            return Ok(DbEvent {
+                event_id: None,
+                event_hash: event.id,
+                pubkey: event.pubkey,
+                tags: event.tags.clone(),
+                created_at,
+                kind: event.kind,
+                content: event.content,
+                sig: event.sig,
+            });
         }
+        Err(Error::DbEventTimestampError)
     }
 
     const FETCH_QUERY: &'static str =
-        "SELECT event_hash, pubkey, created_at, kind, content, sig FROM event";
+        "SELECT event_hash, pubkey, created_at, kind, content, sig, tags FROM event";
 
     pub async fn fetch(pool: &SqlitePool, criteria: Option<&str>) -> Result<Vec<DbEvent>, Error> {
         let sql = Self::FETCH_QUERY.to_owned();
@@ -46,78 +57,63 @@ impl DbEvent {
 
     pub async fn fetch_one(
         pool: &SqlitePool,
-        event_id: &EventId,
+        event_hash: &EventId,
     ) -> Result<Option<DbEvent>, Error> {
-        let sql = format!("{} WHERE event_id = ?", Self::FETCH_QUERY);
+        let sql = format!("{} WHERE event_hash = ?", Self::FETCH_QUERY);
         Ok(sqlx::query_as::<_, DbEvent>(&sql)
-            .bind(event_id.to_hex())
+            .bind(event_hash.to_hex())
             .fetch_optional(pool)
             .await?)
     }
 
-    pub async fn insert(pool: &SqlitePool, event: DbEvent) -> Result<u64, Error> {
+    pub async fn insert(pool: &SqlitePool, event: &DbEvent) -> Result<(i32, u8), Error> {
         let sql =
-            "INSERT OR IGNORE INTO event (event_hash, pubkey, created_at, kind, content, sig) \
-                   VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
+            "INSERT OR IGNORE INTO event (event_hash, pubkey, created_at, kind, content, sig, tags) \
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
 
         let inserted = sqlx::query(sql)
             .bind(&event.event_hash.to_hex())
             .bind(&event.pubkey.to_string())
-            .bind(&event.created_at.as_i64())
+            .bind(&event.created_at.timestamp_millis())
             .bind(&event.kind.as_u32())
             .bind(&event.content)
             .bind(&event.sig.to_string())
+            .bind(&serde_json::to_string(&event.tags)?)
             .execute(pool)
             .await?;
 
-        Ok(inserted.rows_affected())
+        Ok((
+            inserted.last_insert_rowid() as i32,
+            inserted.rows_affected() as u8,
+        ))
     }
 
     pub async fn update(pool: &SqlitePool, event: DbEvent) -> Result<(), Error> {
-        let sql =
-            "UPDATE event SET pubkey=?, created_at=?, kind=?, content=?, sig=? WHERE event_hash=?";
+        if let Some(event_id) = event.event_id {
+            let sql =
+            "UPDATE event SET pubkey=?, created_at=?, kind=?, content=?, sig=? WHERE event_id=?";
 
-        sqlx::query(sql)
-            .bind(&event.pubkey.to_string())
-            .bind(&event.created_at.as_i64())
-            .bind(&event.kind.as_u32())
-            .bind(&event.content)
-            .bind(&event.sig.to_string())
-            .bind(&event.event_hash.to_hex())
-            .execute(pool)
-            .await?;
-
-        Ok(())
-    }
-
-    pub async fn delete(pool: &SqlitePool, event_id: EventId) -> Result<(), Error> {
-        let sql = "DELETE FROM event WHERE event_hash=?";
-
-        sqlx::query(sql)
-            .bind(&event_id.to_hex())
-            .execute(pool)
-            .await?;
-
-        Ok(())
-    }
-}
-
-impl From<nostr_sdk::Event> for DbEvent {
-    fn from(event: nostr_sdk::Event) -> Self {
-        event.into()
-    }
-}
-
-impl From<&nostr_sdk::Event> for DbEvent {
-    fn from(event: &nostr_sdk::Event) -> Self {
-        Self {
-            event_hash: event.id,
-            pubkey: event.pubkey,
-            created_at: event.created_at,
-            kind: event.kind,
-            content: event.content.clone(),
-            sig: event.sig,
+            sqlx::query(sql)
+                .bind(&event.pubkey.to_string())
+                .bind(&event.created_at.timestamp_millis())
+                .bind(&event.kind.as_u32())
+                .bind(&event.content)
+                .bind(&event.sig.to_string())
+                .bind(&event_id)
+                .execute(pool)
+                .await?;
+            Ok(())
+        } else {
+            Err(Error::EventNotInDatabase(event.event_hash))
         }
+    }
+
+    pub async fn delete(pool: &SqlitePool, event_id: i32) -> Result<(), Error> {
+        let sql = "DELETE FROM event WHERE event_id = ?";
+
+        sqlx::query(sql).bind(event_id).execute(pool).await?;
+
+        Ok(())
     }
 }
 
@@ -128,22 +124,32 @@ impl sqlx::FromRow<'_, SqliteRow> for DbEvent {
         let created_at = row.try_get::<i64, &str>("created_at")?;
         let kind = row.try_get::<u32, &str>("kind")?;
         let sig = row.try_get::<String, &str>("sig")?;
+        let tags = {
+            let raw_str = row.try_get::<String, &str>("tags")?;
+            let serialized_values: Vec<Vec<String>> =
+                serde_json::from_str(&raw_str).map_err(|e| handle_decode_error(e, "tags"))?;
+
+            let tags_result: Result<Vec<Tag>, _> =
+                serialized_values.into_iter().map(Tag::parse).collect();
+
+            let tags = tags_result.map_err(|e| handle_decode_error(e, "tags"))?;
+
+            tags
+        };
+
         Ok(DbEvent {
-            event_hash: EventId::from_hex(hex_hash).map_err(|e| sqlx::Error::ColumnDecode {
-                index: "event_hash".into(),
-                source: Box::new(e),
-            })?,
-            pubkey: XOnlyPublicKey::from_str(&pubkey).map_err(|e| sqlx::Error::ColumnDecode {
-                index: "pubkey".into(),
-                source: Box::new(e),
-            })?,
-            created_at: Timestamp::from(created_at as u64),
+            event_id: row.get("event_id"),
+            event_hash: EventId::from_hex(hex_hash)
+                .map_err(|e| handle_decode_error(e, "event_hash"))?,
+            pubkey: XOnlyPublicKey::from_str(&pubkey)
+                .map_err(|e| handle_decode_error(e, "pubkey"))?,
+            created_at: NaiveDateTime::from_timestamp_millis(created_at).ok_or(
+                handle_decode_error(Box::new(Error::DbEventTimestampError), "created_at"),
+            )?,
             kind: Kind::from(kind as u64),
+            tags,
             content: row.try_get::<String, &str>("content")?,
-            sig: Signature::from_str(&sig).map_err(|e| sqlx::Error::ColumnDecode {
-                index: "sig".into(),
-                source: Box::new(e),
-            })?,
+            sig: Signature::from_str(&sig).map_err(|e| handle_decode_error(e, "sig"))?,
         })
     }
 }

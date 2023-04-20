@@ -1,6 +1,6 @@
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 
-use crate::db::DbEvent;
+use crate::db::{DbEvent, DbMessage};
 
 pub trait EventLike {
     fn created_at(&self) -> i64;
@@ -18,7 +18,7 @@ impl EventLike for nostr_sdk::Event {
 
 impl EventLike for DbEvent {
     fn created_at(&self) -> i64 {
-        self.created_at.as_i64()
+        self.created_at.timestamp_millis()
     }
     fn pubkey(&self) -> XOnlyPublicKey {
         self.pubkey.clone()
@@ -45,6 +45,16 @@ impl ChatMessage {
             content: decrypted_message.into(),
             created_at: event.created_at(),
             from_pubkey: event.pubkey(),
+        }
+    }
+    pub fn from_db_message(db_message: &DbMessage) -> Self {
+        Self {
+            content: db_message
+                .decrypted_content
+                .clone()
+                .unwrap_or("none".into()),
+            created_at: db_message.created_at.timestamp_millis(),
+            from_pubkey: db_message.from_pub.clone(),
         }
     }
 }

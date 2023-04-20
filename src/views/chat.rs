@@ -95,13 +95,15 @@ impl State {
             .height(Length::Fill)
             .into()
     }
-    pub fn back_end_event(&mut self, event: net::Event, _back_conn: &mut BackEndConnection) {
+    pub fn backend_event(&mut self, event: net::Event, _back_conn: &mut BackEndConnection) {
         match event {
             net::Event::DatabaseSuccessEvent(kind) => match kind {
-                net::DatabaseSuccessEventKind::NewDM(message) => {
-                    self.messages.push(message);
-                    self.messages
-                        .sort_by(|a, b| a.created_at.cmp(&b.created_at))
+                net::DatabaseSuccessEventKind::NewDM(_message) => {
+                    // verificar se estou na conversa?
+
+                    // self.messages.push(message);
+                    // self.messages
+                    //     .sort_by(|a, b| a.created_at.cmp(&b.created_at))
                 }
                 _ => (),
             },

@@ -55,7 +55,7 @@ impl ModalState {
             Some(c) => (
                 c.petname.unwrap_or_else(|| "".into()),
                 c.pubkey.to_string(),
-                c.recommended_relay.unwrap_or_else(|| "".into()),
+                c.relay_url.unwrap_or_else(|| "".into()),
                 true,
             ),
             None => ("".into(), "".into(), "".into(), false),
@@ -118,7 +118,7 @@ impl State {
                 is_edit,
             } => match DbContact::from_str(&pubkey) {
                 Ok(mut db_contact) => {
-                    db_contact = db_contact.petname(&petname).recommended_relay(&rec_relay);
+                    db_contact = db_contact.petname(&petname).relay_url(&rec_relay);
                     back_conn.send(match is_edit {
                         true => net::Message::UpdateContact(db_contact),
                         false => net::Message::AddContact(db_contact),

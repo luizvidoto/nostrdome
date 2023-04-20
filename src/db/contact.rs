@@ -9,7 +9,7 @@ use crate::error::Error;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbContact {
     pub pubkey: XOnlyPublicKey,
-    pub recommended_relay: Option<String>,
+    pub relay_url: Option<String>,
     pub petname: Option<String>,
     pub profile_image: Option<String>,
 }
@@ -18,7 +18,7 @@ impl DbContact {
     pub fn new(pubkey: &XOnlyPublicKey) -> Self {
         Self {
             pubkey: pubkey.clone(),
-            recommended_relay: None,
+            relay_url: None,
             petname: None,
             profile_image: None,
         }
@@ -29,20 +29,21 @@ impl DbContact {
     }
     pub fn from_tag(tag: &Tag) -> Result<Self, Error> {
         match tag {
-            Tag::PubKey(pk, relay_url) => Ok(Self::new(pk)
-                .with_recommended_relay(relay_url.to_owned().map(|url| url.to_string()))),
+            Tag::PubKey(pk, relay_url) => {
+                Ok(Self::new(pk).with_relay_url(relay_url.to_owned().map(|url| url.to_string())))
+            }
             Tag::ContactList {
                 pk,
                 relay_url,
                 alias,
             } => Ok(Self::new(pk)
-                .with_recommended_relay(relay_url.to_owned().map(|url| url.to_string()))
+                .with_relay_url(relay_url.to_owned().map(|url| url.to_string()))
                 .with_petname(alias)),
             _ => Err(Error::TagToContactError),
         }
     }
-    fn with_recommended_relay(mut self, relay_url: Option<String>) -> Self {
-        self.recommended_relay = relay_url;
+    fn with_relay_url(mut self, relay_url: Option<String>) -> Self {
+        self.relay_url = relay_url;
         self
     }
 
@@ -50,12 +51,12 @@ impl DbContact {
         self.petname = petname.clone();
         self
     }
-    pub fn recommended_relay(self, relay: &str) -> Self {
+    pub fn relay_url(self, relay: &str) -> Self {
         if relay.is_empty() {
             self
         } else {
             Self {
-                recommended_relay: Some(relay.to_owned()),
+                relay_url: Some(relay.to_owned()),
                 ..self
             }
         }
@@ -82,7 +83,7 @@ impl DbContact {
     }
 
     const FETCH_QUERY: &'static str =
-        "SELECT pubkey, recommended_relay, petname, profile_image FROM contact";
+        "SELECT pubkey, relay_url, petname, profile_image FROM contact";
 
     pub async fn fetch(pool: &SqlitePool, criteria: Option<&str>) -> Result<Vec<DbContact>, Error> {
         let sql = Self::FETCH_QUERY.to_owned();
@@ -104,13 +105,13 @@ impl DbContact {
     }
 
     pub async fn insert(pool: &SqlitePool, contact: &DbContact) -> Result<(), Error> {
-        let sql = "INSERT OR IGNORE INTO contact (pubkey, recommended_relay, \
+        let sql = "INSERT OR IGNORE INTO contact (pubkey, relay_url, \
                    petname, profile_image) \
              VALUES (?1, ?2, ?3, ?4)";
 
         sqlx::query(sql)
             .bind(&contact.pubkey.to_string())
-            .bind(&contact.recommended_relay)
+            .bind(&contact.relay_url)
             .bind(&contact.petname)
             .bind(&contact.profile_image)
             .execute(pool)
@@ -120,7 +121,7 @@ impl DbContact {
     }
 
     pub async fn insert_batch(pool: &SqlitePool, contacts: &[DbContact]) -> Result<(), Error> {
-        let sql = "INSERT OR IGNORE INTO contact (pubkey, recommended_relay, \
+        let sql = "INSERT OR IGNORE INTO contact (pubkey, relay_url, \
                petname, profile_image) \
          VALUES (?1, ?2, ?3, ?4)";
 
@@ -130,7 +131,7 @@ impl DbContact {
         for contact in contacts {
             sqlx::query(sql)
                 .bind(&contact.pubkey.to_string())
-                .bind(&contact.recommended_relay)
+                .bind(&contact.relay_url)
                 .bind(&contact.petname)
                 .bind(&contact.profile_image)
                 .execute(&mut tx)
@@ -144,11 +145,10 @@ impl DbContact {
     }
 
     pub async fn update(pool: &SqlitePool, contact: &DbContact) -> Result<(), Error> {
-        let sql =
-            "UPDATE contact SET recommended_relay=?, petname=?, profile_image=? WHERE pubkey=?";
+        let sql = "UPDATE contact SET relay_url=?, petname=?, profile_image=? WHERE pubkey=?";
 
         sqlx::query(sql)
-            .bind(&contact.recommended_relay)
+            .bind(&contact.relay_url)
             .bind(&contact.petname)
             .bind(&contact.profile_image)
             .bind(&contact.pubkey.to_string())
@@ -179,7 +179,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbContact {
                 source: Box::new(e),
             })?,
             petname: row.try_get::<Option<String>, &str>("petname")?,
-            recommended_relay: row.try_get::<Option<String>, &str>("recommended_relay")?,
+            relay_url: row.try_get::<Option<String>, &str>("relay_url")?,
             profile_image: row.try_get::<Option<String>, &str>("profile_image")?,
         })
     }

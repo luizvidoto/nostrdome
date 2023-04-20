@@ -1,9 +1,28 @@
-use nostr_sdk::prelude::TagKind;
+use nostr_sdk::{prelude::TagKind, EventId};
 use thiserror::Error;
 
 /// Errors that can occur in the nostrdome crate
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("{0}")]
+    FromDbEventError(#[from] FromDbEventError),
+
+    /// Event Update Error
+    #[error("To update an event, insert first in the database: {0}")]
+    EventNotInDatabase(EventId),
+
+    /// Event Tags Empty
+    #[error("Event tags field is empty")]
+    NoTags,
+
+    /// Event Tags Empty
+    #[error("Wrong Tag")]
+    WrongTag,
+
+    /// DbEvent Error
+    #[error("Out-of-range number of seconds when parsing timestamp")]
+    DbEventTimestampError,
+
     /// Assertion failed
     #[error("Assertion failed: {0}")]
     AssertionFailed(String),
@@ -100,4 +119,16 @@ pub enum Error {
     /// Error occured in the AES GCM crate
     #[error("Decode Error: {0}")]
     DecodeError(#[from] base64::DecodeError),
+}
+
+#[derive(Debug, Error)]
+pub enum FromDbEventError {
+    #[error("No tags found in the event")]
+    NoTags,
+
+    #[error("Wrong tag type found")]
+    WrongTag,
+
+    #[error("Event not in database: {0}")]
+    EventNotInDatabase(EventId),
 }

@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS event (
     kind INTEGER NOT NULL,
     -- serialized json of event object 
     content TEXT NOT NULL,
+    -- serialized json vector of strings
+    tags TEXT,
     -- event signature
     sig TEXT NOT NULL
 );

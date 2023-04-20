@@ -27,7 +27,7 @@ impl From<&ContactRow> for DbContact {
     fn from(row: &ContactRow) -> Self {
         DbContact {
             pubkey: row.pubkey.clone(),
-            recommended_relay: row.relay_url.clone(),
+            relay_url: row.relay_url.clone(),
             petname: row.petname.clone(),
             profile_image: None,
         }
@@ -39,7 +39,7 @@ impl ContactRow {
         Self {
             petname: contact.petname.clone(),
             pubkey: contact.pubkey.clone(),
-            relay_url: contact.recommended_relay.clone(),
+            relay_url: contact.relay_url.clone(),
         }
     }
     pub fn header<M: 'static>() -> Element<'static, M> {

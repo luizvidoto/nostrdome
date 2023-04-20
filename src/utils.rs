@@ -79,3 +79,13 @@ pub fn event_tt_to_naive(timestamp: nostr_sdk::Timestamp) -> Option<NaiveDateTim
     let as_milli = timestamp.as_i64() * 1000;
     millis_to_naive(as_milli)
 }
+
+pub fn handle_decode_error<E>(error: E, index: &str) -> sqlx::Error
+where
+    E: std::error::Error + 'static + Send + Sync,
+{
+    sqlx::Error::ColumnDecode {
+        index: index.into(),
+        source: Box::new(error),
+    }
+}
