@@ -358,7 +358,7 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                 }
                                 Message::ConnectToRelay(relay_url) => {
                                     process_async_fn(
-                                        nostr_client.connect_relay(relay_url.as_str()),
+                                        connect_relay(&nostr_client, &relay_url),
                                         |_| Event::RelayConnected(relay_url.clone())
                                     ).await
                                 }
@@ -454,6 +454,24 @@ async fn update_relay_db_and_client(
     _nostr_client: &Client,
     _url: &Url,
 ) -> Result<(), Error> {
+    Ok(())
+}
+
+async fn connect_relay(nostr_client: &Client, relay_url: &Url) -> Result<(), Error> {
+    if let Some(relay) = nostr_client
+        .relays()
+        .await
+        .values()
+        .find(|r| &r.url() == relay_url)
+    {
+        if let nostr_sdk::RelayStatus::Connected = relay.status().await {
+            nostr_client.disconnect_relay(relay_url.as_str()).await?;
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        }
+
+        nostr_client.connect_relay(relay_url.as_str()).await?;
+    }
+
     Ok(())
 }
 
