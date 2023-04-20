@@ -7,7 +7,7 @@ use crate::utils::format_pubkey;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    UpdateActiveId(XOnlyPublicKey),
+    UpdateActiveId(DbContact),
     ShowOnlyProfileImage,
     ShowFullCard,
 }
@@ -18,9 +18,7 @@ pub struct State {
     only_profile: bool,
     last_msg_date: Option<i64>,
     last_msg_snippet: Option<String>,
-    petname: Option<String>,
-    profile_image: Option<String>,
-    pubkey: XOnlyPublicKey,
+    contact: DbContact,
 }
 
 impl State {
@@ -30,22 +28,20 @@ impl State {
             only_profile: false,
             last_msg_date: None,
             last_msg_snippet: None,
-            petname: db_contact.petname.clone(),
-            profile_image: db_contact.profile_image.clone(),
-            pubkey: db_contact.pubkey,
+            contact: db_contact.clone(),
         }
     }
     pub fn view(&self) -> Element<Message> {
         let mut is_active = false;
         if let Some(pubkey) = &self.active_pubkey {
-            is_active = pubkey == &self.pubkey;
+            is_active = pubkey == &self.contact.pubkey;
         }
         let btn_style = if is_active {
             iced::theme::Button::Custom(Box::new(ActiveButtonStyle {}))
         } else {
             iced::theme::Button::Custom(Box::new(ButtonStyle {}))
         };
-        let profile_image_cp = if let Some(_profile_image) = &self.profile_image {
+        let profile_image_cp = if let Some(_profile_image) = &self.contact.profile_image {
             text("")
         } else {
             text(":(")
@@ -53,12 +49,15 @@ impl State {
         let btn_content: Element<_> = if self.only_profile {
             profile_image_cp.into()
         } else {
-            let pubkey_text = text(format!("key: {}", format_pubkey(&self.pubkey.to_string())));
+            let pubkey_text = text(format!(
+                "key: {}",
+                format_pubkey(&self.contact.pubkey.to_string())
+            ));
             row![
                 profile_image_cp,
                 column![
                     pubkey_text,
-                    text(&self.petname.to_owned().unwrap_or("".into())),
+                    text(&self.contact.petname.to_owned().unwrap_or("".into())),
                     text(&self.last_msg_snippet.to_owned().unwrap_or("".into()))
                         .size(14.0)
                         .width(Length::Fill)
@@ -71,14 +70,14 @@ impl State {
         button(btn_content)
             .width(Length::Fill)
             .height(Length::Fixed(80.0))
-            .on_press(Message::UpdateActiveId(self.pubkey.clone()))
+            .on_press(Message::UpdateActiveId(self.contact.clone()))
             .style(btn_style)
             .into()
     }
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::UpdateActiveId(id) => {
-                self.active_pubkey = Some(id);
+            Message::UpdateActiveId(contact) => {
+                self.active_pubkey = Some(contact.pubkey);
             }
             Message::ShowOnlyProfileImage => {
                 self.only_profile = true;

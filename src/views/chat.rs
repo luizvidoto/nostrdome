@@ -147,7 +147,7 @@ impl State {
             }
 
             Message::OnVerResize(position) => {
-                if position > 200 {
+                if position > 200 && position < 400 {
                     self.ver_divider_position = Some(position);
                 } else if position <= 200 && position > 120 {
                     self.ver_divider_position = Some(200);
@@ -163,13 +163,13 @@ impl State {
             }
             Message::NavSettingsPress => (),
             Message::ContactCardMessage(card_msg) => {
-                if let contact_card::Message::UpdateActiveId(contact_pubkey) = &card_msg {
-                    if self.contact_pubkey_active.as_ref() != Some(contact_pubkey) {
-                        back_conn.send(net::Message::FetchMessages(contact_pubkey.clone()));
+                if let contact_card::Message::UpdateActiveId(contact) = &card_msg {
+                    if self.contact_pubkey_active.as_ref() != Some(&contact.pubkey) {
+                        back_conn.send(net::Message::FetchMessages(contact.clone()));
                         self.messages = vec![];
                     }
                     self.dm_msg = "".into();
-                    self.contact_pubkey_active = Some(contact_pubkey.clone());
+                    self.contact_pubkey_active = Some(contact.pubkey.clone());
                 }
 
                 for c in &mut self.contacts {
@@ -181,11 +181,23 @@ impl State {
 }
 
 fn chat_message<M: 'static>(chat_msg: &ChatMessage) -> Element<'static, M> {
-    let alignment = match chat_msg.is_from_user {
-        false => Horizontal::Left,
-        true => Horizontal::Right,
+    let (block1, block2) = if !chat_msg.is_from_user {
+        (
+            container(text(&chat_msg.content))
+                .padding([2, 5])
+                .width(Length::Shrink),
+            container(text("").width(Length::Fill)),
+        )
+    } else {
+        (
+            container(text("").width(Length::Fill)),
+            container(text(&chat_msg.content))
+                .padding([2, 5])
+                .width(Length::Shrink),
+        )
     };
-    container(text(&chat_msg.content).horizontal_alignment(alignment))
-        .padding([2, 5])
-        .into()
+
+    container(row![block1, block2].width(Length::Fill)).into()
 }
+
+// const EMPTY_BLOCK_WIDTH: f32 = 50.0;

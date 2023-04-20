@@ -124,7 +124,7 @@ pub enum Message {
     ToggleRelayWrite((Url, bool)),
 
     // DATABASE MESSAGES
-    FetchMessages(XOnlyPublicKey),
+    FetchMessages(DbContact),
     AddContact(DbContact),
     ImportContacts(Vec<DbContact>),
     SetContactList(Vec<Contact>),
@@ -260,9 +260,12 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                 }
                                 Message::FetchMessages (contact) => {
                                     process_async_fn(
-                                        fetch_and_decrypt_chat(&keys, &database.pool, &contact),
+                                        fetch_and_decrypt_chat(&keys, &database.pool, &contact.pubkey),
                                         |messages| {
-                                            let chat_msgs:Vec<_> = messages.iter().map(|msg|ChatMessage::from_db_message(msg, &keys.public_key())).collect();
+                                            let chat_msgs:Vec<_> = messages
+                                                .iter()
+                                                .map(|msg|ChatMessage::from_db_message(msg, &keys.public_key(), &contact))
+                                                .collect();
                                             Event::GotMessages(chat_msgs)
                                         },
                                     )
