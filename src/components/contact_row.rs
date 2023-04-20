@@ -2,7 +2,7 @@ use iced::widget::{button, row, text};
 use iced::{Element, Length};
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 
-use crate::db::DbContact;
+use crate::db::{ContactStatus, DbContact};
 use crate::utils::format_pubkey;
 
 #[derive(Debug, Clone)]
@@ -15,6 +15,7 @@ pub struct ContactRow {
     petname: Option<String>,
     pubkey: XOnlyPublicKey,
     relay_url: Option<String>,
+    status: ContactStatus,
 }
 
 impl From<ContactRow> for DbContact {
@@ -30,6 +31,7 @@ impl From<&ContactRow> for DbContact {
             relay_url: row.relay_url.clone(),
             petname: row.petname.clone(),
             profile_image: None,
+            status: row.status,
         }
     }
 }
@@ -40,6 +42,7 @@ impl ContactRow {
             petname: contact.petname.clone(),
             pubkey: contact.pubkey.clone(),
             relay_url: contact.relay_url.clone(),
+            status: contact.status,
         }
     }
     pub fn header<M: 'static>() -> Element<'static, M> {

@@ -6,7 +6,11 @@ use crate::{
     utils::handle_decode_error,
 };
 use chrono::NaiveDateTime;
-use nostr_sdk::secp256k1::{SecretKey, XOnlyPublicKey};
+use nostr_sdk::{
+    prelude::UncheckedUrl,
+    secp256k1::{SecretKey, XOnlyPublicKey},
+    Url,
+};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
 use crate::utils::millis_to_naive;
@@ -25,11 +29,12 @@ pub struct DbMessage {
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
     pub status: MessageStatus,
+    pub relay_url: Option<UncheckedUrl>,
 }
 
 impl DbMessage {
     const FETCH_QUERY: &'static str =
-        "SELECT msg_id, content, from_pub, to_pub, event_id, created_at, updated_at, status FROM message";
+        "SELECT msg_id, content, from_pub, to_pub, event_id, created_at, updated_at, status, relay_url FROM message";
 
     pub fn is_local(&self, own_pubkey: &XOnlyPublicKey) -> bool {
         own_pubkey == &self.from_pub
@@ -50,6 +55,7 @@ impl DbMessage {
             created_at: chrono::Utc::now().naive_utc(),
             updated_at: chrono::Utc::now().naive_utc(),
             status: MessageStatus::Offline,
+            relay_url: None,
         })
     }
     pub fn decrypt_message(&mut self, secret_key: &SecretKey, own_pubkey: &XOnlyPublicKey) {
@@ -86,7 +92,7 @@ impl DbMessage {
         }
     }
 
-    pub fn from_db_event(db_event: DbEvent) -> Result<Self, Error> {
+    pub fn from_db_event(db_event: DbEvent, relay_url: Option<Url>) -> Result<Self, Error> {
         let (to_pub, event_id) = Self::extract_to_pub_and_event_id(&db_event)?;
         Ok(Self {
             msg_id: None,
@@ -98,6 +104,7 @@ impl DbMessage {
             created_at: db_event.created_at,
             updated_at: db_event.created_at,
             status: MessageStatus::Delivered,
+            relay_url: relay_url.map(|url| url.into()),
         })
     }
 
@@ -137,8 +144,8 @@ impl DbMessage {
 
     pub async fn insert_message(pool: &SqlitePool, db_message: &DbMessage) -> Result<(), Error> {
         let sql = r#"
-            INSERT OR IGNORE INTO message (content, from_pub, to_pub, event_id, created_at, updated_at, status)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            INSERT OR IGNORE INTO message (content, from_pub, to_pub, event_id, created_at, updated_at, status, relay_url)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
         "#;
 
         sqlx::query(sql)
@@ -149,6 +156,7 @@ impl DbMessage {
             .bind(&db_message.created_at.timestamp_millis())
             .bind(&db_message.updated_at.timestamp_millis())
             .bind(&db_message.status.to_i32())
+            .bind(&db_message.relay_url.as_ref().map(|url| url.to_string()))
             .execute(pool)
             .await?;
 
@@ -186,6 +194,12 @@ impl sqlx::FromRow<'_, SqliteRow> for DbMessage {
             created_at,
             updated_at,
             status: MessageStatus::from_i32(row.try_get::<i32, &str>("status")?),
+            relay_url: row
+                .get::<Option<String>, &str>("relay_url")
+                .map(|s| {
+                    UncheckedUrl::from_str(&s).map_err(|e| handle_decode_error(e, "relay_url"))
+                })
+                .transpose()?,
         })
     }
 }

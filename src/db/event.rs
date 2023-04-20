@@ -25,6 +25,9 @@ pub struct DbEvent {
 }
 
 impl DbEvent {
+    const FETCH_QUERY: &'static str =
+        "SELECT event_hash, pubkey, created_at, kind, content, sig, tags FROM event";
+
     pub fn from_event(event: Event) -> Result<Self, Error> {
         if let Some(created_at) = event_tt_to_naive(event.created_at) {
             return Ok(DbEvent {
@@ -40,9 +43,6 @@ impl DbEvent {
         }
         Err(Error::DbEventTimestampError)
     }
-
-    const FETCH_QUERY: &'static str =
-        "SELECT event_hash, pubkey, created_at, kind, content, sig, tags FROM event";
 
     pub async fn fetch(pool: &SqlitePool, criteria: Option<&str>) -> Result<Vec<DbEvent>, Error> {
         let sql = Self::FETCH_QUERY.to_owned();

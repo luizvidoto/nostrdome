@@ -6,21 +6,41 @@ use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
 use crate::error::Error;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum ContactStatus {
+    Unknown = 0,
+    Known = 1,
+}
+
+impl From<u8> for ContactStatus {
+    fn from(value: u8) -> Self {
+        match value {
+            1 => ContactStatus::Known,
+            _ => ContactStatus::Unknown,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbContact {
     pub pubkey: XOnlyPublicKey,
     pub relay_url: Option<String>,
     pub petname: Option<String>,
     pub profile_image: Option<String>,
+    pub status: ContactStatus,
 }
 
 impl DbContact {
+    const FETCH_QUERY: &'static str =
+        "SELECT pubkey, relay_url, petname, profile_image, status FROM contact";
+
     pub fn new(pubkey: &XOnlyPublicKey) -> Self {
         Self {
             pubkey: pubkey.clone(),
             relay_url: None,
             petname: None,
             profile_image: None,
+            status: ContactStatus::Unknown,
         }
     }
     pub fn from_str(pubkey: &str) -> Result<Self, Error> {
@@ -82,9 +102,6 @@ impl DbContact {
         }
     }
 
-    const FETCH_QUERY: &'static str =
-        "SELECT pubkey, relay_url, petname, profile_image FROM contact";
-
     pub async fn fetch(pool: &SqlitePool, criteria: Option<&str>) -> Result<Vec<DbContact>, Error> {
         let sql = Self::FETCH_QUERY.to_owned();
         let sql = match criteria {
@@ -96,24 +113,28 @@ impl DbContact {
         Ok(output)
     }
 
-    pub async fn fetch_one(pool: &SqlitePool, pubkey: &str) -> Result<Option<DbContact>, Error> {
+    pub async fn fetch_one(
+        pool: &SqlitePool,
+        pubkey: &XOnlyPublicKey,
+    ) -> Result<Option<DbContact>, Error> {
         let sql = format!("{} WHERE pubkey = ?", Self::FETCH_QUERY);
         Ok(sqlx::query_as::<_, DbContact>(&sql)
-            .bind(pubkey)
+            .bind(&pubkey.to_string())
             .fetch_optional(pool)
             .await?)
     }
 
     pub async fn insert(pool: &SqlitePool, contact: &DbContact) -> Result<(), Error> {
         let sql = "INSERT OR IGNORE INTO contact (pubkey, relay_url, \
-                   petname, profile_image) \
-             VALUES (?1, ?2, ?3, ?4)";
+                   petname, profile_image, status) \
+             VALUES (?1, ?2, ?3, ?4, ?5)";
 
         sqlx::query(sql)
             .bind(&contact.pubkey.to_string())
             .bind(&contact.relay_url)
             .bind(&contact.petname)
             .bind(&contact.profile_image)
+            .bind(contact.status as u8)
             .execute(pool)
             .await?;
 
@@ -181,6 +202,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbContact {
             petname: row.try_get::<Option<String>, &str>("petname")?,
             relay_url: row.try_get::<Option<String>, &str>("relay_url")?,
             profile_image: row.try_get::<Option<String>, &str>("profile_image")?,
+            status: row.get::<u8, &str>("status").into(),
         })
     }
 }

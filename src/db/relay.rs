@@ -49,6 +49,9 @@ pub struct DbRelay {
 }
 
 impl DbRelay {
+    const FETCH_QUERY: &'static str =
+        "SELECT url, last_connected_at, read, write, advertise, status FROM relay";
+
     pub fn new(url: RelayUrl) -> DbRelay {
         DbRelay {
             url,
@@ -59,9 +62,6 @@ impl DbRelay {
             status: DbRelayStatus(RelayStatus::Disconnected),
         }
     }
-
-    const FETCH_QUERY: &'static str =
-        "SELECT url, last_connected_at, read, write, advertise, status FROM relay";
 
     pub async fn fetch(pool: &SqlitePool, criteria: Option<&str>) -> Result<Vec<DbRelay>, Error> {
         let sql = Self::FETCH_QUERY.to_owned();

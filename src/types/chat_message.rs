@@ -33,10 +33,11 @@ pub struct ChatMessage {
     pub content: String,
     /// Pub key of the author of the message
     pub from_pubkey: XOnlyPublicKey,
+    pub is_from_user: bool,
 }
 
 impl ChatMessage {
-    pub fn from_event<S, E>(event: &E, decrypted_message: S) -> Self
+    pub fn from_event<S, E>(event: &E, decrypted_message: S, user_pubkey: &XOnlyPublicKey) -> Self
     where
         S: Into<String>,
         E: EventLike,
@@ -45,9 +46,10 @@ impl ChatMessage {
             content: decrypted_message.into(),
             created_at: event.created_at(),
             from_pubkey: event.pubkey(),
+            is_from_user: &event.pubkey() == user_pubkey,
         }
     }
-    pub fn from_db_message(db_message: &DbMessage) -> Self {
+    pub fn from_db_message(db_message: &DbMessage, user_pubkey: &XOnlyPublicKey) -> Self {
         Self {
             content: db_message
                 .decrypted_content
@@ -55,6 +57,7 @@ impl ChatMessage {
                 .unwrap_or("none".into()),
             created_at: db_message.created_at.timestamp_millis(),
             from_pubkey: db_message.from_pub.clone(),
+            is_from_user: &db_message.from_pub == user_pubkey,
         }
     }
 }

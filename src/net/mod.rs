@@ -21,6 +21,8 @@ use std::time::Duration;
 pub struct BackEndConnection(mpsc::UnboundedSender<Message>);
 impl BackEndConnection {
     pub fn send(&mut self, message: Message) {
+        // TODO
+        // error: send failed because receiver is gone
         if let Err(e) = self.0.unbounded_send(message).map_err(|e| e.to_string()) {
             tracing::error!("{}", e);
         }
@@ -113,7 +115,7 @@ pub enum Message {
     ConnectToRelay(Url),
     SendDMTo((XOnlyPublicKey, String)),
     ShowPublicKey,
-    ListOwnEvents,
+    // ListOwnEvents,
     FetchRelays,
     AddRelay(Url),
     UpdateRelay(Url),
@@ -129,7 +131,7 @@ pub enum Message {
     FetchContacts,
     UpdateContact(DbContact),
     DeleteContact(XOnlyPublicKey),
-    InsertEvent(nostr_sdk::Event),
+    // InsertEvent(nostr_sdk::Event),
 }
 
 #[derive(Debug, Clone)]
@@ -162,9 +164,6 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                     // Create new client
                     tracing::info!("Creating Nostr Client");
                     let nostr_client = Client::new(&keys);
-
-                    // tracing::info!("Connecting to relays");
-                    // nostr_client.connect().await;
 
                     tracing::info!("Subscribing to filters");
                     let recv_msgs_sub = Filter::new()
@@ -215,10 +214,9 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                     keys,
                     mut notifications_stream,
                 } => {
-                    futures::select! {
+                    let event = futures::select! {
                         message = receiver.select_next_some() => {
                             let event = match message {
-
                                 Message::AddContact(db_contact) => {
                                     process_async_fn(
                                         DbContact::insert(&database.pool, &db_contact),
@@ -264,18 +262,18 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                     process_async_fn(
                                         fetch_and_decrypt_chat(&keys, &database.pool, &contact),
                                         |messages| {
-                                            Event::GotMessages(messages.iter().map(|db_message|ChatMessage::from_db_message(db_message)).collect())
+                                            let chat_msgs:Vec<_> = messages.iter().map(|msg|ChatMessage::from_db_message(msg, &keys.public_key())).collect();
+                                            Event::GotMessages(chat_msgs)
                                         },
-
                                     )
                                     .await
                                 }
-                                Message::InsertEvent(event) => {
-                                    process_async_fn(
-                                        insert_event( &database.pool, event),
-                                        |event| event
-                                    ).await
-                                }
+                                // Message::InsertEvent(event) => {
+                                //     process_async_fn(
+                                //         insert_event( &database.pool, event),
+                                //         |event| event
+                                //     ).await
+                                // }
                                 Message::SendDMTo((pubkey, msg)) => {
                                     process_async_fn(
                                         send_and_store_dm(&database.pool, &nostr_client, &keys, pubkey, &msg),
@@ -287,13 +285,13 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                     let pb_key = keys.public_key();
                                     Event::GotPublicKey(pb_key)
                                 }
-                                Message::ListOwnEvents => {
-                                    process_async_fn(
-                                        request_events(&nostr_client, &keys.public_key()),
-                                        |_| Event::RequestedEvents,
-                                    )
-                                    .await
-                                }
+                                // Message::ListOwnEvents => {
+                                //     process_async_fn(
+                                //         request_events(&nostr_client, &keys.public_key()),
+                                //         |_| Event::RequestedEvents,
+                                //     )
+                                //     .await
+                                // }
                                 Message::FetchRelays => {
                                     process_async_fn(
                                         fetch_relays(&nostr_client),
@@ -331,7 +329,7 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                 }
                                 Message::ConnectRelays => {
                                     process_async_fn(
-                                        connect_relays(&nostr_client),
+                                        connect_relays(&nostr_client, &keys),
                                         |_| Event::RelaysConnected,
                                     )
                                     .await
@@ -349,12 +347,16 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                     ).await
                                 }
                             };
-                            (event, State::Connected {database, receiver, nostr_client, keys, notifications_stream})
+
+                            event
                         }
                         notification = notifications_stream.select_next_some() => {
                             let event = match notification {
-                                RelayPoolNotification::Event(_url, event) => {
-                                    process_async_fn(insert_event(&database.pool, event), |event| event).await
+                                RelayPoolNotification::Event(relay_url, event) => {
+                                    process_async_fn(
+                                        insert_event(&database.pool, event, &relay_url),
+                                        |event| event
+                                    ).await
                                 },
                                 RelayPoolNotification::Message(_url, relay_msg) => {
                                     Event::RelayMessage(relay_msg)
@@ -363,13 +365,37 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                     Event::Shutdown
                                 }
                             };
-                            (event, State::Connected {database, receiver, nostr_client, keys, notifications_stream})
+
+                            event
                         },
-                    }
+                    };
+                    (
+                        event,
+                        State::Connected {
+                            database,
+                            receiver,
+                            nostr_client,
+                            keys,
+                            notifications_stream,
+                        },
+                    )
                 }
             }
         },
     )
+}
+
+async fn process_async_fn<T, E>(
+    operation: impl Future<Output = Result<T, E>>,
+    success_event_fn: impl Fn(T) -> Event,
+) -> Event
+where
+    E: std::error::Error,
+{
+    match operation.await {
+        Ok(result) => success_event_fn(result),
+        Err(e) => Event::Error(e.to_string()),
+    }
 }
 
 async fn _fetch_contacts_from_relays(nostr_client: &Client) -> Result<Vec<Contact>, Error> {
@@ -379,16 +405,18 @@ async fn _fetch_contacts_from_relays(nostr_client: &Client) -> Result<Vec<Contac
     Ok(contacts)
 }
 async fn set_contact_list(nostr_client: &Client, contacts: Vec<Contact>) -> Result<(), Error> {
+    tracing::info!("Setting contact list on client");
     nostr_client.set_contact_list(contacts).await?;
     Ok(())
 }
 
 async fn fetch_relays(nostr_client: &Client) -> Result<Vec<Relay>, Error> {
+    tracing::info!("Fetching relays");
     let relays = nostr_client.relays().await;
-
     Ok(relays.into_iter().map(|(_url, r)| r).collect())
 }
 async fn add_relay(nostr_client: &Client, url: &Url) -> Result<(), Error> {
+    tracing::info!("Add relay to client: {}", url);
     nostr_client.add_relay(url.as_str(), None).await?;
     Ok(())
 }
@@ -397,6 +425,7 @@ async fn update_relay_db_and_client(
     _nostr_client: &Client,
     _url: &Url,
 ) -> Result<(), Error> {
+    tracing::info!("Updating relay db");
     Ok(())
 }
 
@@ -408,17 +437,20 @@ async fn connect_relay(nostr_client: &Client, relay_url: &Url) -> Result<(), Err
         .find(|r| &r.url() == relay_url)
     {
         if let nostr_sdk::RelayStatus::Connected = relay.status().await {
+            tracing::info!("Disconnecting from relay");
             nostr_client.disconnect_relay(relay_url.as_str()).await?;
             tokio::time::sleep(Duration::from_secs(3)).await;
         }
-
+        tracing::info!("Connecting to relay: {}", relay_url);
         nostr_client.connect_relay(relay_url.as_str()).await?;
+    } else {
+        tracing::info!("Relay not found on client: {}", relay_url);
     }
 
     Ok(())
 }
 
-async fn connect_relays(nostr_client: &Client) -> Result<(), Error> {
+async fn connect_relays(nostr_client: &Client, keys: &Keys) -> Result<(), Error> {
     tracing::info!("Adding relays to client");
     // Add relays to client
     for r in vec![
@@ -440,6 +472,9 @@ async fn connect_relays(nostr_client: &Client) -> Result<(), Error> {
 
     tracing::info!("Connecting to relays");
     nostr_client.connect().await;
+
+    request_events(&nostr_client, &keys.public_key()).await?;
+
     Ok(())
 }
 async fn toggle_read_for_relay(nostr_client: &Client, url: &Url, read: bool) -> Result<(), Error> {
@@ -460,19 +495,9 @@ async fn toggle_write_for_relay(
     }
     Ok(())
 }
-async fn process_async_fn<T, E>(
-    operation: impl Future<Output = Result<T, E>>,
-    success_event_fn: impl Fn(T) -> Event,
-) -> Event
-where
-    E: std::error::Error,
-{
-    match operation.await {
-        Ok(result) => success_event_fn(result),
-        Err(e) => Event::Error(e.to_string()),
-    }
-}
+
 async fn request_events(nostr_client: &Client, pubkey: &XOnlyPublicKey) -> Result<(), Error> {
+    tracing::info!("Requesting events");
     let recv_msgs_sub = Filter::new()
         .pubkey(pubkey.to_owned())
         .kind(Kind::EncryptedDirectMessage)
@@ -491,6 +516,7 @@ async fn send_and_store_dm(
     to_pubkey: XOnlyPublicKey,
     message: &str,
 ) -> Result<EventId, Error> {
+    tracing::info!("Sending DM to relays");
     let secret_key = keys.secret_key()?;
     // Send to relays
     let event_id = nostr_client
@@ -502,66 +528,59 @@ async fn send_and_store_dm(
     // Store the locally encrypted message in the local database
     // store_in_local_database(&locally_encrypted_message).await?;
     let db_message = DbMessage::new_local(&keys.public_key(), &to_pubkey, &encrypted_content)?;
+    tracing::info!("Inserting local message");
     DbMessage::insert_message(pool, &db_message).await?;
 
     Ok(event_id)
 }
 
-// fn read_message_from_database(message_id: i64, secret_key: &SecretKey) -> Result<String, Error> {
-//     // Fetch the encrypted message from the local database
-//     let encrypted_message = get_message_from_database(message_id)?;
-
-//     // Decrypt the locally encrypted message
-//     let decrypted_message = decrypt_local_message(secret_key, &encrypted_message)?;
-
-//     Ok(decrypted_message)
-// }
-
-async fn insert_event(pool: &SqlitePool, event: nostr_sdk::Event) -> Result<Event, Error> {
+async fn insert_event(
+    pool: &SqlitePool,
+    event: nostr_sdk::Event,
+    relay_url: &Url,
+) -> Result<Event, Error> {
+    tracing::info!("Inserting event: {:?}", event);
     let mut db_event = DbEvent::from_event(event)?;
     let (row_id, rows_changed) = DbEvent::insert(pool, &db_event).await?;
+
     db_event.event_id = Some(row_id);
-    match rows_changed {
-        0 => Ok(Event::None),
+
+    let event = match rows_changed {
+        0 => Event::None,
         _ => match db_event.kind {
             Kind::EncryptedDirectMessage => {
-                let db_message = DbMessage::from_db_event(db_event)?;
+                let db_message = DbMessage::from_db_event(db_event, Some(relay_url.to_owned()))?;
+
+                match DbContact::fetch_one(pool, &db_message.from_pub).await {
+                    Ok(Some(contact)) => {
+                        println!("have contact: {:?}", contact);
+                    }
+                    Ok(None) => {
+                        let new_contact = DbContact::new(&db_message.from_pub);
+                        DbContact::insert(pool, &new_contact).await?;
+                    }
+                    Err(e) => return Err(e),
+                }
+
+                tracing::info!("Inserting external message");
                 DbMessage::insert_message(pool, &db_message).await?;
-                Ok(Event::DatabaseSuccessEvent(
-                    DatabaseSuccessEventKind::NewDM(db_message),
-                ))
+                Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::NewDM(db_message))
             }
-            _ => Ok(Event::DatabaseSuccessEvent(
-                DatabaseSuccessEventKind::EventInserted(db_event.clone()),
+            _ => Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::EventInserted(
+                db_event.clone(),
             )),
         },
-    }
-}
+    };
 
-// let secret_key = match keys.secret_key() {
-//     Ok(sk) => sk,
-//     Err(e) => return Event::Error(e.to_string()),
-// };
-// match decrypt(&secret_key, &event.pubkey, &event.content) {
-//     Ok(msg) => Event::DatabaseSuccessEvent(
-//         DatabaseSuccessEventKind::NewDM(ChatMessage::from_event(
-//             &event, msg,
-//         )),
-//     ),
-//     Err(_e) => Event::DatabaseSuccessEvent(
-//         DatabaseSuccessEventKind::NewDM(ChatMessage::from_event(
-//             &event,
-//             &event.content,
-//         )),
-//     ),
-//     // Err(e) => (Event::Error(e.to_string()), State::Connected {database, receiver, nostr_client, keys, notifications_stream}),
-// }
+    Ok(event)
+}
 
 async fn fetch_and_decrypt_chat(
     keys: &Keys,
     pool: &SqlitePool,
     contact: &XOnlyPublicKey,
 ) -> Result<Vec<DbMessage>, Error> {
+    tracing::info!("Fetching chat messages and decrypting");
     let secret_key = keys.secret_key()?;
     let own_pubkey = keys.public_key();
     let mut messages = DbMessage::fetch_chat(pool, &own_pubkey, contact).await?;

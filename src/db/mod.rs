@@ -5,7 +5,7 @@ mod message;
 // mod relay;
 mod user;
 
-pub use contact::DbContact;
+pub use contact::{ContactStatus, DbContact};
 pub use database::Database;
 pub use event::DbEvent;
 pub use message::{DbMessage, MessageStatus};

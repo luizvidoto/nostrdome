@@ -9,7 +9,8 @@ CREATE TABLE message (
     -- UNIX timestamp as integer milliseconds
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
-    status INTEGER NOT NULL -- relay_url TEXT NOT NULL REFERENCES relay (url)
+    status INTEGER NOT NULL,
+    relay_url TEXT
 );
 
 -- -- Message Indexes
@@ -20,3 +21,5 @@ CREATE INDEX IF NOT EXISTS from_pub_to_pub_index ON message(from_pub, to_pub);
 CREATE INDEX IF NOT EXISTS created_at_index ON message(created_at);
 
 CREATE INDEX IF NOT EXISTS msg_id_created_at_index ON message(msg_id, created_at);
+
+CREATE INDEX IF NOT EXISTS msg_id_relay_url_index ON message(msg_id, relay_url);

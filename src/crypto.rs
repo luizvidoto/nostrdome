@@ -25,7 +25,7 @@ pub fn encrypt_local_message(secret_key: &SecretKey, message: &str) -> Result<St
         .map_err(|_| Error::EncryptionError("".into()))?;
 
     Ok(format!(
-        "{}?iv={}",
+        "{}?nonce={}",
         general_purpose::STANDARD.encode(encrypted_message),
         general_purpose::STANDARD.encode(nonce)
     ))

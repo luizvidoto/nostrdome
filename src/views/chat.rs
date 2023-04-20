@@ -1,3 +1,4 @@
+use iced::alignment::Horizontal;
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length};
 use nostr_sdk::secp256k1::XOnlyPublicKey;
@@ -60,9 +61,10 @@ impl State {
                 .into()
         };
         let first = container(contact_list);
-        let chat_content = self.messages.iter().fold(column![].spacing(5), |col, msg| {
-            col.push(text(&msg.content))
-        });
+        let chat_content = self
+            .messages
+            .iter()
+            .fold(column![], |col, msg| col.push(chat_message(&msg)));
         let chat_row = scrollable(chat_content);
         let dm_msg_input = text_input("", &self.dm_msg).on_input(Message::DMNMessageChange);
         let dm_send_btn = button("Send DM").on_press(Message::DMSentPress);
@@ -161,23 +163,29 @@ impl State {
             }
             Message::NavSettingsPress => (),
             Message::ContactCardMessage(card_msg) => {
-                match card_msg.clone() {
-                    contact_card::Message::UpdateActiveId(hex_pub) => {
-                        if let Some(active_hex) = self.contact_pubkey_active {
-                            if active_hex != hex_pub {
-                                back_conn.send(net::Message::FetchMessages(hex_pub));
-                                self.messages = vec![];
-                            }
-                        }
-                        self.dm_msg = "".into();
-                        self.contact_pubkey_active = Some(hex_pub.clone());
+                if let contact_card::Message::UpdateActiveId(contact_pubkey) = &card_msg {
+                    if self.contact_pubkey_active.as_ref() != Some(contact_pubkey) {
+                        back_conn.send(net::Message::FetchMessages(contact_pubkey.clone()));
+                        self.messages = vec![];
                     }
-                    _ => (),
+                    self.dm_msg = "".into();
+                    self.contact_pubkey_active = Some(contact_pubkey.clone());
                 }
+
                 for c in &mut self.contacts {
                     c.update(card_msg.clone());
                 }
             }
         }
     }
+}
+
+fn chat_message<M: 'static>(chat_msg: &ChatMessage) -> Element<'static, M> {
+    let alignment = match chat_msg.is_from_user {
+        false => Horizontal::Left,
+        true => Horizontal::Right,
+    };
+    container(text(&chat_msg.content).horizontal_alignment(alignment))
+        .padding([2, 5])
+        .into()
 }
