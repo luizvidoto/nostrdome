@@ -74,3 +74,8 @@ pub fn millis_to_naive(millis: i64) -> Option<NaiveDateTime> {
     // Convert the seconds and nanoseconds to a NaiveDateTime
     NaiveDateTime::from_timestamp_opt(ts_secs, ts_ns as u32)
 }
+
+pub fn event_tt_to_naive(timestamp: nostr_sdk::Timestamp) -> Option<NaiveDateTime> {
+    let as_milli = timestamp.as_i64() * 1000;
+    millis_to_naive(as_milli)
+}

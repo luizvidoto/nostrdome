@@ -63,7 +63,11 @@ pub enum Error {
     #[error("Nostr Sdk Client Error: {0}")]
     NostrSdkError(#[from] nostr_sdk::client::Error),
 
-    /// Nostr secp256k1 Error
+    /// Nostr Sdk Keys Error
+    #[error("Nostr Sdk Key Error: {0}")]
+    NostrSdkKeyError(#[from] nostr_sdk::key::Error),
+
+    /// Nostr Sdk secp256k1 Error
     #[error("Nostr secp256k1 Error: {0}")]
     NostrSecp256k1Error(#[from] nostr_sdk::secp256k1::Error),
 
@@ -84,4 +88,16 @@ pub enum Error {
     /// Error when converting nostr_sdk::Tag into DbContact. Other type of Tag.
     #[error("Other type of Tag")]
     TagToContactError,
+
+    /// Error occured in the AES GCM crate
+    #[error("Aes Gcm Encryption Error: {0}")]
+    EncryptionError(String),
+
+    /// Error occured in the AES GCM crate
+    #[error("Aes Gcm Decryption Error: {0}")]
+    DecryptionError(String),
+
+    /// Error occured in the AES GCM crate
+    #[error("Decode Error: {0}")]
+    DecodeError(#[from] base64::DecodeError),
 }

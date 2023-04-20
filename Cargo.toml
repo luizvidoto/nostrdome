@@ -34,3 +34,5 @@ log = "0.4.17"
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.16", features = [ "std", "env-filter" ] }
 rfd = "0.11.3"
+base64 = "0.21.0"
+aes-gcm = "0.10.1"

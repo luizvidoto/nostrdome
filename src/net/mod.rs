@@ -1,3 +1,4 @@
+use crate::crypto::{decrypt_local_message, encrypt_local_message};
 use crate::db::{Database, DbContact, DbEvent};
 use crate::error::Error;
 use crate::types::ChatMessage;
@@ -8,7 +9,7 @@ use iced::futures::stream::Fuse;
 use iced::futures::{channel::mpsc, StreamExt};
 use iced::{subscription, Subscription};
 use nostr_sdk::prelude::decrypt;
-use nostr_sdk::secp256k1::XOnlyPublicKey;
+use nostr_sdk::secp256k1::{SecretKey, XOnlyPublicKey};
 use nostr_sdk::{
     Client, Contact, EventId, Filter, Keys, Kind, Relay, RelayMessage, RelayPoolNotification,
     Timestamp, Url,
@@ -333,7 +334,7 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                 }
                                 Message::SendDMTo((pubkey, msg)) => {
                                     process_async_fn(
-                                        nostr_client.send_direct_msg(pubkey, msg),
+                                        send_and_store_dm(&database.pool, &nostr_client, &keys, pubkey, &msg),
                                         |event_id| Event::SomeEventSuccessId(event_id),
                                     )
                                     .await
@@ -412,6 +413,9 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                     // tracing::info!("url: {}", _url);
                                     // tracing::info!("event: {:?}", event);
                                     Event::NostrEvent(event)
+                                    // TODO:
+                                    // front end receives and says to insert event
+                                    // do it all from here
                                 },
                                 RelayPoolNotification::Message(_url, relay_msg) => {
                                     Event::RelayMessage(relay_msg)
@@ -539,4 +543,32 @@ async fn request_events(nostr_client: &Client, pubkey: &XOnlyPublicKey) -> Resul
         .req_events_of(vec![recv_msgs_sub], Some(timeout))
         .await;
     Ok(())
+}
+
+async fn send_and_store_dm(
+    pool: &SqlitePool,
+    nostr_client: &Client,
+    keys: &Keys,
+    pubkey: XOnlyPublicKey,
+    message: &str,
+) -> Result<EventId, Error> {
+    let secret_key = keys.secret_key()?;
+    let event_id = nostr_client.send_direct_msg(pubkey, message).await?;
+
+    // Encrypt the message for local storage
+    let locally_encrypted_message = encrypt_local_message(&secret_key, message)?;
+    // Store the locally encrypted message in the local database
+    store_in_local_database(&locally_encrypted_message).await?;
+
+    Ok(event_id)
+}
+
+fn read_message_from_database(message_id: i64, secret_key: &SecretKey) -> Result<String, Error> {
+    // Fetch the encrypted message from the local database
+    let encrypted_message = get_message_from_database(message_id)?;
+
+    // Decrypt the locally encrypted message
+    let decrypted_message = decrypt_local_message(secret_key, &encrypted_message)?;
+
+    Ok(decrypted_message)
 }
