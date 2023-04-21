@@ -41,7 +41,7 @@ impl ChatMessage {
     pub fn from_event<S, E>(
         event: &E,
         decrypted_message: S,
-        user_pubkey: &XOnlyPublicKey,
+        is_from_user: bool,
         contact: &DbContact,
     ) -> Self
     where
@@ -52,13 +52,14 @@ impl ChatMessage {
             content: decrypted_message.into(),
             created_at: event.created_at(),
             from_pubkey: event.pubkey(),
-            is_from_user: &event.pubkey() == user_pubkey,
+            // is_from_user: &event.pubkey() == user_pubkey,
+            is_from_user,
             petname: contact.petname.clone(),
         }
     }
     pub fn from_db_message(
         db_message: &DbMessage,
-        user_pubkey: &XOnlyPublicKey,
+        is_from_user: bool,
         contact: &DbContact,
     ) -> Self {
         Self {
@@ -68,7 +69,7 @@ impl ChatMessage {
                 .unwrap_or("none".into()),
             created_at: db_message.created_at.timestamp_millis(),
             from_pubkey: db_message.from_pub.clone(),
-            is_from_user: &db_message.from_pub == user_pubkey,
+            is_from_user,
             petname: contact.petname.clone(),
         }
     }

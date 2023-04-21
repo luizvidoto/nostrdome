@@ -2,7 +2,7 @@ use iced::widget::{button, row, text};
 use iced::{Element, Length};
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 
-use crate::db::{ContactStatus, DbContact};
+use crate::db::DbContact;
 use crate::utils::format_pubkey;
 
 #[derive(Debug, Clone)]
@@ -12,37 +12,25 @@ pub enum Message {
 }
 #[derive(Debug, Clone)]
 pub struct ContactRow {
-    petname: Option<String>,
-    pubkey: XOnlyPublicKey,
-    relay_url: Option<String>,
-    status: ContactStatus,
+    contact: DbContact,
 }
 
 impl From<ContactRow> for DbContact {
     fn from(row: ContactRow) -> Self {
-        (&row).into()
+        row.contact
     }
 }
 
 impl From<&ContactRow> for DbContact {
     fn from(row: &ContactRow) -> Self {
-        DbContact {
-            pubkey: row.pubkey.clone(),
-            relay_url: row.relay_url.clone(),
-            petname: row.petname.clone(),
-            profile_image: None,
-            status: row.status,
-        }
+        row.contact.to_owned()
     }
 }
 
 impl ContactRow {
     pub fn from_db_contact(contact: &DbContact) -> Self {
         Self {
-            petname: contact.petname.clone(),
-            pubkey: contact.pubkey.clone(),
-            relay_url: contact.relay_url.clone(),
-            status: contact.status,
+            contact: contact.clone(),
         }
     }
     pub fn header<M: 'static>() -> Element<'static, M> {
@@ -58,10 +46,11 @@ impl ContactRow {
     }
     pub fn view(&self) -> Element<'static, Message> {
         row![
-            text(format_pubkey(&self.pubkey.to_string())).width(Length::Fill),
-            text(&self.petname.to_owned().unwrap_or("".into())).width(Length::Fill),
+            text(format_pubkey(&self.contact.pubkey.to_string())).width(Length::Fill),
+            text(&self.contact.petname.to_owned().unwrap_or("".into())).width(Length::Fill),
             text(
                 &self
+                    .contact
                     .relay_url
                     .to_owned()
                     .map(|url| url.to_string())
@@ -73,7 +62,7 @@ impl ContactRow {
                 .on_press(Message::EditContact(self.into()))
                 .width(EDIT_BTN_WIDTH),
             button("Remove")
-                .on_press(Message::DeleteContact(self.pubkey.clone()))
+                .on_press(Message::DeleteContact(self.contact.pubkey.clone()))
                 .width(REMOVE_BTN_WIDTH)
         ]
         .into()

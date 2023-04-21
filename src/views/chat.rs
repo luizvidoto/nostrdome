@@ -1,6 +1,5 @@
-use iced::alignment::Horizontal;
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
-use iced::{Element, Length};
+use iced::{Alignment, Color, Element, Length};
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 
 use crate::components::contact_card;
@@ -97,22 +96,48 @@ impl State {
             .height(Length::Fill)
             .into()
     }
-    pub fn backend_event(&mut self, event: net::Event, _back_conn: &mut BackEndConnection) {
+    pub fn backend_event(&mut self, event: net::Event, back_conn: &mut BackEndConnection) {
         match event {
             net::Event::DatabaseSuccessEvent(kind) => match kind {
-                net::DatabaseSuccessEventKind::NewDM(_message) => {
-                    // verificar se estou na conversa?
-
-                    // self.messages.push(message);
-                    // self.messages
-                    //     .sort_by(|a, b| a.created_at.cmp(&b.created_at))
+                net::DatabaseSuccessEventKind::NewDM((contact, msg)) => {
+                    if self.contact_pubkey_active.as_ref() == Some(&msg.from_pub) {
+                        // estou na conversa
+                        self.messages
+                            .push(ChatMessage::from_db_message(&msg, false, &contact));
+                    } else {
+                        // não estou na conversa
+                        back_conn.send(net::Message::UpdateUnseenCount(contact.clone()))
+                    }
+                }
+                net::DatabaseSuccessEventKind::NewDMAndContact((contact, _)) => {
+                    // back_conn.send(net::Message::FetchContacts);
+                    // back_conn.send(net::Message::FetchUnseenCountFrom(contact.pubkey.clone()))
+                    self.contacts
+                        .push(contact_card::State::from_db_contact(&contact))
+                }
+                net::DatabaseSuccessEventKind::ContactUpdated(db_contact) => {
+                    if let Some(found_card) = self
+                        .contacts
+                        .iter_mut()
+                        .find(|c| c.contact.pubkey == db_contact.pubkey)
+                    {
+                        found_card.update(contact_card::Message::ContactUpdated(db_contact));
+                    }
                 }
                 _ => (),
             },
-            net::Event::GotMessages(chat_msgs) => {
-                self.messages = chat_msgs;
-                self.messages
-                    .sort_by(|a, b| a.created_at.cmp(&b.created_at))
+            net::Event::GotChatMessages((mut contact, chat_msgs)) => {
+                if let Some(active_pub) = self.contact_pubkey_active {
+                    if contact.pubkey == active_pub {
+                        self.messages = chat_msgs;
+                        self.messages
+                            .sort_by(|a, b| a.created_at.cmp(&b.created_at));
+                        if contact.unseen_messages > 0 {
+                            contact.unseen_messages = 0;
+                            back_conn.send(net::Message::UpdateContact(contact));
+                        }
+                    }
+                }
             }
             net::Event::GotContacts(db_contacts) => {
                 self.contacts = db_contacts
@@ -181,23 +206,49 @@ impl State {
 }
 
 fn chat_message<M: 'static>(chat_msg: &ChatMessage) -> Element<'static, M> {
-    let (block1, block2) = if !chat_msg.is_from_user {
-        (
-            container(text(&chat_msg.content))
-                .padding([2, 5])
-                .width(Length::Shrink),
-            container(text("").width(Length::Fill)),
-        )
-    } else {
-        (
-            container(text("").width(Length::Fill)),
-            container(text(&chat_msg.content))
-                .padding([2, 5])
-                .width(Length::Shrink),
-        )
+    let chat_alignment = match chat_msg.is_from_user {
+        false => Alignment::Start,
+        true => Alignment::End,
     };
 
-    container(row![block1, block2].width(Length::Fill)).into()
+    row![container(text(&chat_msg.content))
+        .padding([2, 5])
+        .style(iced::theme::Container::Custom(chat_msg_container_style(
+            chat_msg.is_from_user
+        )))]
+    .align_items(chat_alignment)
+    .width(Length::Fill)
+    .into()
 }
 
-// const EMPTY_BLOCK_WIDTH: f32 = 50.0;
+fn chat_msg_container_style(
+    is_from_user: bool,
+) -> Box<dyn container::StyleSheet<Style = iced::Theme>> {
+    if is_from_user {
+        Box::new(GreenContainerStyle)
+    } else {
+        Box::new(RedContainerStyle)
+    }
+}
+
+struct RedContainerStyle;
+impl container::StyleSheet for RedContainerStyle {
+    type Style = iced::Theme;
+    fn appearance(&self, _style: &Self::Style) -> container::Appearance {
+        container::Appearance {
+            background: Color::from_rgb8(200, 20, 20).into(),
+            ..Default::default()
+        }
+    }
+}
+
+struct GreenContainerStyle;
+impl container::StyleSheet for GreenContainerStyle {
+    type Style = iced::Theme;
+    fn appearance(&self, _style: &Self::Style) -> container::Appearance {
+        container::Appearance {
+            background: Color::from_rgb8(20, 200, 20).into(),
+            ..Default::default()
+        }
+    }
+}

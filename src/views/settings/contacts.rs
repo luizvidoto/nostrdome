@@ -187,9 +187,9 @@ impl State {
                     self.contacts = db_contacts;
                 }
                 net::Event::DatabaseSuccessEvent(kind) => match kind {
-                    net::DatabaseSuccessEventKind::ContactCreated
-                    | net::DatabaseSuccessEventKind::ContactDeleted
-                    | net::DatabaseSuccessEventKind::ContactUpdated => {
+                    net::DatabaseSuccessEventKind::ContactCreated(_)
+                    | net::DatabaseSuccessEventKind::ContactDeleted(_)
+                    | net::DatabaseSuccessEventKind::ContactUpdated(_) => {
                         back_conn.send(net::Message::FetchContacts);
                     }
                     _ => (),

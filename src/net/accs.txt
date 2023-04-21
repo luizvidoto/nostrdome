@@ -10,3 +10,7 @@
 // acc3
 // secret  "nsec1x2aq7r90upmen8f860d64gxr9evvtt6cl8w9uvdc5dnte36gjlsqkkvcdf"
 // hex_pub "9e45b5e573adfb70be9f81e6f19e3df334fa24b3a7273859104d399ccbf64e94"
+
+// acc4
+// secret nsec18qfjtxaxtrhk3gfusnjd3dmd0ltu9q2s7pkumt5ah4e4k70m095s7pllwu
+// hex_pub dafb7c5a8d3a061a8254eb9ffb132cceec0b5080357531006e127263121e3adc

@@ -39,6 +39,9 @@ impl DbMessage {
     pub fn is_local(&self, own_pubkey: &XOnlyPublicKey) -> bool {
         own_pubkey == &self.from_pub
     }
+    pub fn is_unseen(&self) -> bool {
+        self.status.is_unseen()
+    }
 
     pub fn new_local(
         from_pub: &XOnlyPublicKey,
@@ -119,6 +122,24 @@ impl DbMessage {
         Ok(messages)
     }
 
+    pub async fn fetch_unseen_count(
+        pool: &SqlitePool,
+        pubkey: &XOnlyPublicKey,
+    ) -> Result<u8, Error> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)
+            FROM message
+            WHERE from_pub = ?1 AND (status = ?2 OR status = ?3)",
+        )
+        .bind(pubkey.to_string())
+        .bind(MessageStatus::Offline.to_i32())
+        .bind(MessageStatus::Delivered.to_i32())
+        .fetch_one(pool)
+        .await?;
+
+        Ok(count as u8)
+    }
+
     pub async fn fetch_chat(
         pool: &SqlitePool,
         from_pub: &XOnlyPublicKey,
@@ -161,6 +182,29 @@ impl DbMessage {
             .await?;
 
         Ok(())
+    }
+
+    pub async fn update_message_status(
+        pool: &SqlitePool,
+        db_message: &DbMessage,
+    ) -> Result<(), Error> {
+        if let Some(msg_id) = db_message.msg_id {
+            let sql = r#"
+            UPDATE message 
+            SET status = ?1
+            WHERE msg_id = ?2
+            "#;
+
+            sqlx::query(sql)
+                .bind(&db_message.status.to_i32())
+                .bind(&msg_id)
+                .execute(pool)
+                .await?;
+
+            Ok(())
+        } else {
+            Err(Error::MessageNotInDatabase)
+        }
     }
 }
 
@@ -208,17 +252,26 @@ impl sqlx::FromRow<'_, SqliteRow> for DbMessage {
 pub enum MessageStatus {
     Offline = 0,
     Delivered = 1,
+    Seen = 2,
 }
 
 impl MessageStatus {
     pub fn from_i32(value: i32) -> Self {
         match value {
             0 => MessageStatus::Offline,
-            _ => MessageStatus::Delivered,
+            1 => MessageStatus::Delivered,
+            _ => MessageStatus::Seen,
         }
     }
 
     pub fn to_i32(self) -> i32 {
         self as i32
+    }
+    pub fn is_unseen(&self) -> bool {
+        match self {
+            MessageStatus::Offline => true,
+            MessageStatus::Delivered => true,
+            MessageStatus::Seen => false,
+        }
     }
 }

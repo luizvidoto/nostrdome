@@ -4,6 +4,9 @@ use thiserror::Error;
 /// Errors that can occur in the nostrdome crate
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("Can't update message without msg_id")]
+    MessageNotInDatabase,
+
     #[error("{0}")]
     FromDbEventError(#[from] FromDbEventError),
 
