@@ -1,3 +1,4 @@
+use chrono::{Datelike, NaiveDateTime};
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Length};
 use nostr_sdk::secp256k1::XOnlyPublicKey;
@@ -7,7 +8,7 @@ use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::types::ChatMessage;
 use crate::utils::send_icon;
-use crate::widget::Element;
+use crate::widget::{Column, Element};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -65,10 +66,17 @@ impl State {
             .into()
         };
         let first = container(contact_list);
-        let chat_content = self
-            .messages
-            .iter()
-            .fold(column![], |col, msg| col.push(chat_message(&msg)));
+        let (chat_content, _) = self.messages.iter().fold(
+            (column![], None),
+            |(mut col, last_date): (Column<'_, _>, Option<NaiveDateTime>), msg| {
+                if let (Some(last_date), Some(msg_date)) = (last_date, msg.created_at) {
+                    if last_date.day() != msg_date.day() {
+                        col = col.push(chat_day_divider(msg_date.clone()));
+                    }
+                }
+                (col.push(chat_message(&msg)), msg.created_at)
+            },
+        );
         let chat_messages = scrollable(chat_content).height(Length::Fill);
         let message_input = text_input("Write a message...", &self.dm_msg)
             .on_submit(Message::DMSentPress)
@@ -217,7 +225,7 @@ impl State {
     }
 }
 
-fn chat_message<M: 'static>(chat_msg: &ChatMessage) -> Element<'static, M> {
+fn chat_message<Message: 'static>(chat_msg: &ChatMessage) -> Element<'static, Message> {
     // let chat_alignment = match chat_msg.is_from_user {
     //     false => Alignment::Start,
     //     true => Alignment::End,
@@ -250,4 +258,8 @@ fn chat_message<M: 'static>(chat_msg: &ChatMessage) -> Element<'static, M> {
         .width(Length::Fill)
         .padding([2, 20])
         .into()
+}
+
+fn chat_day_divider<Message: 'static>(date: NaiveDateTime) -> Element<'static, Message> {
+    container(text(date.format("%Y-%m-%d").to_string())).into()
 }
