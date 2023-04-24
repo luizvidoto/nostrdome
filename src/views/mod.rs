@@ -1,6 +1,9 @@
-use iced::{Command, Element, Subscription};
+use iced::{Command, Subscription};
 
-use crate::net::{self, BackEndConnection};
+use crate::{
+    net::{self, BackEndConnection},
+    widget::Element,
+};
 
 mod chat;
 pub mod login;

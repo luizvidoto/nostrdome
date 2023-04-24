@@ -1,9 +1,10 @@
 use iced::widget::{button, row, text};
-use iced::{Element, Length};
+use iced::Length;
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 
 use crate::db::DbContact;
 use crate::utils::format_pubkey;
+use crate::widget::Element;
 
 #[derive(Debug, Clone)]
 pub enum Message {

@@ -2,8 +2,9 @@ use std::ops::Not;
 
 use crate::error::Error;
 use crate::net::{self, BackEndConnection};
+use crate::widget::Element;
 use iced::widget::{button, checkbox, container, row, text};
-use iced::{Command, Element, Length, Subscription};
+use iced::{Command, Length, Subscription};
 use iced_native::futures::channel::mpsc;
 use nostr_sdk::{Relay, RelayStatus, Url};
 

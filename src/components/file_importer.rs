@@ -1,8 +1,10 @@
 use iced::{
     widget::{button, row, text_input},
-    Element, Length,
+    Length,
 };
 use rfd::FileDialog;
+
+use crate::widget::Element;
 
 #[derive(Debug, Clone)]
 pub enum Message {

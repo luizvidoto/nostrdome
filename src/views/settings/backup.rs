@@ -1,6 +1,4 @@
-use iced::Element;
-
-use crate::{components::text::title, net};
+use crate::{components::text::title, net, widget::Element};
 
 #[derive(Debug, Clone)]
 pub enum Message {

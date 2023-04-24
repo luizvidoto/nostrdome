@@ -1,10 +1,10 @@
 use iced::widget::{button, column};
-use iced::Element;
 use nostr_sdk::Metadata;
 
 use crate::components::text::title;
 use crate::components::text_input_group::text_input_group;
 use crate::net;
+use crate::widget::Element;
 
 #[derive(Debug, Clone)]
 pub enum Message {

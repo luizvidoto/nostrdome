@@ -1,9 +1,9 @@
-use iced::{
-    widget::{button, column, container},
-    Element,
-};
+use iced::widget::{button, column, container};
 
-use crate::components::{text::title, text_input_group::text_input_group};
+use crate::{
+    components::{text::title, text_input_group::text_input_group},
+    widget::Element,
+};
 
 #[derive(Debug, Clone)]
 pub enum Message {

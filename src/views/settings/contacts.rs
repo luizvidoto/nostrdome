@@ -1,6 +1,6 @@
 use iced::alignment::{Horizontal, Vertical};
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Column};
-use iced::{Element, Length};
+use iced::widget::{button, column, container, row, scrollable, text, text_input};
+use iced::Length;
 use iced_aw::{Card, Modal};
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 use nostr_sdk::{Kind, Tag};
@@ -10,6 +10,7 @@ use crate::components::{contact_row, file_importer, ContactRow, FileImporter};
 use crate::net::BackEndConnection;
 use crate::types::UncheckedEvent;
 use crate::utils::json_reader;
+use crate::widget::{Element};
 use crate::{components::text::title, db::DbContact, net};
 
 #[derive(Debug, Clone)]
@@ -220,7 +221,7 @@ impl State {
             .iter()
             .filter(|c| contact_matches_search(c, &self.search_contact_input))
             .map(|c| ContactRow::from_db_contact(c))
-            .fold(column![].spacing(5), |col: Column<'_, Message>, contact| {
+            .fold(column![].spacing(5), |col, contact| {
                 col.push(contact.view().map(Message::ContactRowMessage))
             })
             .into();
@@ -302,24 +303,29 @@ impl State {
                     n => text(format!("Found contacts: {}", n)),
                 };
                 let stats_row = row![found_contacts_txt];
-                let modal_body: Element<_> = column![importer_cp, stats_row].spacing(4).into();
-                Card::new(text("Import Contacts"), modal_body)
-                    .foot(
-                        row![
-                            button(text("Cancel").horizontal_alignment(Horizontal::Center),)
-                                .width(Length::Fill)
-                                .on_press(Message::CloseImportContactModal),
-                            button(text("Ok").horizontal_alignment(Horizontal::Center),)
-                                .width(Length::Fill)
-                                .on_press(Message::SaveImportedContacts(imported_contacts.clone()))
-                        ]
-                        .spacing(10)
-                        .padding(5)
-                        .width(Length::Fill),
-                    )
+
+                let card_header = text("Import Contacts");
+                let card_body = column![importer_cp, stats_row].spacing(4);
+                let card_footer = row![
+                    button(text("Cancel").horizontal_alignment(Horizontal::Center),)
+                        .width(Length::Fill)
+                        .on_press(Message::CloseImportContactModal),
+                    button(text("Ok").horizontal_alignment(Horizontal::Center),)
+                        .width(Length::Fill)
+                        .on_press(Message::SaveImportedContacts(imported_contacts.clone()))
+                ]
+                .spacing(10)
+                .padding(5)
+                .width(Length::Fill);
+
+                let card: Element<_> = Card::new(card_header, card_body)
+                    .foot(card_footer)
                     .max_width(IMPORT_MODAL_WIDTH)
                     .on_close(Message::CloseImportContactModal)
-                    .into()
+                    .style(crate::style::Card::Default)
+                    .into();
+
+                card
             })
             .backdrop(Message::CloseImportContactModal)
             .on_esc(Message::CloseImportContactModal)

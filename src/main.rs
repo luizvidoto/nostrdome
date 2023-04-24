@@ -13,13 +13,14 @@ use components::text::title;
 use iced::{
     executor,
     widget::{button, column, container, text},
-    window, Application, Command, Element, Length, Settings,
+    window, Application, Command, Length, Settings,
 };
 use net::{backend_connect, BackEndConnection};
 use nostr_sdk::{prelude::FromSkStr, Keys};
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::EnvFilter;
 use views::{login, Router};
+use widget::Element;
 
 #[derive(Debug, Clone)]
 pub enum Message {

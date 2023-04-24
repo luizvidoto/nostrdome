@@ -1,10 +1,12 @@
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
-use iced::{Alignment, Color, Element, Length};
+use iced::{Alignment, Length};
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 
 use crate::components::contact_card;
 use crate::net::{self, BackEndConnection};
+use crate::style;
 use crate::types::ChatMessage;
+use crate::widget::Element;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -211,44 +213,16 @@ fn chat_message<M: 'static>(chat_msg: &ChatMessage) -> Element<'static, M> {
         true => Alignment::End,
     };
 
+    let container_style = if chat_msg.is_from_user {
+        style::Container::Green
+    } else {
+        style::Container::Red
+    };
+
     row![container(text(&chat_msg.content))
         .padding([2, 5])
-        .style(iced::theme::Container::Custom(chat_msg_container_style(
-            chat_msg.is_from_user
-        )))]
+        .style(container_style)]
     .align_items(chat_alignment)
     .width(Length::Fill)
     .into()
-}
-
-fn chat_msg_container_style(
-    is_from_user: bool,
-) -> Box<dyn container::StyleSheet<Style = iced::Theme>> {
-    if is_from_user {
-        Box::new(GreenContainerStyle)
-    } else {
-        Box::new(RedContainerStyle)
-    }
-}
-
-struct RedContainerStyle;
-impl container::StyleSheet for RedContainerStyle {
-    type Style = iced::Theme;
-    fn appearance(&self, _style: &Self::Style) -> container::Appearance {
-        container::Appearance {
-            background: Color::from_rgb8(200, 20, 20).into(),
-            ..Default::default()
-        }
-    }
-}
-
-struct GreenContainerStyle;
-impl container::StyleSheet for GreenContainerStyle {
-    type Style = iced::Theme;
-    fn appearance(&self, _style: &Self::Style) -> container::Appearance {
-        container::Appearance {
-            background: Color::from_rgb8(20, 200, 20).into(),
-            ..Default::default()
-        }
-    }
 }

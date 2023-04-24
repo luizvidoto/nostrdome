@@ -1,6 +1,6 @@
 use iced::alignment::Horizontal;
 use iced::widget::{button, column, container, row, text};
-use iced::{Command, Element, Length, Subscription};
+use iced::{Command, Length, Subscription};
 use iced_aw::{Card, Modal};
 use nostr_sdk::Url;
 
@@ -8,6 +8,7 @@ use crate::components::text::title;
 use crate::components::text_input_group::text_input_group;
 use crate::components::{relay_row, RelayRow};
 use crate::net::{self, BackEndConnection};
+use crate::widget::Element;
 
 const CARD_MAX_WIDTH: f32 = 300.0;
 

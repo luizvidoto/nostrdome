@@ -1,11 +1,12 @@
 use chrono::NaiveDateTime;
 use iced::widget::{button, column, row, text};
-use iced::{Color, Element, Length};
+use iced::Length;
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 
 use crate::db::DbContact;
 use crate::style;
 use crate::utils::format_pubkey;
+use crate::widget::Element;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -40,12 +41,6 @@ impl State {
         if let Some(pubkey) = &self.active_pubkey {
             is_active = pubkey == &self.contact.pubkey;
         }
-
-        let btn_style = if is_active {
-            style::Button::ActiveContactCard
-        } else {
-            style::Button::ContactCard
-        };
 
         let unseen_messages: String = match self.contact.unseen_messages {
             0 => "".into(),
@@ -86,7 +81,11 @@ impl State {
             .width(Length::Fill)
             .height(Length::Fixed(80.0))
             .on_press(Message::UpdateActiveId(self.contact.clone()))
-            .style(btn_style)
+            .style(if is_active {
+                style::Button::ActiveContactCard
+            } else {
+                style::Button::ContactCard
+            })
             .into()
     }
     pub fn update(&mut self, message: Message) {
