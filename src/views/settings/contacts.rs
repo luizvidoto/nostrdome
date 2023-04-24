@@ -10,7 +10,7 @@ use crate::components::{contact_row, file_importer, ContactRow, FileImporter};
 use crate::net::BackEndConnection;
 use crate::types::UncheckedEvent;
 use crate::utils::json_reader;
-use crate::widget::{Element};
+use crate::widget::Element;
 use crate::{components::text::title, db::DbContact, net};
 
 #[derive(Debug, Clone)]
@@ -190,7 +190,8 @@ impl State {
                 net::Event::DatabaseSuccessEvent(kind) => match kind {
                     net::DatabaseSuccessEventKind::ContactCreated(_)
                     | net::DatabaseSuccessEventKind::ContactDeleted(_)
-                    | net::DatabaseSuccessEventKind::ContactUpdated(_) => {
+                    | net::DatabaseSuccessEventKind::ContactUpdated(_)
+                    | net::DatabaseSuccessEventKind::ContactsImported(_) => {
                         back_conn.send(net::Message::FetchContacts);
                     }
                     _ => (),

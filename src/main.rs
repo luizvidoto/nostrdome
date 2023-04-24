@@ -162,7 +162,9 @@ impl Application for App {
                         }
                     }
 
-                    return router.update(msg, back_conn).map(Message::RouterMessage);
+                    return router
+                        .update(msg, back_conn, self.color_theme)
+                        .map(Message::RouterMessage);
                 }
             }
             Message::BackEndEvent(event) => match event {
@@ -220,7 +222,8 @@ async fn main() {
     App::run(Settings {
         id: Some(String::from("nostrdome")),
         window: window::Settings {
-            size: (600, 800),
+            // (width, height)
+            size: (1000, 800),
             min_size: Some((600, 400)),
             position: window::Position::Centered,
             ..window::Settings::default()

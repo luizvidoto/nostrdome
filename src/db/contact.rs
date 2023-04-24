@@ -146,7 +146,7 @@ impl DbContact {
 
     pub async fn insert_batch(pool: &SqlitePool, contacts: &[DbContact]) -> Result<(), Error> {
         let sql = "INSERT OR IGNORE INTO contact (pubkey, relay_url, \
-               petname, profile_image, unseen_messages) \
+               petname, profile_image, status, unseen_messages) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
 
         // Iniciar a transação

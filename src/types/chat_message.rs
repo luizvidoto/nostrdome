@@ -1,6 +1,10 @@
+use chrono::NaiveDateTime;
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 
-use crate::db::{DbContact, DbEvent, DbMessage};
+use crate::{
+    db::{DbContact, DbEvent, DbMessage},
+    utils::millis_to_naive,
+};
 
 pub trait EventLike {
     fn created_at(&self) -> i64;
@@ -28,7 +32,7 @@ impl EventLike for DbEvent {
 #[derive(Debug, Clone)]
 pub struct ChatMessage {
     /// Message created at using unix timestamp
-    pub created_at: i64,
+    pub created_at: Option<NaiveDateTime>,
     /// Message content
     pub content: String,
     /// Pub key of the author of the message
@@ -50,7 +54,7 @@ impl ChatMessage {
     {
         Self {
             content: decrypted_message.into(),
-            created_at: event.created_at(),
+            created_at: millis_to_naive(event.created_at()),
             from_pubkey: event.pubkey(),
             // is_from_user: &event.pubkey() == user_pubkey,
             is_from_user,
@@ -67,7 +71,7 @@ impl ChatMessage {
                 .decrypted_content
                 .clone()
                 .unwrap_or("none".into()),
-            created_at: db_message.created_at.timestamp_millis(),
+            created_at: Some(db_message.created_at),
             from_pubkey: db_message.from_pub.clone(),
             is_from_user,
             petname: contact.petname.clone(),

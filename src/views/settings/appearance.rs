@@ -12,10 +12,8 @@ pub struct State {
     selected_theme: Option<style::Theme>,
 }
 impl State {
-    pub fn new() -> Self {
-        Self {
-            selected_theme: Some(style::Theme::default()),
-        }
+    pub fn new(selected_theme: Option<style::Theme>) -> Self {
+        Self { selected_theme }
     }
 
     pub fn update(&mut self, message: Message) {

@@ -2,6 +2,7 @@ use iced::{Command, Subscription};
 
 use crate::{
     net::{self, BackEndConnection},
+    style,
     widget::Element,
 };
 
@@ -77,6 +78,7 @@ impl Router {
         &mut self,
         message: Message,
         back_conn: &mut BackEndConnection,
+        selected_theme: Option<style::Theme>,
     ) -> Command<Message> {
         match message {
             Message::ChangeView => (),
@@ -101,7 +103,7 @@ impl Router {
                         }
                         _ => {
                             return state
-                                .update(msg.clone(), back_conn)
+                                .update(msg.clone(), back_conn, selected_theme)
                                 .map(Message::SettingsMsg);
                         }
                     }

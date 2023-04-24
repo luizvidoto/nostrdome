@@ -5,10 +5,12 @@ use std::{
 };
 
 use chrono::NaiveDateTime;
+use iced::Font;
+use iced::{alignment, widget::text};
 use nostr_sdk::prelude::*;
 use serde::de::DeserializeOwned;
 
-use crate::error::Error;
+use crate::{error::Error, widget::Text};
 
 // Accepts both hex and bech32 keys and returns the hex encoded key
 pub fn parse_key(key: String) -> Result<String, anyhow::Error> {
@@ -88,4 +90,30 @@ where
         index: index.into(),
         source: Box::new(error),
     }
+}
+
+// Fonts
+const ICONS: Font = Font::External {
+    name: "Icons",
+    bytes: include_bytes!("../fonts/fa_icons.otf"),
+};
+
+fn icon(unicode: char) -> Text<'static> {
+    text(unicode.to_string())
+        .font(ICONS)
+        .width(20)
+        .horizontal_alignment(alignment::Horizontal::Center)
+        .size(20)
+}
+
+pub fn edit_icon() -> Text<'static> {
+    icon('\u{F044}')
+}
+
+pub fn delete_icon() -> Text<'static> {
+    icon('\u{F2ED}')
+}
+
+pub fn send_icon() -> Text<'static> {
+    icon('\u{F1D8}')
 }

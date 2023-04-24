@@ -20,15 +20,16 @@ pub struct State {
 impl State {
     pub fn new() -> Self {
         Self {
-            secret_key_input: "".into(),
+            secret_key_input: "nsec1x2aq7r90upmen8f860d64gxr9evvtt6cl8w9uvdc5dnte36gjlsqkkvcdf"
+                .into(),
             is_invalid: false,
         }
     }
 
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::SecretKeyInputChange(secret_key) => self.secret_key_input = secret_key,
-            // Message::SecretKeyInputChange(_secret_key) => (),
+            // Message::SecretKeyInputChange(secret_key) => self.secret_key_input = secret_key,
+            Message::SecretKeyInputChange(_secret_key) => (),
             Message::SubmitPress(_) => (),
         }
     }

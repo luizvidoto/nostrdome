@@ -52,9 +52,9 @@ impl State {
             state: account::State::new(profile),
         }
     }
-    fn appearance() -> Self {
+    fn appearance(selected_theme: Option<style::Theme>) -> Self {
         Self::Appearance {
-            state: appearance::State::new(),
+            state: appearance::State::new(selected_theme),
         }
     }
     fn network(back_conn: &mut BackEndConnection) -> Self {
@@ -96,6 +96,7 @@ impl State {
         &mut self,
         message: Message,
         back_conn: &mut BackEndConnection,
+        selected_theme: Option<style::Theme>,
     ) -> Command<Message> {
         match message {
             Message::AccountMessage(msg) => {
@@ -128,7 +129,7 @@ impl State {
                 *self = Self::account(back_conn);
             }
             Message::MenuAppearancePress => {
-                *self = Self::appearance();
+                *self = Self::appearance(selected_theme);
             }
             Message::MenuNetworkPress => {
                 *self = Self::network(back_conn);

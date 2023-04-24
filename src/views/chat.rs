@@ -6,6 +6,7 @@ use crate::components::contact_card;
 use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::types::ChatMessage;
+use crate::utils::send_icon;
 use crate::widget::Element;
 
 #[derive(Debug, Clone)]
@@ -32,7 +33,7 @@ impl State {
         Self {
             contacts: vec![],
             messages: vec![],
-            ver_divider_position: None,
+            ver_divider_position: Some(300),
             contact_pubkey_active: None,
             dm_msg: "".into(),
         }
@@ -54,25 +55,32 @@ impl State {
                 .on_press(Message::AddContactPress)
                 .into()
         } else {
-            self.contacts
-                .iter()
-                .fold(column![].spacing(0), |col, contact| {
-                    col.push(contact.view().map(Message::ContactCardMessage))
-                })
-                .into()
+            scrollable(
+                self.contacts
+                    .iter()
+                    .fold(column![].spacing(0), |col, contact| {
+                        col.push(contact.view().map(Message::ContactCardMessage))
+                    }),
+            )
+            .into()
         };
         let first = container(contact_list);
         let chat_content = self
             .messages
             .iter()
             .fold(column![], |col, msg| col.push(chat_message(&msg)));
-        let chat_row = scrollable(chat_content);
-        let dm_msg_input = text_input("", &self.dm_msg).on_input(Message::DMNMessageChange);
-        let dm_send_btn = button("Send DM").on_press(Message::DMSentPress);
-        let msg_input_row = column![dm_msg_input, dm_send_btn].spacing(5);
-        let second = container(column![chat_row, msg_input_row])
+        let chat_messages = scrollable(chat_content).height(Length::Fill);
+        let message_input = text_input("Write a message...", &self.dm_msg)
+            .on_submit(Message::DMSentPress)
+            .on_input(Message::DMNMessageChange);
+        let send_btn = button(send_icon().style(style::Text::Primary))
+            .style(style::Button::Invisible)
+            .on_press(Message::DMSentPress);
+        let msg_input_row = container(row![message_input, send_btn].spacing(5)).padding([10, 5]);
+        let second = container(column![chat_messages, msg_input_row])
             .width(Length::Fill)
             .height(Length::Fill)
+            .style(style::Container::ChatContainer)
             .center_x()
             .center_y();
         let content = iced_aw::split::Split::new(
@@ -81,7 +89,9 @@ impl State {
             self.ver_divider_position,
             iced_aw::split::Axis::Vertical,
             Message::OnVerResize,
-        );
+        )
+        .spacing(1.0)
+        .min_size_second(300);
 
         let search_input = container(text("Search")).padding(10);
         let settings_btn = button("Settings")
@@ -208,21 +218,36 @@ impl State {
 }
 
 fn chat_message<M: 'static>(chat_msg: &ChatMessage) -> Element<'static, M> {
-    let chat_alignment = match chat_msg.is_from_user {
-        false => Alignment::Start,
-        true => Alignment::End,
-    };
+    // let chat_alignment = match chat_msg.is_from_user {
+    //     false => Alignment::Start,
+    //     true => Alignment::End,
+    // };
 
     let container_style = if chat_msg.is_from_user {
-        style::Container::Green
+        style::Container::SentMessage
     } else {
-        style::Container::Red
+        style::Container::ReceivedMessage
     };
 
-    row![container(text(&chat_msg.content))
-        .padding([2, 5])
-        .style(container_style)]
-    .align_items(chat_alignment)
-    .width(Length::Fill)
-    .into()
+    let data_cp: Element<_> = if let Some(date) = chat_msg.created_at {
+        let time_str = date.time().format("%H:%M").to_string();
+        column![
+            // container(text("")).height(10.0),
+            container(text(&time_str).style(style::Text::Placeholder).size(14))
+        ]
+        .into()
+    } else {
+        text("").into()
+    };
+
+    let msg_content = text(&chat_msg.content).size(18);
+
+    let message_container = container(row![msg_content, data_cp].spacing(5))
+        .padding([5, 10])
+        .style(container_style);
+
+    container(message_container)
+        .width(Length::Fill)
+        .padding([2, 20])
+        .into()
 }
