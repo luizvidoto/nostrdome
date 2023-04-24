@@ -7,7 +7,7 @@ use crate::style;
 use crate::widget::Element;
 
 mod account;
-mod appearance;
+pub mod appearance;
 mod backup;
 mod contacts;
 mod network;

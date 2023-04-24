@@ -7,7 +7,7 @@ use crate::{
 
 mod chat;
 pub mod login;
-mod settings;
+pub mod settings;
 
 #[derive(Debug, Clone)]
 pub enum Message {

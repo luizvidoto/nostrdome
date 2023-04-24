@@ -1,24 +1,47 @@
-use crate::{components::text::title, net, widget::Element};
+use crate::{components::text::title, net, style, widget::Element};
+use iced::widget::{column, radio};
 
 #[derive(Debug, Clone)]
 pub enum Message {
     BackEndEvent(net::Event),
+    ChangeTheme(style::Theme),
 }
 
 #[derive(Debug, Clone)]
-pub struct State {}
+pub struct State {
+    selected_theme: Option<style::Theme>,
+}
 impl State {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            selected_theme: Some(style::Theme::default()),
+        }
     }
 
     pub fn update(&mut self, message: Message) {
         match message {
             Message::BackEndEvent(_ev) => (),
+            Message::ChangeTheme(theme) => self.selected_theme = Some(theme),
         }
     }
 
     pub fn view(&self) -> Element<Message> {
-        title("Appearance").into()
+        let title = title("Appearance");
+        let radio_buttons = column![
+            radio(
+                "Light",
+                style::Theme::Light,
+                self.selected_theme,
+                Message::ChangeTheme
+            ),
+            radio(
+                "Dark",
+                style::Theme::Dark,
+                self.selected_theme,
+                Message::ChangeTheme
+            ),
+        ];
+
+        column![title, radio_buttons].spacing(10).into()
     }
 }

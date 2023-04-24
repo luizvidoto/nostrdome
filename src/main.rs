@@ -19,7 +19,11 @@ use net::{backend_connect, BackEndConnection};
 use nostr_sdk::{prelude::FromSkStr, Keys};
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::EnvFilter;
-use views::{login, Router};
+use views::{
+    login,
+    settings::{self, appearance},
+    Router,
+};
 use widget::Element;
 
 #[derive(Debug, Clone)]
@@ -73,6 +77,7 @@ impl State {
 #[derive(Debug)]
 pub struct App {
     state: State,
+    color_theme: Option<style::Theme>,
 }
 pub enum NotificationState {
     Starting,
@@ -88,9 +93,13 @@ impl Application for App {
         (
             Self {
                 state: State::login(),
+                color_theme: Some(style::Theme::default()),
             },
             Command::none(),
         )
+    }
+    fn theme(&self) -> Self::Theme {
+        self.color_theme.unwrap()
     }
     fn title(&self) -> String {
         String::from("NostrDome")
@@ -145,6 +154,14 @@ impl Application for App {
                     back_conn, router, ..
                 } = &mut self.state
                 {
+                    if let views::Message::SettingsMsg(settings_msg) = msg.clone() {
+                        if let settings::Message::AppearanceMessage(appearance_msg) = settings_msg {
+                            if let appearance::Message::ChangeTheme(theme) = appearance_msg {
+                                self.color_theme = Some(theme);
+                            }
+                        }
+                    }
+
                     return router.update(msg, back_conn).map(Message::RouterMessage);
                 }
             }

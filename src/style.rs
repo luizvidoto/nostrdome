@@ -1,16 +1,58 @@
-use iced::widget::{button, checkbox, container, scrollable, text, text_input};
-use iced::{application, color, Color};
+use iced::widget::{button, checkbox, container, radio, scrollable, text, text_input};
+use iced::{application, color, Color, Vector};
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Theme;
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+pub enum Theme {
+    Light,
+    #[default]
+    Dark,
+}
+impl Theme {
+    pub fn pallete(&self) -> AppPalette {
+        match self {
+            Theme::Light => AppPalette::LIGHT,
+            Theme::Dark => AppPalette::DARK,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AppPalette {
+    pub primary: Color,
+    pub secondary: Color,
+    pub tertiary: Color,
+    pub text_light: Color,
+    pub text_dark: Color,
+    pub background: Color,
+}
+impl AppPalette {
+    pub const LIGHT: Self = Self {
+        primary: Color::from_rgb(9. / 255.0, 57. / 255.0, 209. / 255.0),
+        secondary: Color::from_rgb(50. / 255.0, 94. / 255.0, 234. / 255.0),
+        tertiary: Color::WHITE,
+        text_dark: Color::BLACK,
+        text_light: Color::WHITE,
+        background: Color::WHITE,
+    };
+    pub const DARK: Self = Self {
+        primary: Color::from_rgb(57. / 255.0, 9. / 255.0, 209. / 255.0),
+        secondary: Color::from_rgb(94. / 255.0, 50. / 255.0, 234. / 255.0),
+        tertiary: Color::WHITE,
+        text_dark: Color::WHITE,
+        text_light: Color::BLACK,
+        background: Color::from_rgb(30. / 255.0, 30. / 255.0, 30. / 255.0),
+    };
+}
 
 impl application::StyleSheet for Theme {
     type Style = ();
 
     fn appearance(&self, _style: &Self::Style) -> application::Appearance {
         application::Appearance {
-            background_color: color!(0x28, 0x28, 0x28),
-            text_color: color!(0xeb, 0xdb, 0xb2),
+            background_color: self.pallete().background.into(),
+            text_color: self.pallete().text_dark.into(),
+            // background_color: color!(0x28, 0x28, 0x28),
+            // text_color: color!(0xeb, 0xdb, 0xb2),
         }
     }
 }
@@ -20,7 +62,8 @@ impl text::StyleSheet for Theme {
 
     fn appearance(&self, _style: Self::Style) -> text::Appearance {
         text::Appearance {
-            color: color!(0xeb, 0xdb, 0xb2).into(),
+            color: self.pallete().text_dark.into(),
+            // color: color!(0xeb, 0xdb, 0xb2).into(),
         }
     }
 }
@@ -31,26 +74,51 @@ impl checkbox::StyleSheet for Theme {
     fn active(&self, _style: &Self::Style, is_checked: bool) -> checkbox::Appearance {
         checkbox::Appearance {
             background: if is_checked {
-                Color::from_rgb8(9, 57, 209).into()
+                self.pallete().primary.into()
             } else {
-                Color::WHITE.into()
+                self.pallete().background.into()
             },
-            icon_color: Color::WHITE,
+            icon_color: self.pallete().background,
             border_radius: 4.0,
             border_width: 1.0,
-            border_color: Color::from_rgb8(9, 57, 209),
-            text_color: Color::BLACK.into(),
+            border_color: self.pallete().primary,
+            text_color: self.pallete().text_dark.into(),
         }
     }
 
     fn hovered(&self, style: &Self::Style, is_checked: bool) -> checkbox::Appearance {
         checkbox::Appearance {
             background: if is_checked {
-                Color::from_rgb8(50, 94, 234).into()
+                self.pallete().secondary.into()
             } else {
-                Color::WHITE.into()
+                self.pallete().background.into()
             },
             ..self.active(style, is_checked)
+        }
+    }
+}
+
+impl radio::StyleSheet for Theme {
+    type Style = ();
+
+    fn active(&self, _style: &Self::Style, is_selected: bool) -> radio::Appearance {
+        radio::Appearance {
+            background: self.pallete().background.into(),
+            dot_color: if is_selected {
+                self.pallete().primary
+            } else {
+                self.pallete().background.into()
+            },
+            border_width: 1.0,
+            border_color: self.pallete().primary,
+            text_color: self.pallete().text_dark.into(),
+        }
+    }
+
+    fn hovered(&self, style: &Self::Style, is_selected: bool) -> radio::Appearance {
+        radio::Appearance {
+            background: self.pallete().secondary.into(),
+            ..self.active(style, is_selected)
         }
     }
 }
@@ -81,7 +149,11 @@ impl scrollable::StyleSheet for Theme {
     fn dragging_horizontal(&self, style: &Self::Style) -> scrollable::Scrollbar {
         self.active(style)
     }
-    fn hovered(&self, style: &Self::Style, _is_mouse_over_scrollbar: bool) -> scrollable::Scrollbar {
+    fn hovered(
+        &self,
+        style: &Self::Style,
+        _is_mouse_over_scrollbar: bool,
+    ) -> scrollable::Scrollbar {
         self.active(style)
     }
     fn hovered_horizontal(
@@ -107,29 +179,36 @@ impl container::StyleSheet for Theme {
     type Style = Container;
 
     fn appearance(&self, style: &Self::Style) -> container::Appearance {
+        let def = container::Appearance {
+            border_color: Color::TRANSPARENT,
+            border_width: 0.0,
+            border_radius: 0.0,
+            background: self.pallete().background.into(),
+            text_color: self.pallete().text_dark.into(),
+        };
         match style {
-            Container::Default => container::Appearance::default(),
+            Container::Default => def,
             Container::Bordered => container::Appearance {
                 border_color: color!(0x45, 0x85, 0x88),
                 border_width: 1.0,
                 border_radius: 4.0,
-                ..Default::default()
+                ..def
             },
             Container::TooltipContainer => container::Appearance {
                 text_color: Some(Color::WHITE),
                 background: Some(Color::from_rgb8(150, 150, 150).into()),
                 border_radius: 10.0,
-                ..Default::default()
+                ..def
             },
             Container::Green => container::Appearance {
                 background: Color::from_rgb8(20, 200, 20).into(),
                 text_color: Color::WHITE.into(),
-                ..Default::default()
+                ..def
             },
             Container::Red => container::Appearance {
                 background: Color::from_rgb8(200, 20, 20).into(),
                 text_color: Color::WHITE.into(),
-                ..Default::default()
+                ..def
             },
         }
     }
@@ -150,41 +229,44 @@ impl button::StyleSheet for Theme {
     type Style = Button;
 
     fn active(&self, style: &Self::Style) -> button::Appearance {
+        let primary = button::Appearance {
+            background: self.pallete().primary.into(),
+            border_radius: 4.0,
+            border_width: 1.0,
+            border_color: self.pallete().primary.into(),
+            // border_color: color!(0x45, 0x85, 0x88),
+            text_color: self.pallete().text_light.into(),
+            shadow_offset: Vector { x: 0., y: 0. },
+        };
         match style {
-            Button::Primary => button::Appearance {
-                background: color!(0x28, 0x28, 0x28).into(),
-                border_radius: 4.0,
-                border_width: 1.0,
-                border_color: color!(0x45, 0x85, 0x88),
-                ..Default::default()
-            },
+            Button::Primary => primary,
             Button::Secondary => button::Appearance {
                 background: color!(0x3c, 0x38, 0x36).into(),
-                ..Default::default()
+                ..primary
             },
             Button::ContactCard => button::Appearance {
                 text_color: Color::WHITE,
                 border_radius: 0.0,
                 background: Some(Color::TRANSPARENT.into()),
-                ..Default::default()
+                ..primary
             },
             Button::ActiveContactCard => button::Appearance {
                 border_radius: 0.0,
                 background: Some(Color::from_rgb8(65, 159, 217).into()),
                 text_color: Color::WHITE,
-                ..Default::default()
+                ..primary
             },
             Button::ActiveMenuBtn => button::Appearance {
                 text_color: Color::WHITE,
                 border_radius: 5.0,
                 background: Some(Color::from_rgb8(65, 159, 217).into()),
-                ..Default::default()
+                ..primary
             },
             Button::InactiveMenuBtn => button::Appearance {
                 text_color: Color::BLACK,
                 border_radius: 5.0,
                 background: Some(Color::TRANSPARENT.into()),
-                ..Default::default()
+                ..primary
             },
         }
     }
