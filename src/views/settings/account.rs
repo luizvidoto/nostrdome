@@ -67,14 +67,21 @@ impl State {
     pub fn view(&self) -> Element<Message> {
         let title = title("Account");
 
-        let profile_name_input =
-            text_input_group("Name", "Name", &self.name, None, Message::ProfileNameChange);
+        let profile_name_input = text_input_group(
+            "Name",
+            "Name",
+            &self.name,
+            None,
+            Message::ProfileNameChange,
+            None,
+        );
         let user_name_input = text_input_group(
             "Username",
             "Username",
             &self.user_name,
             None,
             Message::UserNameChange,
+            None,
         );
         let picture_url_input = text_input_group(
             "Picture Url",
@@ -82,6 +89,7 @@ impl State {
             &self.picture_url,
             None,
             Message::PictureUrlChange,
+            None,
         );
         let about_input = text_input_group(
             "About",
@@ -89,6 +97,7 @@ impl State {
             &self.about,
             None,
             Message::AboutChange,
+            None,
         );
         let banner_input = text_input_group(
             "Banner",
@@ -96,6 +105,7 @@ impl State {
             &self.banner,
             None,
             Message::BannerChange,
+            None,
         );
         let website_input = text_input_group(
             "Website",
@@ -103,6 +113,7 @@ impl State {
             &self.website,
             None,
             Message::WebsiteChange,
+            None,
         );
         let ln_input = text_input_group(
             "Lightning Network Address (LUD 16)",
@@ -110,6 +121,7 @@ impl State {
             &self.ln_addrs,
             Some("Some wallets support Lightning Network Address".to_string()),
             Message::LNChange,
+            None,
         );
         let nostr_addrs_input = text_input_group(
             "Nostr Address (NIP 05)",
@@ -117,6 +129,7 @@ impl State {
             &self.nostr_addrs,
             None,
             Message::NIP05Change,
+            None,
         );
 
         let submit_btn = button("Submit").on_press(Message::SubmitPress);

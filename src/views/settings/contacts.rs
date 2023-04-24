@@ -245,6 +245,7 @@ impl State {
                     modal_petname_input,
                     None,
                     Message::ModalPetNameInputChange,
+                    None,
                 );
                 let add_pubkey_input = text_input_group(
                     "Contact PubKey",
@@ -252,6 +253,7 @@ impl State {
                     modal_pubkey_input,
                     None,
                     Message::ModalPubKeyInputChange,
+                    None,
                 );
                 let add_rec_relay_input = text_input_group(
                     "Recommended Relay",
@@ -259,6 +261,7 @@ impl State {
                     modal_rec_relay_input,
                     None,
                     Message::ModalRecRelayInputChange,
+                    None,
                 );
                 let modal_body: Element<_> =
                     column![add_relay_input, add_pubkey_input, add_rec_relay_input]

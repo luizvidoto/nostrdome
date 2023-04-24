@@ -41,6 +41,7 @@ impl State {
             &self.secret_key_input,
             None,
             Message::SecretKeyInputChange,
+            Some(Message::SubmitPress(self.secret_key_input.clone())),
         );
         let submit_btn =
             button("Submit").on_press(Message::SubmitPress(self.secret_key_input.clone()));

@@ -8,6 +8,7 @@ pub fn text_input_group<'a, Message: Clone + 'a>(
     value: &str,
     tooltip_str: Option<String>,
     on_change: impl Fn(String) -> Message + 'a,
+    on_submit: Option<Message>,
 ) -> Element<'a, Message> {
     let label = text(label_str);
     let tooltip: Element<_> = if let Some(tooltip_str) = tooltip_str {
@@ -19,7 +20,10 @@ pub fn text_input_group<'a, Message: Clone + 'a>(
         text("").into()
     };
     let label_row = row![label, tooltip].spacing(4);
-    let txt_input = text_input(placeholder, value).on_input(on_change);
+    let mut txt_input = text_input(placeholder, value).on_input(on_change);
+    if let Some(on_submit) = on_submit {
+        txt_input = txt_input.on_submit(on_submit);
+    }
 
     column![label_row, txt_input].into()
 }

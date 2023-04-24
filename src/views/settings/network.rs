@@ -120,6 +120,7 @@ impl State {
                 &self.add_relay_input,
                 None,
                 Message::AddRelayInputChange,
+                None,
             );
             let modal_body: Element<_> = container(add_relay_input).into();
             Card::new(text("Add Relay"), modal_body)
