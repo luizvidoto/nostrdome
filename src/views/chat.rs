@@ -1,6 +1,6 @@
 use chrono::{Datelike, NaiveDateTime};
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
-use iced::{Alignment, Length};
+use iced::{alignment, Length};
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 
 use crate::components::contact_card;
@@ -69,11 +69,18 @@ impl State {
         let (chat_content, _) = self.messages.iter().fold(
             (column![], None),
             |(mut col, last_date): (Column<'_, _>, Option<NaiveDateTime>), msg| {
-                if let (Some(last_date), Some(msg_date)) = (last_date, msg.created_at) {
-                    if last_date.day() != msg_date.day() {
+                match (last_date, msg.created_at) {
+                    (None, Some(msg_date)) => {
                         col = col.push(chat_day_divider(msg_date.clone()));
                     }
+                    (Some(last_date), Some(msg_date)) => {
+                        if last_date.day() != msg_date.day() {
+                            col = col.push(chat_day_divider(msg_date.clone()));
+                        }
+                    }
+                    _ => (),
                 }
+
                 (col.push(chat_message(&msg)), msg.created_at)
             },
         );
@@ -119,6 +126,16 @@ impl State {
     pub fn backend_event(&mut self, event: net::Event, back_conn: &mut BackEndConnection) {
         match event {
             net::Event::DatabaseSuccessEvent(kind) => match kind {
+                net::DatabaseSuccessEventKind::SentDM((_id, contact, msg)) => {
+                    if self.contact_pubkey_active.as_ref() == Some(&contact.pubkey) {
+                        // estou na conversa
+                        self.messages
+                            .push(ChatMessage::from_db_message(&msg, true, &contact));
+                    } else {
+                        // não estou na conversa
+                        panic!("Impossible to send message outside chat");
+                    }
+                }
                 net::DatabaseSuccessEventKind::NewDM((contact, msg)) => {
                     if self.contact_pubkey_active.as_ref() == Some(&msg.from_pub) {
                         // estou na conversa
@@ -144,6 +161,7 @@ impl State {
                         found_card.update(contact_card::Message::ContactUpdated(db_contact));
                     }
                 }
+
                 _ => (),
             },
             net::Event::GotChatMessages((mut contact, chat_msgs)) => {
@@ -226,10 +244,10 @@ impl State {
 }
 
 fn chat_message<Message: 'static>(chat_msg: &ChatMessage) -> Element<'static, Message> {
-    // let chat_alignment = match chat_msg.is_from_user {
-    //     false => Alignment::Start,
-    //     true => Alignment::End,
-    // };
+    let chat_alignment = match chat_msg.is_from_user {
+        false => alignment::Horizontal::Left,
+        true => alignment::Horizontal::Right,
+    };
 
     let container_style = if chat_msg.is_from_user {
         style::Container::SentMessage
@@ -256,10 +274,19 @@ fn chat_message<Message: 'static>(chat_msg: &ChatMessage) -> Element<'static, Me
 
     container(message_container)
         .width(Length::Fill)
+        .center_y()
+        .align_x(chat_alignment)
         .padding([2, 20])
         .into()
 }
 
 fn chat_day_divider<Message: 'static>(date: NaiveDateTime) -> Element<'static, Message> {
-    container(text(date.format("%Y-%m-%d").to_string())).into()
+    let text_container = container(text(date.format("%Y-%m-%d").to_string()))
+        .style(style::Container::ChatDateDivider)
+        .padding([5, 10]);
+    container(text_container)
+        .width(Length::Fill)
+        .center_x()
+        .center_y()
+        .into()
 }

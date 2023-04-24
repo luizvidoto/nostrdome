@@ -89,6 +89,10 @@ pub enum Error {
     #[error("Nostr Sdk Key Error: {0}")]
     NostrSdkKeyError(#[from] nostr_sdk::key::Error),
 
+    /// Nostr Sdk Event Builder Error
+    #[error("Nostr Sdk Event Builder Error: {0}")]
+    NostrSdkEventBuilderError(#[from] nostr_sdk::prelude::builder::Error),
+
     /// Nostr Sdk secp256k1 Error
     #[error("Nostr secp256k1 Error: {0}")]
     NostrSecp256k1Error(#[from] nostr_sdk::secp256k1::Error),
@@ -110,6 +114,22 @@ pub enum Error {
     /// Error when converting nostr_sdk::Tag into DbContact. Other type of Tag.
     #[error("Other type of Tag")]
     TagToContactError,
+
+    /// Error when contact not found with pubkey
+    #[error("Not found contact with pubkey: {0}")]
+    NotFoundContact(String),
+
+    /// Error when user tries to insert own pubkey as a new contact
+    #[error("Not allowed to insert own pubkey as a contact")]
+    SameContactInsert,
+
+    /// Error when user tries to insert own pubkey as a new contact
+    #[error("Write actions disabled for this realy: {0}")]
+    WriteActionsDisabled(String),
+
+    /// Error when user tries to emit an event but no relay is writable
+    #[error("Not found any relay to write to")]
+    NoRelayToWrite,
 
     /// Error occured in the AES GCM crate
     #[error("Aes Gcm Encryption Error: {0}")]

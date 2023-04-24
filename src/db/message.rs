@@ -46,10 +46,11 @@ impl DbMessage {
     pub fn new_local(
         from_pub: &XOnlyPublicKey,
         to_pub: &XOnlyPublicKey,
+        content: &str,
         encrypted_content: &str,
     ) -> Result<Self, Error> {
         Ok(Self {
-            decrypted_content: None,
+            decrypted_content: Some(content.to_owned()),
             msg_id: None,
             encrypted_content: encrypted_content.to_owned(),
             from_pub: from_pub.to_owned(),

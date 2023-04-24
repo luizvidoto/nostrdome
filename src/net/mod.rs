@@ -10,8 +10,8 @@ use iced::futures::{channel::mpsc, StreamExt};
 use iced::{subscription, Subscription};
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 use nostr_sdk::{
-    Client, Contact, EventId, Filter, Keys, Kind, Relay, RelayMessage, RelayPoolNotification,
-    Timestamp, Url,
+    Client, Contact, EventBuilder, EventId, Filter, Keys, Kind, Relay, RelayMessage,
+    RelayPoolNotification, Timestamp, Url,
 };
 use sqlx::SqlitePool;
 use std::pin::Pin;
@@ -147,6 +147,7 @@ pub enum DatabaseSuccessEventKind {
     EventInserted(DbEvent),
     NewDM((DbContact, DbMessage)),
     NewDMAndContact((DbContact, DbMessage)),
+    SentDM((EventId, DbContact, DbMessage)),
 }
 
 const IN_MEMORY: bool = true;
@@ -228,14 +229,14 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                 }
                                 Message::AddContact(db_contact) => {
                                     process_async_fn(
-                                        DbContact::insert(&database.pool, &db_contact),
+                                        insert_contact(&keys, &database.pool, &db_contact),
                                         |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::ContactCreated(db_contact.clone())),
                                     )
                                     .await
                                 }
                                 Message::ImportContacts(db_contacts) => {
                                     process_async_fn(
-                                        DbContact::insert_batch(&database.pool, &db_contacts),
+                                        insert_batch_of_contacts(&keys, &database.pool, &db_contacts),
                                         |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::ContactsImported(db_contacts.clone())),
                                     )
                                     .await
@@ -287,7 +288,7 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                 Message::SendDMTo((pubkey, msg)) => {
                                     process_async_fn(
                                         send_and_store_dm(&database.pool, &nostr_client, &keys, pubkey, &msg),
-                                        |event_id| Event::SomeEventSuccessId(event_id),
+                                        |params| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::SentDM(params)),
                                     )
                                     .await
                                 }
@@ -525,23 +526,41 @@ async fn send_and_store_dm(
     keys: &Keys,
     to_pubkey: XOnlyPublicKey,
     message: &str,
-) -> Result<EventId, Error> {
+) -> Result<(EventId, DbContact, DbMessage), Error> {
     tracing::info!("Sending DM to relays");
-    let secret_key = keys.secret_key()?;
-    // Send to relays
-    let event_id = nostr_client
-        .send_direct_msg(to_pubkey.clone(), message)
-        .await?;
+    let mut event_id = None;
+    for (url, relay) in nostr_client.relays().await {
+        if !relay.opts().write() {
+            // return Err(Error::WriteActionsDisabled(url.clone()))
+            tracing::error!("{}", Error::WriteActionsDisabled(url.to_string()));
+            continue;
+        }
+        let builder = EventBuilder::new_encrypted_direct_msg(&keys, to_pubkey, message)?;
+        let event = builder.to_event(keys)?;
+        if let Ok(ev) = nostr_client.send_event_to(url, event).await {
+            event_id = Some(ev);
+        }
+    }
 
-    // Encrypt the message for local storage
-    let encrypted_content = encrypt_local_message(&secret_key, message)?;
-    // Store the locally encrypted message in the local database
-    // store_in_local_database(&locally_encrypted_message).await?;
-    let db_message = DbMessage::new_local(&keys.public_key(), &to_pubkey, &encrypted_content)?;
-    tracing::info!("Inserting local message");
-    DbMessage::insert_message(pool, &db_message).await?;
+    if let Some(event_id) = event_id {
+        let secret_key = keys.secret_key()?;
+        // Encrypt the message for local storage
+        let encrypted_content = encrypt_local_message(&secret_key, message)?;
+        // Store the locally encrypted message in the local database
+        // store_in_local_database(&locally_encrypted_message).await?;
+        let db_message =
+            DbMessage::new_local(&keys.public_key(), &to_pubkey, message, &encrypted_content)?;
+        tracing::info!("Inserting local message");
+        DbMessage::insert_message(pool, &db_message).await?;
 
-    Ok(event_id)
+        let db_contact = DbContact::fetch_one(pool, &to_pubkey)
+            .await?
+            .ok_or(Error::NotFoundContact(to_pubkey.to_string()))?;
+
+        Ok((event_id, db_contact, db_message))
+    } else {
+        Err(Error::NoRelayToWrite)
+    }
 }
 
 async fn insert_event(
@@ -619,4 +638,26 @@ async fn fetch_and_update_unseen_count(
     contact.unseen_messages = count;
     DbContact::update(pool, &contact).await?;
     Ok(contact.clone())
+}
+
+async fn insert_contact(
+    keys: &Keys,
+    pool: &SqlitePool,
+    db_contact: &DbContact,
+) -> Result<(), Error> {
+    if keys.public_key() == db_contact.pubkey {
+        return Err(Error::SameContactInsert);
+    }
+    DbContact::insert(pool, &db_contact).await?;
+    Ok(())
+}
+async fn insert_batch_of_contacts(
+    keys: &Keys,
+    pool: &SqlitePool,
+    db_contacts: &[DbContact],
+) -> Result<(), Error> {
+    for db_contact in db_contacts {
+        let _ = insert_contact(keys, pool, db_contact).await;
+    }
+    Ok(())
 }

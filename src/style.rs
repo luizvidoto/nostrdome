@@ -38,6 +38,7 @@ pub struct AppPalette {
     pub hovered_bg_scroller_mo: Color,
     pub sent_message_bg: Color,
     pub received_message_bg: Color,
+    pub chat_divider_bg: Color,
 }
 impl AppPalette {
     pub const LIGHT: Self = Self {
@@ -59,6 +60,7 @@ impl AppPalette {
         hovered_bg_scroller_mo: Color::from_rgba(120.0 / 255.0, 120.0 / 255.0, 120.0 / 255.0, 0.6),
         received_message_bg: Color::from_rgb(24.0 / 255.0, 37.0 / 255.0, 51.0 / 255.0),
         sent_message_bg: Color::from_rgb(43.0 / 255.0, 83.0 / 255.0, 120.0 / 255.0),
+        chat_divider_bg: Color::from_rgb(43.0 / 255.0, 83.0 / 255.0, 120.0 / 255.0),
     };
     pub const DARK: Self = Self {
         background: Color::from_rgb(23.0 / 255.0, 33.0 / 255.0, 43.0 / 255.0),
@@ -79,6 +81,7 @@ impl AppPalette {
         hovered_bg_scroller_mo: Color::from_rgba(120.0 / 255.0, 120.0 / 255.0, 120.0 / 255.0, 0.6),
         received_message_bg: Color::from_rgb(24.0 / 255.0, 37.0 / 255.0, 51.0 / 255.0),
         sent_message_bg: Color::from_rgb(43.0 / 255.0, 83.0 / 255.0, 120.0 / 255.0),
+        chat_divider_bg: Color::from_rgb(30.0 / 255.0, 44.0 / 255.0, 58.0 / 255.0),
     };
 }
 
@@ -236,6 +239,7 @@ pub enum Container {
     SentMessage,
     ReceivedMessage,
     ChatContainer,
+    ChatDateDivider,
 }
 
 impl container::StyleSheet for Theme {
@@ -278,6 +282,12 @@ impl container::StyleSheet for Theme {
             Container::ChatContainer => container::Appearance {
                 background: self.pallete().chat_bg.into(),
                 text_color: self.pallete().text_color.into(),
+                ..def
+            },
+            Container::ChatDateDivider => container::Appearance {
+                background: self.pallete().chat_divider_bg.into(),
+                text_color: self.pallete().text_color.into(),
+                border_radius: 10.0,
                 ..def
             },
         }
