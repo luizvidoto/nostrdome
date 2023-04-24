@@ -3,9 +3,11 @@ pub mod crypto;
 pub mod db;
 pub mod error;
 pub mod net;
+pub mod style;
 pub mod types;
 pub mod utils;
 pub mod views;
+pub mod widget;
 
 use components::text::title;
 use iced::{
@@ -76,7 +78,7 @@ pub enum NotificationState {
     Running,
 }
 impl Application for App {
-    type Theme = iced::Theme;
+    type Theme = crate::style::Theme;
     type Executor = executor::Default;
     type Message = Message;
     type Flags = ();

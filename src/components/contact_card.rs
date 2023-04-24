@@ -4,6 +4,7 @@ use iced::{Color, Element, Length};
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 
 use crate::db::DbContact;
+use crate::style;
 use crate::utils::format_pubkey;
 
 #[derive(Debug, Clone)]
@@ -41,9 +42,9 @@ impl State {
         }
 
         let btn_style = if is_active {
-            iced::theme::Button::Custom(Box::new(ActiveButtonStyle {}))
+            style::Button::ActiveContactCard
         } else {
-            iced::theme::Button::Custom(Box::new(ButtonStyle {}))
+            style::Button::ContactCard
         };
 
         let unseen_messages: String = match self.contact.unseen_messages {
@@ -102,50 +103,6 @@ impl State {
             Message::ShowFullCard => {
                 self.only_profile = false;
             }
-        }
-    }
-}
-
-struct ButtonStyle;
-impl button::StyleSheet for ButtonStyle {
-    type Style = iced::Theme;
-
-    fn active(&self, style: &Self::Style) -> button::Appearance {
-        button::Appearance {
-            text_color: style.extended_palette().background.base.text,
-            border_radius: 0.0,
-            background: Some(Color::TRANSPARENT.into()),
-            ..Default::default()
-        }
-    }
-
-    fn hovered(&self, style: &Self::Style) -> button::Appearance {
-        let plt = style.extended_palette();
-
-        button::Appearance {
-            background: Some(Color::from_rgb8(240, 240, 240).into()),
-            text_color: plt.primary.weak.text,
-            ..self.active(style)
-        }
-    }
-}
-
-struct ActiveButtonStyle;
-impl button::StyleSheet for ActiveButtonStyle {
-    type Style = iced::Theme;
-
-    fn active(&self, _style: &Self::Style) -> button::Appearance {
-        button::Appearance {
-            border_radius: 0.0,
-            background: Some(Color::from_rgb8(65, 159, 217).into()),
-            text_color: Color::WHITE,
-            ..Default::default()
-        }
-    }
-
-    fn hovered(&self, style: &Self::Style) -> button::Appearance {
-        button::Appearance {
-            ..self.active(style)
         }
     }
 }

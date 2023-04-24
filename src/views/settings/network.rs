@@ -91,7 +91,7 @@ impl State {
             },
             Message::RelayMessage(msg) => {
                 self.relays.iter_mut().for_each(|r| {
-                    r.update(msg.clone(), back_conn);
+                    let _ = r.update(msg.clone(), back_conn);
                 });
             }
         }
