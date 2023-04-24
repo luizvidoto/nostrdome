@@ -169,13 +169,6 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                     tracing::info!("Creating Nostr Client");
                     let nostr_client = Client::new(&keys);
 
-                    tracing::info!("Subscribing to filters");
-                    let recv_msgs_sub = Filter::new()
-                        .pubkey(keys.public_key())
-                        .kind(Kind::EncryptedDirectMessage)
-                        .since(Timestamp::now());
-                    nostr_client.subscribe(vec![recv_msgs_sub]).await;
-
                     let mut notifications = nostr_client.notifications();
                     let notifications_stream = stream! {
                         while let Ok(notification) = notifications.recv().await {
@@ -484,7 +477,7 @@ async fn connect_relays(nostr_client: &Client, keys: &Keys) -> Result<(), Error>
     tracing::info!("Connecting to relays");
     nostr_client.connect().await;
 
-    request_events(&nostr_client, &keys.public_key()).await?;
+    request_events(&nostr_client, &keys.public_key(), &keys.public_key()).await?;
 
     Ok(())
 }
@@ -507,15 +500,23 @@ async fn toggle_write_for_relay(
     Ok(())
 }
 
-async fn request_events(nostr_client: &Client, pubkey: &XOnlyPublicKey) -> Result<(), Error> {
+async fn request_events(
+    nostr_client: &Client,
+    own_pubkey: &XOnlyPublicKey,
+    pubkey: &XOnlyPublicKey,
+) -> Result<(), Error> {
     tracing::info!("Requesting events");
+    let sent_msgs_sub = Filter::new()
+        .author(own_pubkey.to_string())
+        .kind(Kind::EncryptedDirectMessage)
+        .until(Timestamp::now());
     let recv_msgs_sub = Filter::new()
         .pubkey(pubkey.to_owned())
         .kind(Kind::EncryptedDirectMessage)
         .until(Timestamp::now());
     let timeout = Duration::from_secs(10);
     nostr_client
-        .req_events_of(vec![recv_msgs_sub], Some(timeout))
+        .req_events_of(vec![sent_msgs_sub, recv_msgs_sub], Some(timeout))
         .await;
     Ok(())
 }

@@ -1,7 +1,6 @@
 use std::str::FromStr;
 
 use crate::{
-    crypto::decrypt_local_message,
     error::{Error, FromDbEventError},
     utils::handle_decode_error,
 };
@@ -64,7 +63,9 @@ impl DbMessage {
     }
     pub fn decrypt_message(&mut self, secret_key: &SecretKey, own_pubkey: &XOnlyPublicKey) {
         let content_result = if self.is_local(own_pubkey) {
-            decrypt_local_message(secret_key, &self.encrypted_content)
+            // decrypt_local_message(secret_key, &self.encrypted_content)
+            nostr_sdk::nips::nip04::decrypt(secret_key, &self.to_pub, &self.encrypted_content)
+                .map_err(|e| Error::DecryptionError(e.to_string()))
         } else {
             nostr_sdk::nips::nip04::decrypt(secret_key, &self.from_pub, &self.encrypted_content)
                 .map_err(|e| Error::DecryptionError(e.to_string()))
