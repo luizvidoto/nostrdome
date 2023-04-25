@@ -1,14 +1,17 @@
 use chrono::{Datelike, NaiveDateTime};
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
-use iced::{alignment, Length};
-use nostr_sdk::secp256k1::XOnlyPublicKey;
+use iced::{alignment, Command, Length};
 
 use crate::components::contact_card;
+use crate::db::DbContact;
 use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::types::ChatMessage;
 use crate::utils::send_icon;
 use crate::widget::{Column, Element};
+use once_cell::sync::Lazy;
+
+static SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -24,7 +27,7 @@ pub enum Message {
 pub struct State {
     ver_divider_position: Option<u16>,
     contacts: Vec<contact_card::State>,
-    contact_pubkey_active: Option<XOnlyPublicKey>,
+    active_contact: Option<DbContact>,
     dm_msg: String,
     messages: Vec<ChatMessage>,
 }
@@ -35,7 +38,7 @@ impl State {
             contacts: vec![],
             messages: vec![],
             ver_divider_position: Some(300),
-            contact_pubkey_active: None,
+            active_contact: None,
             dm_msg: "".into(),
         }
     }
@@ -63,6 +66,7 @@ impl State {
                         col.push(contact.view().map(Message::ContactCardMessage))
                     }),
             )
+            .id(SCROLLABLE_ID.clone())
             .into()
         };
         let first = container(contact_list);
@@ -123,24 +127,34 @@ impl State {
             .height(Length::Fill)
             .into()
     }
-    pub fn backend_event(&mut self, event: net::Event, back_conn: &mut BackEndConnection) {
+    pub fn backend_event(
+        &mut self,
+        event: net::Event,
+        back_conn: &mut BackEndConnection,
+    ) -> Command<Message> {
         match event {
             net::Event::DatabaseSuccessEvent(kind) => match kind {
                 net::DatabaseSuccessEventKind::SentDM((_id, contact, msg)) => {
-                    if self.contact_pubkey_active.as_ref() == Some(&contact.pubkey) {
+                    if self.active_contact.as_ref() == Some(&contact) {
                         // estou na conversa
-                        self.messages
-                            .push(ChatMessage::from_db_message(&msg, true, &contact));
+                        self.messages.push(msg);
+                        return scrollable::snap_to(
+                            SCROLLABLE_ID.clone(),
+                            scrollable::RelativeOffset::END,
+                        );
                     } else {
                         // não estou na conversa
                         panic!("Impossible to send message outside chat");
                     }
                 }
                 net::DatabaseSuccessEventKind::NewDM((contact, msg)) => {
-                    if self.contact_pubkey_active.as_ref() == Some(&msg.from_pub) {
+                    if self.active_contact.as_ref() == Some(&contact) {
                         // estou na conversa
-                        self.messages
-                            .push(ChatMessage::from_db_message(&msg, false, &contact));
+                        self.messages.push(msg);
+                        return scrollable::snap_to(
+                            SCROLLABLE_ID.clone(),
+                            scrollable::RelativeOffset::END,
+                        );
                     } else {
                         // não estou na conversa
                         back_conn.send(net::Message::UpdateUnseenCount(contact.clone()))
@@ -165,16 +179,19 @@ impl State {
                 _ => (),
             },
             net::Event::GotChatMessages((mut contact, chat_msgs)) => {
-                if let Some(active_pub) = self.contact_pubkey_active {
-                    if contact.pubkey == active_pub {
-                        self.messages = chat_msgs;
-                        self.messages
-                            .sort_by(|a, b| a.created_at.cmp(&b.created_at));
-                        if contact.unseen_messages > 0 {
-                            contact.unseen_messages = 0;
-                            back_conn.send(net::Message::UpdateContact(contact));
-                        }
+                if self.active_contact.as_ref() == Some(&contact) {
+                    self.messages = chat_msgs;
+                    self.messages
+                        .sort_by(|a, b| a.created_at.cmp(&b.created_at));
+                    if contact.unseen_messages > 0 {
+                        contact.unseen_messages = 0;
+                        back_conn.send(net::Message::UpdateContact(contact));
                     }
+
+                    return scrollable::snap_to(
+                        SCROLLABLE_ID.clone(),
+                        scrollable::RelativeOffset::END,
+                    );
                 }
             }
             net::Event::GotContacts(db_contacts) => {
@@ -185,6 +202,8 @@ impl State {
             }
             _ => (),
         }
+
+        Command::none()
     }
 
     pub fn update(&mut self, message: Message, back_conn: &mut BackEndConnection) {
@@ -194,9 +213,9 @@ impl State {
                 self.dm_msg = text;
             }
             Message::DMSentPress => {
-                if let Some(pub_key) = self.contact_pubkey_active {
+                if let Some(contact) = &self.active_contact {
                     match back_conn.try_send(net::Message::SendDMTo((
-                        pub_key.clone(),
+                        contact.to_owned(),
                         self.dm_msg.clone(),
                     ))) {
                         Ok(_) => {
@@ -227,12 +246,12 @@ impl State {
             Message::NavSettingsPress => (),
             Message::ContactCardMessage(card_msg) => {
                 if let contact_card::Message::UpdateActiveId(contact) = &card_msg {
-                    if self.contact_pubkey_active.as_ref() != Some(&contact.pubkey) {
+                    if self.active_contact.as_ref() != Some(&contact) {
                         back_conn.send(net::Message::FetchMessages(contact.clone()));
                         self.messages = vec![];
                     }
                     self.dm_msg = "".into();
-                    self.contact_pubkey_active = Some(contact.pubkey.clone());
+                    self.active_contact = Some(contact.clone());
                 }
 
                 for c in &mut self.contacts {

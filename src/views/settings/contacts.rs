@@ -2,7 +2,6 @@ use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::Length;
 use iced_aw::{Card, Modal};
-use nostr_sdk::secp256k1::XOnlyPublicKey;
 use nostr_sdk::{Kind, Tag};
 
 use crate::components::text_input_group::text_input_group;
@@ -27,7 +26,7 @@ pub enum Message {
     ModalPetNameInputChange(String),
     ModalPubKeyInputChange(String),
     ModalRecRelayInputChange(String),
-    DeleteContact(XOnlyPublicKey),
+    DeleteContact(DbContact),
     ContactRowMessage(contact_row::Message),
     FileImporterMessage(file_importer::Message),
     OpenImportContactModal,
@@ -102,15 +101,15 @@ impl State {
         match message {
             Message::SearchContactInputChange(text) => self.search_contact_input = text,
             Message::ContactRowMessage(ct_msg) => match ct_msg {
-                contact_row::Message::DeleteContact(pubkey) => {
-                    back_conn.send(net::Message::DeleteContact(pubkey))
+                contact_row::Message::DeleteContact(contact) => {
+                    back_conn.send(net::Message::DeleteContact(contact))
                 }
                 contact_row::Message::EditContact(contact) => {
                     self.modal_state = ModalState::add_contact(Some(contact));
                 }
             },
-            Message::DeleteContact(pubkey) => {
-                back_conn.send(net::Message::DeleteContact(pubkey));
+            Message::DeleteContact(contact) => {
+                back_conn.send(net::Message::DeleteContact(contact));
             }
             Message::SubmitContact {
                 petname,

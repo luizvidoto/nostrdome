@@ -1,4 +1,3 @@
-use crate::crypto::encrypt_local_message;
 use crate::db::{Database, DbContact, DbEvent, DbMessage, MessageStatus};
 use crate::error::Error;
 use crate::types::ChatMessage;
@@ -114,7 +113,7 @@ pub enum Message {
     // NOSTR CLIENT MESSAGES
     ConnectRelays,
     ConnectToRelay(Url),
-    SendDMTo((XOnlyPublicKey, String)),
+    SendDMTo((DbContact, String)),
     ShowPublicKey,
     // ListOwnEvents,
     FetchRelays,
@@ -130,7 +129,7 @@ pub enum Message {
     ImportContacts(Vec<DbContact>),
     FetchContacts,
     UpdateContact(DbContact),
-    DeleteContact(XOnlyPublicKey),
+    DeleteContact(DbContact),
     // InsertEvent(nostr_sdk::Event),
     UpdateUnseenCount(DbContact),
 }
@@ -142,12 +141,12 @@ pub enum DatabaseSuccessEventKind {
     RelayDeleted,
     ContactCreated(DbContact),
     ContactUpdated(DbContact),
-    ContactDeleted(XOnlyPublicKey),
+    ContactDeleted(DbContact),
     ContactsImported(Vec<DbContact>),
     EventInserted(DbEvent),
-    NewDM((DbContact, DbMessage)),
-    NewDMAndContact((DbContact, DbMessage)),
-    SentDM((EventId, DbContact, DbMessage)),
+    NewDM((DbContact, ChatMessage)),
+    NewDMAndContact((DbContact, ChatMessage)),
+    SentDM((EventId, DbContact, ChatMessage)),
 }
 
 const IN_MEMORY: bool = true;
@@ -241,10 +240,10 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                     )
                                     .await
                                 }
-                                Message::DeleteContact(pubkey) => {
+                                Message::DeleteContact(contact) => {
                                     process_async_fn(
-                                        DbContact::delete(&database.pool, &pubkey),
-                                        |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::ContactDeleted(pubkey)),
+                                        DbContact::delete(&database.pool, &contact),
+                                        |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::ContactDeleted(contact.clone())),
                                     )
                                     .await
                                 }
@@ -258,29 +257,14 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
 
                                 Message::FetchMessages (contact) => {
                                     process_async_fn(
-                                        fetch_and_decrypt_chat(&keys, &database.pool, &contact.pubkey),
-                                        |messages| {
-                                            let chat_msgs:Vec<_> = messages
-                                                .iter()
-                                                .map(|msg|{
-                                                    let is_from_user = &msg.from_pub == &keys.public_key();
-                                                    ChatMessage::from_db_message(msg, is_from_user, &contact)
-                                                })
-                                                .collect();
-                                            Event::GotChatMessages((contact.clone(), chat_msgs))
-                                        },
+                                        fetch_and_decrypt_chat(&keys, &database.pool, &contact),
+                                        |messages| Event::GotChatMessages((contact.clone(), messages)),
                                     )
                                     .await
                                 }
-                                // Message::InsertEvent(event) => {
-                                //     process_async_fn(
-                                //         insert_event( &database.pool, event),
-                                //         |event| event
-                                //     ).await
-                                // }
-                                Message::SendDMTo((pubkey, msg)) => {
+                                Message::SendDMTo((contact, msg)) => {
                                     process_async_fn(
-                                        send_and_store_dm(&database.pool, &nostr_client, &keys, pubkey, &msg),
+                                        send_and_store_dm(&database.pool, &nostr_client, &keys, &contact, &msg),
                                         |params| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::SentDM(params)),
                                     )
                                     .await
@@ -289,13 +273,6 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                     let pb_key = keys.public_key();
                                     Event::GotPublicKey(pb_key)
                                 }
-                                // Message::ListOwnEvents => {
-                                //     process_async_fn(
-                                //         request_events(&nostr_client, &keys.public_key()),
-                                //         |_| Event::RequestedEvents,
-                                //     )
-                                //     .await
-                                // }
                                 Message::FetchRelays => {
                                     process_async_fn(
                                         fetch_relays(&nostr_client),
@@ -358,7 +335,7 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                             let event = match notification {
                                 RelayPoolNotification::Event(relay_url, event) => {
                                     process_async_fn(
-                                        insert_event(&database.pool, event, &relay_url),
+                                        insert_event(&database.pool, &keys, event, &relay_url),
                                         |event| event
                                     ).await
                                 },
@@ -525,9 +502,9 @@ async fn send_and_store_dm(
     pool: &SqlitePool,
     nostr_client: &Client,
     keys: &Keys,
-    to_pubkey: XOnlyPublicKey,
+    contact: &DbContact,
     message: &str,
-) -> Result<(EventId, DbContact, DbMessage), Error> {
+) -> Result<(EventId, DbContact, ChatMessage), Error> {
     tracing::info!("Sending DM to relays");
     let mut event_id = None;
     for (url, relay) in nostr_client.relays().await {
@@ -536,7 +513,8 @@ async fn send_and_store_dm(
             tracing::error!("{}", Error::WriteActionsDisabled(url.to_string()));
             continue;
         }
-        let builder = EventBuilder::new_encrypted_direct_msg(&keys, to_pubkey, message)?;
+        let builder =
+            EventBuilder::new_encrypted_direct_msg(&keys, contact.pubkey.to_owned(), message)?;
         let event = builder.to_event(keys)?;
         if let Ok(ev) = nostr_client.send_event_to(url, event).await {
             event_id = Some(ev);
@@ -544,21 +522,12 @@ async fn send_and_store_dm(
     }
 
     if let Some(event_id) = event_id {
-        let secret_key = keys.secret_key()?;
-        // Encrypt the message for local storage
-        let encrypted_content = encrypt_local_message(&secret_key, message)?;
-        // Store the locally encrypted message in the local database
-        // store_in_local_database(&locally_encrypted_message).await?;
-        let db_message =
-            DbMessage::new_local(&keys.public_key(), &to_pubkey, message, &encrypted_content)?;
+        tracing::info!("Encrypting local message");
+        let db_message = DbMessage::new_local(&keys, &contact.pubkey, message)?;
         tracing::info!("Inserting local message");
         DbMessage::insert_message(pool, &db_message).await?;
-
-        let db_contact = DbContact::fetch_one(pool, &to_pubkey)
-            .await?
-            .ok_or(Error::NotFoundContact(to_pubkey.to_string()))?;
-
-        Ok((event_id, db_contact, db_message))
+        let chat_message = ChatMessage::from_db_message(&db_message, true, &contact, message);
+        Ok((event_id, contact.to_owned(), chat_message))
     } else {
         Err(Error::NoRelayToWrite)
     }
@@ -566,6 +535,7 @@ async fn send_and_store_dm(
 
 async fn insert_event(
     pool: &SqlitePool,
+    keys: &Keys,
     event: nostr_sdk::Event,
     relay_url: &Url,
 ) -> Result<Event, Error> {
@@ -581,21 +551,27 @@ async fn insert_event(
 
     if let Kind::EncryptedDirectMessage = db_event.kind {
         let db_message = DbMessage::from_db_event(db_event, Some(relay_url.to_owned()))?;
-        let contact_result = DbContact::fetch_one(pool, &db_message.from_pub).await;
+        let contact_result = DbContact::fetch_one(pool, &db_message.from_pubkey).await;
 
         tracing::info!("Inserting external message");
         DbMessage::insert_message(pool, &db_message).await?;
 
+        let content = db_message.decrypt_message(keys)?;
+
         let database_success_event_kind = match contact_result {
             Ok(Some(contact)) => {
                 tracing::info!("Have contact: {:?}", contact);
-                DatabaseSuccessEventKind::NewDM((contact, db_message.clone()))
+                let chat_message =
+                    ChatMessage::from_db_message(&db_message, false, &contact, &content);
+                DatabaseSuccessEventKind::NewDM((contact, chat_message))
             }
             Ok(None) => {
-                let mut db_contact = DbContact::new(&db_message.from_pub);
+                let mut db_contact = DbContact::new(&db_message.from_pubkey);
                 db_contact.unseen_messages = 1;
-                DbContact::insert(pool, &db_contact).await?;
-                DatabaseSuccessEventKind::NewDMAndContact((db_contact, db_message.clone()))
+                insert_contact(keys, pool, &db_contact).await?;
+                let chat_message =
+                    ChatMessage::from_db_message(&db_message, false, &db_contact, &content);
+                DatabaseSuccessEventKind::NewDMAndContact((db_contact, chat_message))
             }
             Err(e) => return Err(e),
         };
@@ -611,25 +587,28 @@ async fn insert_event(
 async fn fetch_and_decrypt_chat(
     keys: &Keys,
     pool: &SqlitePool,
-    contact: &XOnlyPublicKey,
-) -> Result<Vec<DbMessage>, Error> {
+    contact: &DbContact,
+) -> Result<Vec<ChatMessage>, Error> {
     tracing::info!("Fetching chat messages");
-    let secret_key = keys.secret_key()?;
     let own_pubkey = keys.public_key();
-    let mut messages = DbMessage::fetch_chat(pool, &own_pubkey, contact).await?;
+    let mut db_messages = DbMessage::fetch_chat(pool, &own_pubkey, &contact.pubkey).await?;
+    let mut chat_messages = vec![];
 
     tracing::info!("Updating unseen messages to marked as seen");
-    for m in messages.iter_mut().filter(|m| m.is_unseen()) {
+    for m in db_messages.iter_mut().filter(|m| m.is_unseen()) {
         m.status = MessageStatus::Seen;
         DbMessage::update_message_status(pool, m).await?;
     }
 
     tracing::info!("Decrypting messages");
-    for m in &mut messages {
-        m.decrypt_message(&secret_key, &own_pubkey);
+    for m in &mut db_messages {
+        let content = m.decrypt_message(keys)?;
+        let is_from_user = m.is_local(&keys.public_key());
+        let chat_message = ChatMessage::from_db_message(&m, is_from_user, &contact, &content);
+        chat_messages.push(chat_message);
     }
 
-    Ok(messages)
+    Ok(chat_messages)
 }
 async fn fetch_and_update_unseen_count(
     pool: &SqlitePool,
@@ -645,12 +624,12 @@ async fn insert_contact(
     keys: &Keys,
     pool: &SqlitePool,
     db_contact: &DbContact,
-) -> Result<(), Error> {
+) -> Result<DbContact, Error> {
     if keys.public_key() == db_contact.pubkey {
         return Err(Error::SameContactInsert);
     }
     DbContact::insert(pool, &db_contact).await?;
-    Ok(())
+    Ok(db_contact.to_owned())
 }
 async fn insert_batch_of_contacts(
     keys: &Keys,

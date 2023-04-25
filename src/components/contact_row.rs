@@ -1,6 +1,5 @@
 use iced::widget::{button, row, text};
 use iced::Length;
-use nostr_sdk::secp256k1::XOnlyPublicKey;
 
 use crate::db::DbContact;
 use crate::utils::format_pubkey;
@@ -8,7 +7,7 @@ use crate::widget::Element;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    DeleteContact(XOnlyPublicKey),
+    DeleteContact(DbContact),
     EditContact(DbContact),
 }
 #[derive(Debug, Clone)]
@@ -63,7 +62,7 @@ impl ContactRow {
                 .on_press(Message::EditContact(self.into()))
                 .width(EDIT_BTN_WIDTH),
             button("Remove")
-                .on_press(Message::DeleteContact(self.contact.pubkey.clone()))
+                .on_press(Message::DeleteContact(self.contact.clone()))
                 .width(REMOVE_BTN_WIDTH)
         ]
         .into()

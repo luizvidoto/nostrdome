@@ -5,11 +5,7 @@ use crate::{
     utils::handle_decode_error,
 };
 use chrono::NaiveDateTime;
-use nostr_sdk::{
-    prelude::UncheckedUrl,
-    secp256k1::{SecretKey, XOnlyPublicKey},
-    Url,
-};
+use nostr_sdk::{nips::nip04, prelude::UncheckedUrl, secp256k1::XOnlyPublicKey, Keys, Url};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
 use crate::utils::millis_to_naive;
@@ -20,10 +16,8 @@ use super::DbEvent;
 pub struct DbMessage {
     pub msg_id: Option<i32>,
     pub encrypted_content: String,
-    // Only decrypted when chat is open
-    pub decrypted_content: Option<String>,
-    pub from_pub: XOnlyPublicKey,
-    pub to_pub: XOnlyPublicKey,
+    pub from_pubkey: XOnlyPublicKey,
+    pub to_pubkey: XOnlyPublicKey,
     pub event_id: Option<i32>,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
@@ -36,24 +30,25 @@ impl DbMessage {
         "SELECT msg_id, content, from_pub, to_pub, event_id, created_at, updated_at, status, relay_url FROM message";
 
     pub fn is_local(&self, own_pubkey: &XOnlyPublicKey) -> bool {
-        own_pubkey == &self.from_pub
+        own_pubkey == &self.from_pubkey
     }
     pub fn is_unseen(&self) -> bool {
         self.status.is_unseen()
     }
 
     pub fn new_local(
-        from_pub: &XOnlyPublicKey,
-        to_pub: &XOnlyPublicKey,
-        content: &str,
-        encrypted_content: &str,
+        keys: &Keys,
+        to_pubkey: &XOnlyPublicKey,
+        message: &str,
     ) -> Result<Self, Error> {
+        let secret_key = keys.secret_key()?;
+        let encrypted_content = nip04::encrypt(&secret_key, &to_pubkey, message)
+            .map_err(|e| Error::EncryptionError(e.to_string()))?;
         Ok(Self {
-            decrypted_content: Some(content.to_owned()),
             msg_id: None,
-            encrypted_content: encrypted_content.to_owned(),
-            from_pub: from_pub.to_owned(),
-            to_pub: to_pub.to_owned(),
+            encrypted_content,
+            from_pubkey: keys.public_key(),
+            to_pubkey: to_pubkey.to_owned(),
             event_id: None,
             created_at: chrono::Utc::now().naive_utc(),
             updated_at: chrono::Utc::now().naive_utc(),
@@ -61,20 +56,28 @@ impl DbMessage {
             relay_url: None,
         })
     }
-    pub fn decrypt_message(&mut self, secret_key: &SecretKey, own_pubkey: &XOnlyPublicKey) {
-        let content_result = if self.is_local(own_pubkey) {
-            // decrypt_local_message(secret_key, &self.encrypted_content)
-            nostr_sdk::nips::nip04::decrypt(secret_key, &self.to_pub, &self.encrypted_content)
+    pub fn from_db_event(db_event: DbEvent, relay_url: Option<Url>) -> Result<Self, Error> {
+        let (to_pub, event_id) = Self::extract_to_pub_and_event_id(&db_event)?;
+        Ok(Self {
+            msg_id: None,
+            encrypted_content: db_event.content.to_owned(),
+            from_pubkey: db_event.pubkey.clone(),
+            to_pubkey: to_pub,
+            event_id: Some(event_id),
+            created_at: db_event.created_at,
+            updated_at: db_event.created_at,
+            status: MessageStatus::Delivered,
+            relay_url: relay_url.map(|url| url.into()),
+        })
+    }
+    pub fn decrypt_message(&self, keys: &Keys) -> Result<String, Error> {
+        let secret_key = keys.secret_key()?;
+        if self.is_local(&keys.public_key()) {
+            nip04::decrypt(&secret_key, &self.to_pubkey, &self.encrypted_content)
                 .map_err(|e| Error::DecryptionError(e.to_string()))
         } else {
-            nostr_sdk::nips::nip04::decrypt(secret_key, &self.from_pub, &self.encrypted_content)
+            nip04::decrypt(&secret_key, &self.from_pubkey, &self.encrypted_content)
                 .map_err(|e| Error::DecryptionError(e.to_string()))
-        };
-
-        if let Ok(content) = content_result {
-            self.decrypted_content = Some(content);
-        } else {
-            tracing::error!("{}", content_result.unwrap_err());
         }
     }
     pub fn with_event(mut self, event_id: i32) -> Self {
@@ -95,22 +98,6 @@ impl DbMessage {
             }
             _ => Err(FromDbEventError::WrongTag),
         }
-    }
-
-    pub fn from_db_event(db_event: DbEvent, relay_url: Option<Url>) -> Result<Self, Error> {
-        let (to_pub, event_id) = Self::extract_to_pub_and_event_id(&db_event)?;
-        Ok(Self {
-            msg_id: None,
-            encrypted_content: db_event.content.to_owned(),
-            decrypted_content: None,
-            from_pub: db_event.pubkey.clone(),
-            to_pub,
-            event_id: Some(event_id),
-            created_at: db_event.created_at,
-            updated_at: db_event.created_at,
-            status: MessageStatus::Delivered,
-            relay_url: relay_url.map(|url| url.into()),
-        })
     }
 
     pub async fn fetch(pool: &SqlitePool, criteria: Option<&str>) -> Result<Vec<DbMessage>, Error> {
@@ -173,8 +160,8 @@ impl DbMessage {
 
         sqlx::query(sql)
             .bind(&db_message.encrypted_content)
-            .bind(&db_message.from_pub.to_string())
-            .bind(&db_message.to_pub.to_string())
+            .bind(&db_message.from_pubkey.to_string())
+            .bind(&db_message.to_pubkey.to_string())
             .bind(&db_message.event_id)
             .bind(&db_message.created_at.timestamp_millis())
             .bind(&db_message.updated_at.timestamp_millis())
@@ -233,10 +220,9 @@ impl sqlx::FromRow<'_, SqliteRow> for DbMessage {
         Ok(DbMessage {
             msg_id: row.get::<Option<i32>, &str>("msg_id"),
             event_id: row.get::<Option<i32>, &str>("event_id"),
-            decrypted_content: None,
             encrypted_content: row.try_get::<String, &str>("content")?,
-            from_pub,
-            to_pub,
+            from_pubkey: from_pub,
+            to_pubkey: to_pub,
             created_at,
             updated_at,
             status: MessageStatus::from_i32(row.try_get::<i32, &str>("status")?),

@@ -2498,6 +2498,7 @@ dependencies = [
  "log",
  "nostr-sdk",
  "num-format",
+ "once_cell",
  "rand",
  "regex",
  "reqwest",

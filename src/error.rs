@@ -131,13 +131,13 @@ pub enum Error {
     #[error("Not found any relay to write to")]
     NoRelayToWrite,
 
-    /// Error occured in the AES GCM crate
-    #[error("Aes Gcm Encryption Error: {0}")]
-    EncryptionError(String),
-
-    /// Error occured in the AES GCM crate
-    #[error("Aes Gcm Decryption Error: {0}")]
+    /// Error occured when at Decryption
+    #[error("Decryption Error: {0}")]
     DecryptionError(String),
+
+    /// Error occured when at Encryption
+    #[error("Encryption Error: {0}")]
+    EncryptionError(String),
 
     /// Error occured in the AES GCM crate
     #[error("Decode Error: {0}")]

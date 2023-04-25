@@ -31,6 +31,12 @@ pub struct DbContact {
     pub unseen_messages: u8,
 }
 
+impl PartialEq for DbContact {
+    fn eq(&self, other: &Self) -> bool {
+        self.pubkey == other.pubkey
+    }
+}
+
 impl DbContact {
     const FETCH_QUERY: &'static str =
         "SELECT pubkey, relay_url, petname, profile_image, status, unseen_messages FROM contact";
@@ -186,11 +192,11 @@ impl DbContact {
         Ok(())
     }
 
-    pub async fn delete(pool: &SqlitePool, pubkey: &XOnlyPublicKey) -> Result<(), Error> {
+    pub async fn delete(pool: &SqlitePool, contact: &DbContact) -> Result<(), Error> {
         let sql = "DELETE FROM contact WHERE pubkey=?";
 
         sqlx::query(sql)
-            .bind(&pubkey.to_string())
+            .bind(&contact.pubkey.to_string())
             .execute(pool)
             .await?;
 

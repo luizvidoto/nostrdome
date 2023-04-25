@@ -33,7 +33,7 @@ impl EventLike for DbEvent {
 pub struct ChatMessage {
     /// Message created at using unix timestamp
     pub created_at: Option<NaiveDateTime>,
-    /// Message content
+    /// Decrypted message content
     pub content: String,
     /// Pub key of the author of the message
     pub from_pubkey: XOnlyPublicKey,
@@ -65,14 +65,12 @@ impl ChatMessage {
         db_message: &DbMessage,
         is_from_user: bool,
         contact: &DbContact,
+        content: &str,
     ) -> Self {
         Self {
-            content: db_message
-                .decrypted_content
-                .clone()
-                .unwrap_or("none".into()),
+            content: content.to_owned(),
             created_at: Some(db_message.created_at),
-            from_pubkey: db_message.from_pub.clone(),
+            from_pubkey: db_message.from_pubkey.clone(),
             is_from_user,
             petname: contact.petname.clone(),
         }

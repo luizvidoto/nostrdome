@@ -52,26 +52,15 @@ impl Router {
         back_conn: &mut BackEndConnection,
     ) -> Command<Message> {
         match event {
-            // net::Event::GotOwnEvents(events) => {
-            //     tracing::info!("Got events: {}", events.len());
-            //     for event in events {
-            //         back_conn.send(net::Message::InsertEvent(event))
-            //     }
-            // }
-            // net::Event::NostrEvent(event) => {
-            //     tracing::info!("Nostr Event: {:?}", event);
-            //     back_conn.send(net::Message::InsertEvent(event))
-            // }
             event => match &mut self.state {
-                ViewState::Chat { state } => state.backend_event(event, back_conn),
-                ViewState::Settings { state } => {
-                    return state
-                        .back_end_event(event, back_conn)
-                        .map(Message::SettingsMsg);
+                ViewState::Chat { state } => {
+                    state.backend_event(event, back_conn).map(Message::ChatMsg)
                 }
+                ViewState::Settings { state } => state
+                    .back_end_event(event, back_conn)
+                    .map(Message::SettingsMsg),
             },
         }
-        Command::none()
     }
 
     pub fn update(
