@@ -213,12 +213,18 @@ impl State {
     }
 
     fn update_contact(&mut self, db_contact: DbContact) {
+        // change active to be an ID again...
+
         if let Some(found_card) = self
             .contacts
             .iter_mut()
             .find(|c| c.contact.pubkey() == db_contact.pubkey())
         {
-            found_card.update(contact_card::Message::ContactUpdated(db_contact));
+            found_card.update(contact_card::Message::ContactUpdated(db_contact.clone()));
+        }
+
+        if self.active_contact.as_ref() == Some(&db_contact) {
+            self.active_contact = Some(db_contact);
         }
     }
 

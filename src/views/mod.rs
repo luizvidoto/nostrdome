@@ -106,7 +106,7 @@ impl Router {
 #[derive(Debug)]
 pub enum ViewState {
     Chat { state: chat::State },
-    Settings { state: settings::State },
+    Settings { state: settings::Settings },
 }
 
 impl ViewState {
@@ -123,12 +123,12 @@ impl ViewState {
     }
     pub fn settings(back_conn: &mut BackEndConnection) -> Self {
         Self::Settings {
-            state: settings::State::new(back_conn),
+            state: settings::Settings::new(back_conn),
         }
     }
     pub fn settings_contacts(back_conn: &mut BackEndConnection) -> Self {
         Self::Settings {
-            state: settings::State::contacts(back_conn),
+            state: settings::Settings::contacts(back_conn),
         }
     }
     pub fn view(&self) -> Element<Message> {

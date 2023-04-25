@@ -149,7 +149,7 @@ pub enum DatabaseSuccessEventKind {
     SentDM((EventId, DbContact, ChatMessage)),
 }
 
-const IN_MEMORY: bool = true;
+const IN_MEMORY: bool = false;
 
 pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
     struct Backend;
@@ -265,7 +265,7 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                 }
                                 Message::SendDMTo((contact, msg)) => {
                                     process_async_fn(
-                                        send_and_store_dm(&database.pool, &nostr_client, &keys, &contact, &msg),
+                                        send_and_store_dm(&database.pool, &nostr_client, &keys, contact, &msg),
                                         |params| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::SentDM(params)),
                                     )
                                     .await
@@ -498,7 +498,7 @@ async fn send_and_store_dm(
     pool: &SqlitePool,
     nostr_client: &Client,
     keys: &Keys,
-    contact: &DbContact,
+    mut db_contact: DbContact,
     message: &str,
 ) -> Result<(EventId, DbContact, ChatMessage), Error> {
     tracing::info!("Sending DM to relays");
@@ -510,7 +510,7 @@ async fn send_and_store_dm(
             continue;
         }
         let builder =
-            EventBuilder::new_encrypted_direct_msg(&keys, contact.pubkey().to_owned(), message)?;
+            EventBuilder::new_encrypted_direct_msg(&keys, db_contact.pubkey().to_owned(), message)?;
         let event = builder.to_event(keys)?;
         if let Ok(ev) = nostr_client.send_event_to(url, event).await {
             event_id = Some(ev);
@@ -519,65 +519,19 @@ async fn send_and_store_dm(
 
     if let Some(event_id) = event_id {
         tracing::info!("Encrypting local message");
-        let db_message = DbMessage::new_local(&keys, contact.pubkey(), message)?;
+        let db_message = DbMessage::new_local(&keys, db_contact.pubkey(), message)?;
+
         tracing::info!("Inserting local message");
-        DbMessage::insert_message(pool, &db_message).await?;
-        let chat_message = ChatMessage::from_db_message(&db_message, true, &contact, message)?;
-        Ok((event_id, contact.to_owned(), chat_message))
+        let msg_id = DbMessage::insert_message(pool, &db_message).await?;
+        let db_message = db_message.with_id(msg_id);
+
+        let chat_message = ChatMessage::from_db_message(&db_message, true, &db_contact, message)?;
+        DbContact::new_message(pool, &mut db_contact, &chat_message).await?;
+        Ok((event_id, db_contact, chat_message))
     } else {
         Err(Error::NoRelayToWrite)
     }
 }
-
-// async fn insert_event(
-//     pool: &SqlitePool,
-//     keys: &Keys,
-//     event: nostr_sdk::Event,
-//     relay_url: &Url,
-// ) -> Result<Event, Error> {
-//     tracing::warn!("Inserting event: {:?}", event);
-
-//     let mut db_event = DbEvent::from_event(event)?;
-//     let (row_id, rows_changed) = DbEvent::insert(pool, &db_event).await?;
-//     db_event.event_id = Some(row_id);
-
-//     if rows_changed == 0 {
-//         return Ok(Event::None);
-//     }
-
-//     if let Kind::EncryptedDirectMessage = db_event.kind {
-//         let db_message = DbMessage::from_db_event(db_event, Some(relay_url.to_owned()))?;
-//         let contact_result = DbContact::fetch_one(pool, &db_message.from_pubkey).await?;
-
-//         tracing::warn!("Inserting external message");
-//         DbMessage::insert_message(pool, &db_message).await?;
-
-//         let content = db_message.decrypt_message(keys)?;
-
-//         let database_success_event_kind = match contact_result {
-//             Some(contact) => {
-//                 tracing::warn!("Have contact: {:?}", contact);
-//                 let chat_message =
-//                     ChatMessage::from_db_message(&db_message, false, &contact, &content);
-//                 DatabaseSuccessEventKind::NewDM((contact, chat_message))
-//             }
-//             None => {
-//                 let mut db_contact = DbContact::new(&db_message.from_pubkey);
-//                 db_contact.unseen_messages = 1;
-//                 insert_contact(keys, pool, &db_contact).await?;
-//                 let chat_message =
-//                     ChatMessage::from_db_message(&db_message, false, &db_contact, &content);
-//                 DatabaseSuccessEventKind::NewDMAndContact((db_contact, chat_message))
-//             }
-//         };
-
-//         return Ok(Event::DatabaseSuccessEvent(database_success_event_kind));
-//     }
-
-//     Ok(Event::DatabaseSuccessEvent(
-//         DatabaseSuccessEventKind::EventInserted(db_event),
-//     ))
-// }
 
 async fn insert_event(
     pool: &SqlitePool,
@@ -632,28 +586,30 @@ async fn insert_encrypted_dm(
 
     // Fetch the associated contact from the database
     match DbContact::fetch_one(pool, &contact_pubkey).await? {
-        Some(mut contact) => {
+        Some(mut db_contact) => {
             // Update last message and contact in the database
             let chat_message =
-                ChatMessage::from_db_message(&db_message, is_from_user, &contact, &content)?;
-            DbContact::update_last_message(pool, &mut contact, &chat_message).await?;
+                ChatMessage::from_db_message(&db_message, is_from_user, &db_contact, &content)?;
+            DbContact::new_message(pool, &mut db_contact, &chat_message).await?;
+            DbContact::add_to_unseen_count(pool, &mut db_contact).await?;
             Ok(DatabaseSuccessEventKind::ReceivedDM((
-                contact,
+                db_contact,
                 chat_message,
             )))
         }
         None => {
             // Create a new contact and insert it into the database
-            let mut new_contact = DbContact::new(&contact_pubkey);
-            insert_contact(keys, pool, &new_contact).await?;
+            let mut db_contact = DbContact::new(&contact_pubkey);
+            insert_contact(keys, pool, &db_contact).await?;
 
             // Update last message and contact in the database
             let chat_message =
-                ChatMessage::from_db_message(&db_message, is_from_user, &new_contact, &content)?;
-            DbContact::update_last_message(pool, &mut new_contact, &chat_message).await?;
+                ChatMessage::from_db_message(&db_message, is_from_user, &db_contact, &content)?;
+            DbContact::new_message(pool, &mut db_contact, &chat_message).await?;
+            DbContact::add_to_unseen_count(pool, &mut db_contact).await?;
 
             Ok(DatabaseSuccessEventKind::NewDMAndContact((
-                new_contact,
+                db_contact,
                 chat_message,
             )))
         }

@@ -66,7 +66,7 @@ impl DbContact {
             status: ContactStatus::Unknown,
             created_at: chrono::Utc::now().naive_utc(),
             updated_at: chrono::Utc::now().naive_utc(),
-            unseen_messages: 1,
+            unseen_messages: 0,
             last_message_content: None,
             last_message_date: None,
         }
@@ -133,7 +133,7 @@ impl DbContact {
         self.unseen_messages
     }
 
-    pub async fn update_last_message(
+    pub async fn new_message(
         pool: &SqlitePool,
         db_contact: &mut DbContact,
         chat_message: &ChatMessage,
@@ -163,6 +163,23 @@ impl DbContact {
         } else {
             tracing::info!("Can't update last_message with an older message.");
         }
+        Ok(())
+    }
+
+    pub async fn add_to_unseen_count(pool: &SqlitePool, db_contact: &mut DbContact) -> Result<()> {
+        db_contact.unseen_messages += 1;
+        let sql = r#"
+                UPDATE contact 
+                SET updated_at=?, unseen_messages=?
+                WHERE pubkey=?
+            "#;
+
+        sqlx::query(sql)
+            .bind(Utc::now().timestamp_millis())
+            .bind(&db_contact.unseen_messages)
+            .bind(&db_contact.pubkey.to_string())
+            .execute(pool)
+            .await?;
         Ok(())
     }
 
@@ -317,8 +334,9 @@ impl DbContact {
         let sql = r#"
             UPDATE contact 
             SET relay_url=?, petname=?, profile_image=?, 
-                status=?, unseen_messages=?, updated_at=?, 
-                last_message_content=?, last_message_date=?
+                status=?, unseen_messages=?,  
+                last_message_content=?, last_message_date=?,
+                updated_at=?
             WHERE pubkey=?
         "#;
 
@@ -335,7 +353,6 @@ impl DbContact {
                     .as_ref()
                     .map(|date| date.timestamp_millis()),
             )
-            .bind(contact.unseen_messages)
             .bind(Utc::now().timestamp_millis())
             .bind(&contact.pubkey.to_string())
             .execute(pool)
