@@ -95,7 +95,17 @@ impl State {
             .style(style::Button::Invisible)
             .on_press(Message::DMSentPress);
         let msg_input_row = container(row![message_input, send_btn].spacing(5)).padding([10, 5]);
-        let second = container(column![chat_messages, msg_input_row])
+
+        let second_content: Element<_> = if self.active_contact.is_some() {
+            column![chat_messages, msg_input_row].into()
+        } else {
+            container(text("Select a chat to start messaging"))
+                .center_x()
+                .center_y()
+                .into()
+        };
+
+        let second = container(second_content)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(style::Container::ChatContainer)

@@ -165,7 +165,7 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
             match state {
                 State::Disconnected { keys, in_memory } => {
                     // Create new client
-                    tracing::warn!("Creating Nostr Client");
+                    tracing::info!("Creating Nostr Client");
                     let nostr_client = Client::new(&keys);
 
                     let mut notifications = nostr_client.notifications();
@@ -388,12 +388,12 @@ async fn _fetch_contacts_from_relays(nostr_client: &Client) -> Result<Vec<Contac
 }
 
 async fn fetch_relays(nostr_client: &Client) -> Result<Vec<Relay>, Error> {
-    tracing::warn!("Fetching relays");
+    tracing::info!("Fetching relays");
     let relays = nostr_client.relays().await;
     Ok(relays.into_iter().map(|(_url, r)| r).collect())
 }
 async fn add_relay(nostr_client: &Client, url: &Url) -> Result<(), Error> {
-    tracing::warn!("Add relay to client: {}", url);
+    tracing::info!("Add relay to client: {}", url);
     nostr_client.add_relay(url.as_str(), None).await?;
     Ok(())
 }
@@ -402,7 +402,7 @@ async fn update_relay_db_and_client(
     _nostr_client: &Client,
     _url: &Url,
 ) -> Result<(), Error> {
-    tracing::warn!("Updating relay db");
+    tracing::info!("Updating relay db");
     Ok(())
 }
 
@@ -414,11 +414,11 @@ async fn connect_relay(nostr_client: &Client, relay_url: &Url) -> Result<(), Err
         .find(|r| &r.url() == relay_url)
     {
         if let nostr_sdk::RelayStatus::Connected = relay.status().await {
-            tracing::warn!("Disconnecting from relay");
+            tracing::info!("Disconnecting from relay");
             nostr_client.disconnect_relay(relay_url.as_str()).await?;
             tokio::time::sleep(Duration::from_secs(3)).await;
         }
-        tracing::warn!("Connecting to relay: {}", relay_url);
+        tracing::info!("Connecting to relay: {}", relay_url);
         nostr_client.connect_relay(relay_url.as_str()).await?;
     } else {
         tracing::warn!("Relay not found on client: {}", relay_url);
@@ -428,7 +428,7 @@ async fn connect_relay(nostr_client: &Client, relay_url: &Url) -> Result<(), Err
 }
 
 async fn connect_relays(nostr_client: &Client, keys: &Keys) -> Result<(), Error> {
-    tracing::warn!("Adding relays to client");
+    tracing::info!("Adding relays to client");
     // Add relays to client
     for r in vec![
         // "wss://eden.nostr.land",
@@ -442,12 +442,12 @@ async fn connect_relays(nostr_client: &Client, keys: &Keys) -> Result<(), Error>
         // "ws://0.0.0.0:8080",
     ] {
         match nostr_client.add_relay(r, None).await {
-            Ok(_) => tracing::warn!("Added: {}", r),
+            Ok(_) => tracing::info!("Added: {}", r),
             Err(e) => tracing::error!("{}", e),
         }
     }
 
-    tracing::warn!("Connecting to relays");
+    tracing::info!("Connecting to relays");
     nostr_client.connect().await;
 
     request_events(&nostr_client, &keys.public_key(), &keys.public_key()).await?;
@@ -478,7 +478,7 @@ async fn request_events(
     own_pubkey: &XOnlyPublicKey,
     pubkey: &XOnlyPublicKey,
 ) -> Result<(), Error> {
-    tracing::warn!("Requesting events");
+    tracing::info!("Requesting events");
     let sent_msgs_sub = Filter::new()
         .author(own_pubkey.to_string())
         .kind(Kind::EncryptedDirectMessage)
@@ -501,7 +501,7 @@ async fn send_and_store_dm(
     contact: &DbContact,
     message: &str,
 ) -> Result<(EventId, DbContact, ChatMessage), Error> {
-    tracing::warn!("Sending DM to relays");
+    tracing::info!("Sending DM to relays");
     let mut event_id = None;
     for (url, relay) in nostr_client.relays().await {
         if !relay.opts().write() {
@@ -518,9 +518,9 @@ async fn send_and_store_dm(
     }
 
     if let Some(event_id) = event_id {
-        tracing::warn!("Encrypting local message");
+        tracing::info!("Encrypting local message");
         let db_message = DbMessage::new_local(&keys, contact.pubkey(), message)?;
-        tracing::warn!("Inserting local message");
+        tracing::info!("Inserting local message");
         DbMessage::insert_message(pool, &db_message).await?;
         let chat_message = ChatMessage::from_db_message(&db_message, true, &contact, message)?;
         Ok((event_id, contact.to_owned(), chat_message))
@@ -585,7 +585,7 @@ async fn insert_event(
     event: nostr_sdk::Event,
     relay_url: &Url,
 ) -> Result<Event, Error> {
-    tracing::warn!("Inserting event: {:?}", event);
+    tracing::info!("Inserting event: {:?}", event);
 
     let mut db_event = DbEvent::from_event(event)?;
     let (row_id, rows_changed) = DbEvent::insert(pool, &db_event).await?;
@@ -614,7 +614,7 @@ async fn insert_encrypted_dm(
 ) -> Result<DatabaseSuccessEventKind, Error> {
     // Convert DbEvent to DbMessage
     let db_message = DbMessage::from_db_event(db_event, Some(relay_url.to_owned()))?;
-    tracing::warn!("Inserting external message");
+    tracing::info!("Inserting external message");
 
     // Insert message into the database and get the message ID
     let msg_id = DbMessage::insert_message(pool, &db_message).await?;
@@ -680,19 +680,19 @@ async fn fetch_and_decrypt_chat(
     pool: &SqlitePool,
     mut db_contact: DbContact,
 ) -> Result<(DbContact, Vec<ChatMessage>), Error> {
-    tracing::warn!("Fetching chat messages");
+    tracing::info!("Fetching chat messages");
     let own_pubkey = keys.public_key();
     let chat = DbChat::new(&own_pubkey, db_contact.pubkey());
     let mut db_messages = chat.fetch_chat(pool).await?;
     let mut chat_messages = vec![];
 
-    tracing::warn!("Updating unseen messages to marked as seen");
+    tracing::info!("Updating unseen messages to marked as seen");
     for m in db_messages.iter_mut().filter(|m| m.is_unseen()) {
         m.update_status(MessageStatus::Seen);
         DbMessage::update_message_status(pool, m).await?;
     }
 
-    tracing::warn!("Decrypting messages");
+    tracing::info!("Decrypting messages");
     for m in &mut db_messages {
         let content = m.decrypt_message(keys)?;
         let is_from_user = m.is_local(&keys.public_key());

@@ -161,7 +161,7 @@ impl DbContact {
                 .execute(pool)
                 .await?;
         } else {
-            tracing::error!("Can't update last_message with an older message.");
+            tracing::info!("Can't update last_message with an older message.");
         }
         Ok(())
     }
@@ -171,7 +171,7 @@ impl DbContact {
         db_contact: &mut DbContact,
         count: u8,
     ) -> Result<()> {
-        tracing::warn!("updated contact count: {}", count);
+        tracing::info!("updated contact count: {}", count);
         db_contact.unseen_messages = count;
         let sql = r#"
                 UPDATE contact 
@@ -282,7 +282,7 @@ impl DbContact {
     }
 
     pub async fn insert(pool: &SqlitePool, contact: &DbContact) -> Result<()> {
-        tracing::warn!("Inserting Contact: {:?}", contact);
+        tracing::info!("Inserting Contact: {:?}", contact);
 
         // Iniciar a transação
         let mut tx = pool.begin().await?;
@@ -297,7 +297,7 @@ impl DbContact {
     }
 
     pub async fn insert_batch(pool: &SqlitePool, contacts: &[DbContact]) -> Result<()> {
-        tracing::warn!("Inserting Batch of contacts");
+        tracing::info!("Inserting Batch of contacts");
 
         // Iniciar a transação
         let mut tx = pool.begin().await?;
