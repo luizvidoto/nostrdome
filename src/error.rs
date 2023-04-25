@@ -1,9 +1,14 @@
 use nostr_sdk::{prelude::TagKind, EventId};
 use thiserror::Error;
 
+pub type Result<T> = std::result::Result<T, Error>;
+
 /// Errors that can occur in the nostrdome crate
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("Unable to update contact: message ID is required but not provided.")]
+    MissingMessageIdForContactUpdate,
+
     #[error("Can't update message without msg_id")]
     MessageNotInDatabase,
 

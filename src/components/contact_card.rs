@@ -1,7 +1,5 @@
-use chrono::NaiveDateTime;
-use iced::widget::{button, column, row, text};
-use iced::Length;
-use nostr_sdk::secp256k1::XOnlyPublicKey;
+use iced::widget::{button, column, container, row, text};
+use iced::{alignment, Length};
 
 use crate::db::DbContact;
 use crate::style;
@@ -11,76 +9,77 @@ use crate::widget::Element;
 #[derive(Debug, Clone)]
 pub enum Message {
     ContactUpdated(DbContact),
-    UpdateActiveId(DbContact),
+    UpdateActiveContact(DbContact),
     ShowOnlyProfileImage,
     ShowFullCard,
 }
 
 #[derive(Debug, Clone)]
 pub struct State {
-    active_pubkey: Option<XOnlyPublicKey>,
+    active_contact: Option<DbContact>,
     only_profile: bool,
-    last_msg_date: Option<NaiveDateTime>,
-    last_msg_snippet: Option<String>,
     pub contact: DbContact,
 }
 
 impl State {
     pub fn from_db_contact(db_contact: &DbContact) -> Self {
         Self {
-            active_pubkey: None,
+            active_contact: None,
             only_profile: false,
-            last_msg_date: None,
-            last_msg_snippet: None,
             contact: db_contact.clone(),
         }
     }
     pub fn view(&self) -> Element<Message> {
         let mut is_active = false;
 
-        if let Some(pubkey) = &self.active_pubkey {
-            is_active = pubkey == &self.contact.pubkey;
+        if let Some(contact) = &self.active_contact {
+            is_active = contact == &self.contact;
         }
 
-        let unseen_messages: String = match self.contact.unseen_messages {
-            0 => "".into(),
-            msg => format!("msgs: {}", msg),
+        let unseen_messages: Element<_> = match self.contact.unseen_messages() {
+            0 => text("").into(),
+            msg => container(text(format!("{}", msg)))
+                .align_x(alignment::Horizontal::Right)
+                .width(Length::Fill)
+                .into(),
         };
 
+        let pic: Element<_> = match self.contact.get_profile_image() {
+            Some(_image) => text("pic").into(),
+            None => self.name_element(true),
+        };
+        let pic_container = container(pic).width(PIC_WIDTH);
+
         let btn_content: Element<_> = if self.only_profile {
-            column![text("pic"), text(&unseen_messages)].into()
+            column![pic_container, unseen_messages].into()
         } else {
-            let pubkey_text = text(format!(
-                "key: {}",
-                format_pubkey(&self.contact.pubkey.to_string())
-            ));
-            row![
-                text("pic"),
-                column![
-                    pubkey_text,
-                    text(&self.contact.petname.to_owned().unwrap_or("*-*".into())).size(20.0),
-                    text(&self.last_msg_snippet.to_owned().unwrap_or("".into())).size(14.0),
-                ]
-                .spacing(5),
-                column![
-                    text(
-                        &self
-                            .last_msg_date
-                            .map(|d| d.to_string())
-                            .unwrap_or("date".into())
+            let (last_message, last_date): (Element<_>, Element<_>) =
+                match self.contact.last_message_pair() {
+                    (Some(content), Some(date)) => (
+                        text(&content).size(18.0).into(),
+                        container(text(&date.format("%Y-%m-%d")).size(20.0))
+                            .align_x(alignment::Horizontal::Right)
+                            .width(Length::Fill)
+                            .into(),
                     ),
-                    text(&unseen_messages),
-                ]
-                .spacing(5),
+                    _ => (text("").into(), text("").into()),
+                };
+            let expanded_card = column![
+                container(row![self.name_element(false), last_date,].spacing(5))
+                    .width(Length::Fill),
+                container(row![last_message, unseen_messages,].spacing(5)).width(Length::Fill)
             ]
-            .spacing(2)
-            .into()
+            .width(Length::Fill);
+            row![pic_container, expanded_card,]
+                .width(Length::Fill)
+                .spacing(2)
+                .into()
         };
 
         button(btn_content)
             .width(Length::Fill)
-            .height(Length::Fixed(80.0))
-            .on_press(Message::UpdateActiveId(self.contact.clone()))
+            .height(CARD_HEIGHT)
+            .on_press(Message::UpdateActiveContact(self.contact.clone()))
             .style(if is_active {
                 style::Button::ActiveContactCard
             } else {
@@ -88,13 +87,34 @@ impl State {
             })
             .into()
     }
+
+    fn name_element(&self, is_pic: bool) -> Element<'static, Message> {
+        let pub_string = self.contact.pubkey().to_string();
+        let formatted_pubstring = format_pubkey(&pub_string);
+        let extracted_name = if is_pic {
+            &pub_string[0..2]
+        } else {
+            &formatted_pubstring
+        };
+
+        match self.contact.get_petname() {
+            Some(name) => {
+                if is_pic {
+                    text(&name[0..2]).into()
+                } else {
+                    text(name).into()
+                }
+            }
+            None => text(format!("{}", extracted_name)).into(),
+        }
+    }
     pub fn update(&mut self, message: Message) {
         match message {
             Message::ContactUpdated(db_contact) => {
                 self.contact = db_contact;
             }
-            Message::UpdateActiveId(contact) => {
-                self.active_pubkey = Some(contact.pubkey);
+            Message::UpdateActiveContact(contact) => {
+                self.active_contact = Some(contact.clone());
             }
             Message::ShowOnlyProfileImage => {
                 self.only_profile = true;
@@ -105,3 +125,6 @@ impl State {
         }
     }
 }
+
+const PIC_WIDTH: f32 = 50.0;
+const CARD_HEIGHT: f32 = 80.0;

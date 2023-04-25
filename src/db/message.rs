@@ -2,32 +2,31 @@ use std::str::FromStr;
 
 use crate::{
     error::{Error, FromDbEventError},
-    utils::handle_decode_error,
+    utils::{handle_decode_error, millis_to_naive_or_err, pubkey_or_err},
 };
 use chrono::NaiveDateTime;
 use nostr_sdk::{nips::nip04, prelude::UncheckedUrl, secp256k1::XOnlyPublicKey, Keys, Url};
+use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
-
-use crate::utils::millis_to_naive;
 
 use super::DbEvent;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbMessage {
-    pub msg_id: Option<i32>,
-    pub encrypted_content: String,
-    pub from_pubkey: XOnlyPublicKey,
-    pub to_pubkey: XOnlyPublicKey,
-    pub event_id: Option<i32>,
-    pub created_at: chrono::NaiveDateTime,
-    pub updated_at: chrono::NaiveDateTime,
-    pub status: MessageStatus,
-    pub relay_url: Option<UncheckedUrl>,
+    msg_id: Option<i64>,
+    encrypted_content: String,
+    from_pubkey: XOnlyPublicKey,
+    to_pubkey: XOnlyPublicKey,
+    event_id: Option<i64>,
+    created_at: chrono::NaiveDateTime,
+    updated_at: chrono::NaiveDateTime,
+    status: MessageStatus,
+    relay_url: Option<UncheckedUrl>,
 }
 
 impl DbMessage {
     const FETCH_QUERY: &'static str =
-        "SELECT msg_id, content, from_pub, to_pub, event_id, created_at, updated_at, status, relay_url FROM message";
+        "SELECT msg_id, content, from_pubkey, to_pubkey, event_id, created_at, updated_at, status, relay_url FROM message";
 
     pub fn is_local(&self, own_pubkey: &XOnlyPublicKey) -> bool {
         own_pubkey == &self.from_pubkey
@@ -35,7 +34,31 @@ impl DbMessage {
     pub fn is_unseen(&self) -> bool {
         self.status.is_unseen()
     }
+    pub fn to_pubkey(&self) -> XOnlyPublicKey {
+        self.to_pubkey.to_owned()
+    }
+    pub fn from_pubkey(&self) -> XOnlyPublicKey {
+        self.from_pubkey.to_owned()
+    }
 
+    pub fn msg_id(&self) -> Option<i64> {
+        self.msg_id
+    }
+    pub fn created_at(&self) -> NaiveDateTime {
+        self.created_at.to_owned()
+    }
+    pub fn update_status(&mut self, status: MessageStatus) {
+        self.status = status;
+    }
+    pub fn with_id(mut self, id: i64) -> Self {
+        self.msg_id = Some(id);
+        self
+    }
+
+    pub fn with_event(mut self, event_id: i64) -> Self {
+        self.event_id = Some(event_id);
+        self
+    }
     pub fn new_local(
         keys: &Keys,
         to_pubkey: &XOnlyPublicKey,
@@ -80,14 +103,10 @@ impl DbMessage {
                 .map_err(|e| Error::DecryptionError(e.to_string()))
         }
     }
-    pub fn with_event(mut self, event_id: i32) -> Self {
-        self.event_id = Some(event_id);
-        self
-    }
 
     fn extract_to_pub_and_event_id(
         db_event: &DbEvent,
-    ) -> Result<(XOnlyPublicKey, i32), FromDbEventError> {
+    ) -> Result<(XOnlyPublicKey, i64), FromDbEventError> {
         let tag = db_event.tags.get(0).ok_or(FromDbEventError::NoTags)?;
         match tag {
             nostr_sdk::Tag::PubKey(to_pub, _url) => {
@@ -111,54 +130,13 @@ impl DbMessage {
         Ok(messages)
     }
 
-    pub async fn fetch_unseen_count(
-        pool: &SqlitePool,
-        pubkey: &XOnlyPublicKey,
-    ) -> Result<u8, Error> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*)
-            FROM message
-            WHERE from_pub = ?1 AND (status = ?2 OR status = ?3)",
-        )
-        .bind(pubkey.to_string())
-        .bind(MessageStatus::Offline.to_i32())
-        .bind(MessageStatus::Delivered.to_i32())
-        .fetch_one(pool)
-        .await?;
-
-        Ok(count as u8)
-    }
-
-    pub async fn fetch_chat(
-        pool: &SqlitePool,
-        from_pub: &XOnlyPublicKey,
-        to_pub: &XOnlyPublicKey,
-    ) -> Result<Vec<DbMessage>, Error> {
+    pub async fn insert_message(pool: &SqlitePool, db_message: &DbMessage) -> Result<i64, Error> {
         let sql = r#"
-            SELECT *
-            FROM message
-            WHERE (from_pub = ? AND to_pub = ?) OR (from_pub = ? AND to_pub = ?)
-            ORDER BY created_at
-        "#;
-
-        let messages = sqlx::query_as::<_, DbMessage>(sql)
-            .bind(from_pub.to_string())
-            .bind(to_pub.to_string())
-            .bind(to_pub.to_string())
-            .bind(from_pub.to_string())
-            .fetch_all(pool)
-            .await?;
-
-        Ok(messages)
-    }
-
-    pub async fn insert_message(pool: &SqlitePool, db_message: &DbMessage) -> Result<(), Error> {
-        let sql = r#"
-            INSERT OR IGNORE INTO message (content, from_pub, to_pub, event_id, created_at, updated_at, status, relay_url)
+            INSERT OR IGNORE INTO message (content, from_pubkey, to_pubkey, event_id, created_at, updated_at, status, relay_url)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
         "#;
 
-        sqlx::query(sql)
+        let output = sqlx::query(sql)
             .bind(&db_message.encrypted_content)
             .bind(&db_message.from_pubkey.to_string())
             .bind(&db_message.to_pubkey.to_string())
@@ -170,7 +148,7 @@ impl DbMessage {
             .execute(pool)
             .await?;
 
-        Ok(())
+        Ok(output.last_insert_rowid())
     }
 
     pub async fn update_message_status(
@@ -197,32 +175,22 @@ impl DbMessage {
     }
 }
 
-fn millis_to_naive_or_err(millis: i64, index: &str) -> Result<NaiveDateTime, sqlx::Error> {
-    millis_to_naive(millis).ok_or_else(|| sqlx::Error::ColumnDecode {
-        index: index.into(),
-        source: Box::new(Error::InvalidDate(millis.to_string())),
-    })
-}
-
-fn pubkey_or_err(pubkey_str: &str, index: &str) -> Result<XOnlyPublicKey, sqlx::Error> {
-    XOnlyPublicKey::from_str(pubkey_str).map_err(|e| handle_decode_error(e, index))
-}
-
 impl sqlx::FromRow<'_, SqliteRow> for DbMessage {
     fn from_row(row: &'_ SqliteRow) -> Result<Self, sqlx::Error> {
         let created_at =
             millis_to_naive_or_err(row.try_get::<i64, &str>("created_at")?, "created_at")?;
         let updated_at =
             millis_to_naive_or_err(row.try_get::<i64, &str>("updated_at")?, "updated_at")?;
-        let from_pub = pubkey_or_err(&row.try_get::<String, &str>("from_pub")?, "from_pub")?;
-        let to_pub = pubkey_or_err(&row.try_get::<String, &str>("to_pub")?, "to_pub")?;
+        let from_pubkey =
+            pubkey_or_err(&row.try_get::<String, &str>("from_pubkey")?, "from_pubkey")?;
+        let to_pubkey = pubkey_or_err(&row.try_get::<String, &str>("to_pubkey")?, "to_pubkey")?;
 
         Ok(DbMessage {
-            msg_id: row.get::<Option<i32>, &str>("msg_id"),
-            event_id: row.get::<Option<i32>, &str>("event_id"),
+            msg_id: row.get::<Option<i64>, &str>("msg_id"),
+            event_id: row.get::<Option<i64>, &str>("event_id"),
             encrypted_content: row.try_get::<String, &str>("content")?,
-            from_pubkey: from_pub,
-            to_pubkey: to_pub,
+            from_pubkey,
+            to_pubkey,
             created_at,
             updated_at,
             status: MessageStatus::from_i32(row.try_get::<i32, &str>("status")?),
@@ -236,7 +204,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbMessage {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 pub enum MessageStatus {
     Offline = 0,
     Delivered = 1,
@@ -261,5 +229,76 @@ impl MessageStatus {
             MessageStatus::Delivered => true,
             MessageStatus::Seen => false,
         }
+    }
+}
+
+pub struct DbChat<'a> {
+    pub from_pubkey: &'a XOnlyPublicKey,
+    pub to_pubkey: &'a XOnlyPublicKey,
+}
+
+impl<'a> DbChat<'a> {
+    pub fn new(from_pubkey: &'a XOnlyPublicKey, to_pubkey: &'a XOnlyPublicKey) -> Self {
+        Self {
+            from_pubkey,
+            to_pubkey,
+        }
+    }
+
+    pub async fn fetch_unseen_count(&self, pool: &SqlitePool) -> Result<u8, Error> {
+        let sql = r#"
+            SELECT COUNT(*)
+            FROM message
+            WHERE 
+                (
+                    (from_pubkey = ?1 AND to_pubkey = ?2) OR 
+                    (from_pubkey = ?2 AND to_pubkey = ?1)
+                ) AND 
+                (status = ?3 OR status = ?4)
+            "#;
+        let count: i64 = sqlx::query_scalar(sql)
+            .bind(self.from_pubkey.to_string())
+            .bind(self.to_pubkey.to_string())
+            .bind(MessageStatus::Offline.to_i32())
+            .bind(MessageStatus::Delivered.to_i32())
+            .fetch_one(pool)
+            .await?;
+
+        Ok(count as u8)
+    }
+
+    pub async fn fetch_chat(&self, pool: &SqlitePool) -> Result<Vec<DbMessage>, Error> {
+        let sql = r#"
+            SELECT *
+            FROM message
+            WHERE (from_pubkey = ?1 AND to_pubkey = ?2) OR (from_pubkey = ?2 AND to_pubkey = ?1)
+            ORDER BY created_at
+        "#;
+
+        let messages = sqlx::query_as::<_, DbMessage>(sql)
+            .bind(self.from_pubkey.to_string())
+            .bind(self.to_pubkey.to_string())
+            .fetch_all(pool)
+            .await?;
+
+        Ok(messages)
+    }
+
+    pub async fn fetch_last_msg_chat(&self, pool: &SqlitePool) -> Result<Option<DbMessage>, Error> {
+        let sql = r#"
+            SELECT *
+            FROM message
+            WHERE (from_pubkey = ?1 AND to_pubkey = ?2) OR (from_pubkey = ?2 AND to_pubkey = ?1)
+            ORDER BY created_at DESC
+            LIMIT 1
+        "#;
+
+        let last_message = sqlx::query_as::<_, DbMessage>(sql)
+            .bind(self.from_pubkey.to_string())
+            .bind(self.to_pubkey.to_string())
+            .fetch_optional(pool)
+            .await?;
+
+        Ok(last_message)
     }
 }

@@ -74,18 +74,17 @@ impl State {
             (column![], None),
             |(mut col, last_date): (Column<'_, _>, Option<NaiveDateTime>), msg| {
                 match (last_date, msg.created_at) {
-                    (None, Some(msg_date)) => {
+                    (None, msg_date) => {
                         col = col.push(chat_day_divider(msg_date.clone()));
                     }
-                    (Some(last_date), Some(msg_date)) => {
+                    (Some(last_date), msg_date) => {
                         if last_date.day() != msg_date.day() {
                             col = col.push(chat_day_divider(msg_date.clone()));
                         }
                     }
-                    _ => (),
                 }
 
-                (col.push(chat_message(&msg)), msg.created_at)
+                (col.push(chat_message(&msg)), Some(msg.created_at))
             },
         );
         let chat_messages = scrollable(chat_content).height(Length::Fill);
@@ -133,60 +132,57 @@ impl State {
         back_conn: &mut BackEndConnection,
     ) -> Command<Message> {
         match event {
-            net::Event::DatabaseSuccessEvent(kind) => match kind {
-                net::DatabaseSuccessEventKind::SentDM((_id, contact, msg)) => {
-                    if self.active_contact.as_ref() == Some(&contact) {
-                        // estou na conversa
-                        self.messages.push(msg);
-                        return scrollable::snap_to(
-                            SCROLLABLE_ID.clone(),
-                            scrollable::RelativeOffset::END,
-                        );
-                    } else {
-                        // não estou na conversa
-                        panic!("Impossible to send message outside chat");
-                    }
-                }
-                net::DatabaseSuccessEventKind::NewDM((contact, msg)) => {
-                    if self.active_contact.as_ref() == Some(&contact) {
-                        // estou na conversa
-                        self.messages.push(msg);
-                        return scrollable::snap_to(
-                            SCROLLABLE_ID.clone(),
-                            scrollable::RelativeOffset::END,
-                        );
-                    } else {
-                        // não estou na conversa
-                        back_conn.send(net::Message::UpdateUnseenCount(contact.clone()))
-                    }
-                }
-                net::DatabaseSuccessEventKind::NewDMAndContact((contact, _)) => {
-                    // back_conn.send(net::Message::FetchContacts);
-                    // back_conn.send(net::Message::FetchUnseenCountFrom(contact.pubkey.clone()))
-                    self.contacts
-                        .push(contact_card::State::from_db_contact(&contact))
-                }
-                net::DatabaseSuccessEventKind::ContactUpdated(db_contact) => {
-                    if let Some(found_card) = self
-                        .contacts
-                        .iter_mut()
-                        .find(|c| c.contact.pubkey == db_contact.pubkey)
-                    {
-                        found_card.update(contact_card::Message::ContactUpdated(db_contact));
-                    }
-                }
+            net::Event::DatabaseSuccessEvent(kind) => {
+                match kind {
+                    net::DatabaseSuccessEventKind::SentDM((_id, db_contact, msg)) => {
+                        self.update_contact(db_contact.clone());
 
-                _ => (),
-            },
-            net::Event::GotChatMessages((mut contact, chat_msgs)) => {
-                if self.active_contact.as_ref() == Some(&contact) {
+                        if self.active_contact.as_ref() == Some(&db_contact) {
+                            // estou na conversa
+                            self.messages.push(msg);
+                            return scrollable::snap_to(
+                                SCROLLABLE_ID.clone(),
+                                scrollable::RelativeOffset::END,
+                            );
+                        } else {
+                            // não estou na conversa
+                            tracing::error!("Impossible to send message outside chat");
+                        }
+                    }
+                    net::DatabaseSuccessEventKind::ReceivedDM((db_contact, msg)) => {
+                        self.update_contact(db_contact.clone());
+
+                        if self.active_contact.as_ref() == Some(&db_contact) {
+                            // estou na conversa
+                            self.messages.push(msg.clone());
+                            return scrollable::snap_to(
+                                SCROLLABLE_ID.clone(),
+                                scrollable::RelativeOffset::END,
+                            );
+                        } else {
+                            // não estou na conversa
+                            back_conn.send(net::Message::UpdateUnseenCount(db_contact))
+                        }
+                    }
+
+                    net::DatabaseSuccessEventKind::NewDMAndContact((db_contact, _)) => self
+                        .contacts
+                        .push(contact_card::State::from_db_contact(&db_contact)),
+
+                    net::DatabaseSuccessEventKind::ContactUpdated(db_contact) => {
+                        self.update_contact(db_contact);
+                    }
+
+                    _ => (),
+                }
+            }
+            net::Event::GotChatMessages((db_contact, chat_msgs)) => {
+                self.update_contact(db_contact.clone());
+
+                if self.active_contact.as_ref() == Some(&db_contact) {
                     self.messages = chat_msgs;
                     self.messages
                         .sort_by(|a, b| a.created_at.cmp(&b.created_at));
-                    if contact.unseen_messages > 0 {
-                        contact.unseen_messages = 0;
-                        back_conn.send(net::Message::UpdateContact(contact));
-                    }
 
                     return scrollable::snap_to(
                         SCROLLABLE_ID.clone(),
@@ -204,6 +200,16 @@ impl State {
         }
 
         Command::none()
+    }
+
+    fn update_contact(&mut self, db_contact: DbContact) {
+        if let Some(found_card) = self
+            .contacts
+            .iter_mut()
+            .find(|c| c.contact.pubkey() == db_contact.pubkey())
+        {
+            found_card.update(contact_card::Message::ContactUpdated(db_contact));
+        }
     }
 
     pub fn update(&mut self, message: Message, back_conn: &mut BackEndConnection) {
@@ -231,12 +237,12 @@ impl State {
             Message::OnVerResize(position) => {
                 if position > 200 && position < 400 {
                     self.ver_divider_position = Some(position);
-                } else if position <= 200 && position > 120 {
+                } else if position <= 200 && position > PIC_WIDTH {
                     self.ver_divider_position = Some(200);
                     for c in &mut self.contacts {
                         c.update(contact_card::Message::ShowFullCard);
                     }
-                } else if position <= 120 {
+                } else if position <= PIC_WIDTH {
                     self.ver_divider_position = Some(80);
                     for c in &mut self.contacts {
                         c.update(contact_card::Message::ShowOnlyProfileImage);
@@ -245,7 +251,7 @@ impl State {
             }
             Message::NavSettingsPress => (),
             Message::ContactCardMessage(card_msg) => {
-                if let contact_card::Message::UpdateActiveId(contact) = &card_msg {
+                if let contact_card::Message::UpdateActiveContact(contact) = &card_msg {
                     if self.active_contact.as_ref() != Some(&contact) {
                         back_conn.send(net::Message::FetchMessages(contact.clone()));
                         self.messages = vec![];
@@ -274,16 +280,11 @@ fn chat_message<Message: 'static>(chat_msg: &ChatMessage) -> Element<'static, Me
         style::Container::ReceivedMessage
     };
 
-    let data_cp: Element<_> = if let Some(date) = chat_msg.created_at {
-        let time_str = date.time().format("%H:%M").to_string();
-        column![
-            // container(text("")).height(10.0),
-            container(text(&time_str).style(style::Text::Placeholder).size(14))
-        ]
-        .into()
-    } else {
-        text("").into()
-    };
+    let time_str = chat_msg.created_at.time().format("%H:%M").to_string();
+    let data_cp = column![
+        // container(text("")).height(10.0),
+        container(text(&time_str).style(style::Text::Placeholder).size(14))
+    ];
 
     let msg_content = text(&chat_msg.content).size(18);
 
@@ -309,3 +310,5 @@ fn chat_day_divider<Message: 'static>(date: NaiveDateTime) -> Element<'static, M
         .center_y()
         .into()
 }
+
+const PIC_WIDTH: u16 = 50;

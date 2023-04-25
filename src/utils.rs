@@ -2,9 +2,10 @@ use std::{
     fs::File,
     io::{self, BufReader, Read},
     path::Path,
+    str::FromStr,
 };
 
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, Utc};
 use iced::Font;
 use iced::{alignment, widget::text};
 use nostr_sdk::prelude::*;
@@ -68,7 +69,7 @@ pub fn format_pubkey(pubkey: &str) -> String {
 /// # Returns
 ///
 /// * Am Option with a NaiveDateTime representing the given milliseconds since UNIX epoch
-pub fn millis_to_naive(millis: i64) -> Option<NaiveDateTime> {
+pub fn millis_to_naive_opt(millis: i64) -> Option<NaiveDateTime> {
     // Calculate the seconds and nanoseconds components of the input timestamp
     let ts_secs = millis / 1000;
     let ts_ns = (millis % 1000) * 1_000_000;
@@ -77,7 +78,12 @@ pub fn millis_to_naive(millis: i64) -> Option<NaiveDateTime> {
     NaiveDateTime::from_timestamp_opt(ts_secs, ts_ns as u32)
 }
 
-pub fn event_tt_to_naive(timestamp: nostr_sdk::Timestamp) -> Option<NaiveDateTime> {
+pub fn millis_to_naive(millis: i64) -> NaiveDateTime {
+    let def = Utc::now().naive_utc();
+    millis_to_naive_opt(millis).unwrap_or(def)
+}
+
+pub fn event_tt_to_naive(timestamp: nostr_sdk::Timestamp) -> NaiveDateTime {
     let as_milli = timestamp.as_i64() * 1000;
     millis_to_naive(as_milli)
 }
@@ -90,6 +96,16 @@ where
         index: index.into(),
         source: Box::new(error),
     }
+}
+
+pub fn millis_to_naive_or_err(millis: i64, index: &str) -> Result<NaiveDateTime, sqlx::Error> {
+    millis_to_naive_opt(millis).ok_or_else(|| sqlx::Error::ColumnDecode {
+        index: index.into(),
+        source: Box::new(Error::InvalidDate(millis.to_string())),
+    })
+}
+pub fn pubkey_or_err(pubkey_str: &str, index: &str) -> Result<XOnlyPublicKey, sqlx::Error> {
+    XOnlyPublicKey::from_str(pubkey_str).map_err(|e| handle_decode_error(e, index))
 }
 
 // Fonts

@@ -169,7 +169,7 @@ impl Application for App {
             }
             Message::BackEndEvent(event) => match event {
                 net::Event::Connected(mut back_conn) => {
-                    tracing::info!("Received BackEnd Connected Event");
+                    tracing::warn!("Received BackEnd Connected Event");
                     if let State::Loading { keys } = &mut self.state {
                         back_conn.send(net::Message::ConnectRelays);
                         self.state = State::loaded(keys.clone(), back_conn);
@@ -201,7 +201,7 @@ impl Application for App {
 #[tokio::main]
 async fn main() {
     if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "info");
+        std::env::set_var("RUST_LOG", "warn");
     }
 
     let env_filter = EnvFilter::from_default_env();
@@ -217,7 +217,7 @@ async fn main() {
         .with_env_filter(env_filter)
         .init();
 
-    tracing::info!("Starting up");
+    tracing::warn!("Starting up");
 
     App::run(Settings {
         id: Some(String::from("nostrdome")),

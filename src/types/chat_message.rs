@@ -1,9 +1,10 @@
 use chrono::NaiveDateTime;
 use nostr_sdk::secp256k1::XOnlyPublicKey;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     db::{DbContact, DbEvent, DbMessage},
-    utils::millis_to_naive,
+    error::Error,
 };
 
 pub trait EventLike {
@@ -29,10 +30,11 @@ impl EventLike for DbEvent {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
+    pub msg_id: i64,
     /// Message created at using unix timestamp
-    pub created_at: Option<NaiveDateTime>,
+    pub created_at: NaiveDateTime,
     /// Decrypted message content
     pub content: String,
     /// Pub key of the author of the message
@@ -42,37 +44,22 @@ pub struct ChatMessage {
 }
 
 impl ChatMessage {
-    pub fn from_event<S, E>(
-        event: &E,
-        decrypted_message: S,
-        is_from_user: bool,
-        contact: &DbContact,
-    ) -> Self
-    where
-        S: Into<String>,
-        E: EventLike,
-    {
-        Self {
-            content: decrypted_message.into(),
-            created_at: millis_to_naive(event.created_at()),
-            from_pubkey: event.pubkey(),
-            // is_from_user: &event.pubkey() == user_pubkey,
-            is_from_user,
-            petname: contact.petname.clone(),
-        }
-    }
     pub fn from_db_message(
         db_message: &DbMessage,
         is_from_user: bool,
         contact: &DbContact,
         content: &str,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, Error> {
+        let msg_id = db_message
+            .msg_id()
+            .ok_or(Error::MissingMessageIdForContactUpdate)?;
+        Ok(Self {
+            msg_id,
             content: content.to_owned(),
-            created_at: Some(db_message.created_at),
-            from_pubkey: db_message.from_pubkey.clone(),
+            created_at: db_message.created_at(),
+            from_pubkey: db_message.from_pubkey(),
             is_from_user,
-            petname: contact.petname.clone(),
-        }
+            petname: contact.get_petname(),
+        })
     }
 }

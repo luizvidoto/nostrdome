@@ -53,9 +53,9 @@ impl ModalState {
     pub fn add_contact(contact: Option<DbContact>) -> Self {
         let (petname, pubkey, rec_relay, is_edit) = match contact {
             Some(c) => (
-                c.petname.unwrap_or_else(|| "".into()),
-                c.pubkey.to_string(),
-                c.relay_url.unwrap_or_else(|| "".into()),
+                c.get_petname().unwrap_or_else(|| "".into()),
+                c.pubkey().to_string(),
+                c.get_relay_url().unwrap_or_else(|| "".into()),
                 true,
             ),
             None => ("".into(), "".into(), "".into(), false),
@@ -346,11 +346,11 @@ impl State {
 
 fn contact_matches_search(contact: &DbContact, search: &str) -> bool {
     let pubkey_matches = contact
-        .pubkey
+        .pubkey()
         .to_string()
         .to_lowercase()
         .contains(&search.to_lowercase());
-    let petname_matches = contact.petname.as_ref().map_or(false, |petname| {
+    let petname_matches = contact.get_petname().map_or(false, |petname| {
         petname.to_lowercase().contains(&search.to_lowercase())
     });
 

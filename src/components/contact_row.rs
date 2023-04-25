@@ -46,13 +46,12 @@ impl ContactRow {
     }
     pub fn view(&self) -> Element<'static, Message> {
         row![
-            text(format_pubkey(&self.contact.pubkey.to_string())).width(Length::Fill),
-            text(&self.contact.petname.to_owned().unwrap_or("".into())).width(Length::Fill),
+            text(format_pubkey(&self.contact.pubkey().to_string())).width(Length::Fill),
+            text(&self.contact.get_petname().unwrap_or("".into())).width(Length::Fill),
             text(
                 &self
                     .contact
-                    .relay_url
-                    .to_owned()
+                    .get_relay_url()
                     .map(|url| url.to_string())
                     .unwrap_or("".into())
             )

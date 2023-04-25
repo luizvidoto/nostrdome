@@ -51,7 +51,7 @@ impl Database {
                 format!("sqlite://{}/{}.db3?mode=rwc", &path_ext, pubkey)
             };
 
-            tracing::info!("Connecting database");
+            tracing::warn!("Connecting database");
             let pool = SqlitePool::connect(&db_url).await?;
 
             let s = Self { pool };
@@ -69,7 +69,7 @@ impl Database {
 pub async fn upgrade_db(pool: &SqlitePool) -> Result<(), Error> {
     // check the version.
     let mut curr_version = curr_db_version(pool).await?;
-    tracing::info!("DB version = {:?}", curr_version);
+    tracing::warn!("DB version = {:?}", curr_version);
 
     match curr_version.cmp(&DB_VERSION) {
         // Database is new or not current
@@ -89,7 +89,7 @@ pub async fn upgrade_db(pool: &SqlitePool) -> Result<(), Error> {
             } */
 
             if curr_version == DB_VERSION {
-                tracing::info!("All migration scripts completed successfully (v{DB_VERSION})");
+                tracing::warn!("All migration scripts completed successfully (v{DB_VERSION})");
             }
         }
         // Database is current, all is good
@@ -119,7 +119,7 @@ pub async fn curr_db_version(pool: &SqlitePool) -> Result<usize, Error> {
 }
 
 async fn initial_setup(pool: &SqlitePool) -> Result<usize, sqlx::Error> {
-    tracing::info!("Database initial setup");
+    tracing::warn!("Database initial setup");
     for sql in INITIAL_SETUP {
         sqlx::query(sql).execute(pool).await?;
     }

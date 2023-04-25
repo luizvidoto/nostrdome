@@ -14,7 +14,7 @@ use nostr_sdk::{
 
 #[derive(Debug, Clone)]
 pub struct DbEvent {
-    pub event_id: Option<i32>,
+    pub event_id: Option<i64>,
     pub event_hash: EventId,
     pub pubkey: XOnlyPublicKey,
     pub created_at: NaiveDateTime,
@@ -29,19 +29,18 @@ impl DbEvent {
         "SELECT event_hash, pubkey, created_at, kind, content, sig, tags FROM event";
 
     pub fn from_event(event: Event) -> Result<Self, Error> {
-        if let Some(created_at) = event_tt_to_naive(event.created_at) {
-            return Ok(DbEvent {
-                event_id: None,
-                event_hash: event.id,
-                pubkey: event.pubkey,
-                tags: event.tags.clone(),
-                created_at,
-                kind: event.kind,
-                content: event.content,
-                sig: event.sig,
-            });
-        }
-        Err(Error::DbEventTimestampError)
+        let created_at = event_tt_to_naive(event.created_at);
+        return Ok(DbEvent {
+            event_id: None,
+            event_hash: event.id,
+            pubkey: event.pubkey,
+            tags: event.tags.clone(),
+            created_at,
+            kind: event.kind,
+            content: event.content,
+            sig: event.sig,
+        });
+        // Err(Error::DbEventTimestampError)
     }
 
     pub async fn fetch(pool: &SqlitePool, criteria: Option<&str>) -> Result<Vec<DbEvent>, Error> {
@@ -66,7 +65,7 @@ impl DbEvent {
             .await?)
     }
 
-    pub async fn insert(pool: &SqlitePool, event: &DbEvent) -> Result<(i32, u8), Error> {
+    pub async fn insert(pool: &SqlitePool, event: &DbEvent) -> Result<(i64, u8), Error> {
         let sql =
             "INSERT OR IGNORE INTO event (event_hash, pubkey, created_at, kind, content, sig, tags) \
                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
@@ -83,7 +82,7 @@ impl DbEvent {
             .await?;
 
         Ok((
-            inserted.last_insert_rowid() as i32,
+            inserted.last_insert_rowid() as i64,
             inserted.rows_affected() as u8,
         ))
     }
