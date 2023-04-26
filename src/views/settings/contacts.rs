@@ -4,6 +4,7 @@ use iced::Length;
 
 use crate::components::{contact_row, ContactRow};
 use crate::net::BackEndConnection;
+use crate::utils::contact_matches_search;
 use crate::widget::Element;
 use crate::{components::text::title, db::DbContact, net};
 
@@ -58,11 +59,11 @@ impl State {
                 net::Event::GotContacts(db_contacts) => {
                     self.contacts = db_contacts;
                 }
-                net::Event::DatabaseSuccessEvent(kind) => match kind {
-                    net::DatabaseSuccessEventKind::ContactCreated(_)
-                    | net::DatabaseSuccessEventKind::ContactDeleted(_)
-                    | net::DatabaseSuccessEventKind::ContactUpdated(_)
-                    | net::DatabaseSuccessEventKind::ContactsImported(_) => {
+                net::Event::DBSuccessEvent(kind) => match kind {
+                    net::SuccessKind::ContactCreated(_)
+                    | net::SuccessKind::ContactDeleted(_)
+                    | net::SuccessKind::ContactUpdated(_)
+                    | net::SuccessKind::ContactsImported(_) => {
                         back_conn.send(net::Message::FetchContacts);
                     }
                     _ => (),
@@ -111,19 +112,6 @@ impl State {
             .align_y(Vertical::Center)
             .into()
     }
-}
-
-fn contact_matches_search(contact: &DbContact, search: &str) -> bool {
-    let pubkey_matches = contact
-        .pubkey()
-        .to_string()
-        .to_lowercase()
-        .contains(&search.to_lowercase());
-    let petname_matches = contact.get_petname().map_or(false, |petname| {
-        petname.to_lowercase().contains(&search.to_lowercase())
-    });
-
-    pubkey_matches || petname_matches
 }
 
 const SEARCH_CONTACT_WIDTH: f32 = 200.0;

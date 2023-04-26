@@ -1,9 +1,10 @@
 use chrono::NaiveDateTime;
-use iced::widget::{column, container, mouse_area, row, text};
+use iced::widget::{column, container, mouse_area, row, text, Space};
 use iced::{alignment, Length};
 use nostr_sdk::{secp256k1::XOnlyPublicKey, EventId};
 use serde::{Deserialize, Serialize};
 
+use crate::db::MessageStatus;
 use crate::widget::Element;
 use crate::{
     db::{DbContact, DbEvent, DbMessage},
@@ -46,12 +47,11 @@ pub struct ChatMessage {
     pub created_at: NaiveDateTime,
     /// Decrypted message content
     pub content: String,
-    /// Pub key of the author of the message
-    pub from_pubkey: XOnlyPublicKey,
     pub is_from_user: bool,
     pub petname: Option<String>,
     pub event_id: i64,
     pub event_hash: EventId,
+    pub status: MessageStatus,
 }
 
 impl ChatMessage {
@@ -67,13 +67,17 @@ impl ChatMessage {
         Ok(Self {
             content: content.to_owned(),
             created_at: db_message.created_at(),
-            from_pubkey: db_message.from_pubkey(),
             is_from_user,
             petname: contact.get_petname(),
             msg_id,
             event_id,
             event_hash,
+            status: db_message.status(),
         })
+    }
+
+    pub fn confirm_msg(&mut self, db_message: &DbMessage) {
+        self.status = db_message.status();
     }
 
     pub fn view(&self) -> Element<'static, Message> {
@@ -81,6 +85,11 @@ impl ChatMessage {
             false => alignment::Horizontal::Left,
             true => alignment::Horizontal::Right,
         };
+
+        // let card_padding = match self.is_from_user {
+        //     false => [2, 100, 2, 20],
+        //     true => [2, 20, 2, 100],
+        // };
 
         let container_style = if self.is_from_user {
             style::Container::SentMessage
@@ -91,23 +100,47 @@ impl ChatMessage {
         let time_str = self.created_at.time().format("%H:%M").to_string();
         let data_cp = column![
             // container(text("")).height(10.0),
-            container(text(&time_str).style(style::Text::Placeholder).size(14))
+            container(text(&time_str).style(style::Text::ChatMessageDate).size(16))
         ];
 
-        let msg_content = text(&self.content).size(18);
+        let status = {
+            let mut status = if self.is_from_user {
+                match self.status {
+                    MessageStatus::Offline => text("x"),
+                    MessageStatus::Delivered => text("c"),
+                    MessageStatus::Seen => text("c"),
+                }
+            } else {
+                text("")
+            };
+            status = status.style(style::Text::ChatMessageDate);
+            status
+        };
 
-        let message_container = container(row![msg_content, data_cp].spacing(5))
+        let msg_content = container(text(&self.content).size(18));
+        let status_row = container(
+            row![Space::new(Length::Shrink, Length::Shrink), data_cp, status]
+                .spacing(5)
+                .align_items(alignment::Alignment::Center),
+        )
+        .width(Length::Shrink);
+
+        let message_container = container(column![msg_content, status_row].spacing(5))
+            .width(Length::Shrink)
+            .max_width(CHAT_MESSAGE_MAX_WIDTH)
             .padding([5, 10])
             .style(container_style);
 
-        let container = container(message_container)
+        let mouse_area =
+            mouse_area(message_container).on_right_release(Message::ChatRightClick(self.clone()));
+
+        container(mouse_area)
             .width(Length::Fill)
             .center_y()
             .align_x(chat_alignment)
-            .padding([2, 20]);
-
-        mouse_area(container)
-            .on_right_release(Message::ChatRightClick(self.clone()))
+            .padding([2, 20])
             .into()
     }
 }
+
+const CHAT_MESSAGE_MAX_WIDTH: f32 = 450.0;

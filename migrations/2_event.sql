@@ -4,8 +4,9 @@ CREATE TABLE IF NOT EXISTS event (
     event_hash BLOB NOT NULL,
     -- author pubkey
     pubkey BLOB NOT NULL,
-    -- when the event was authored
     created_at INTEGER NOT NULL,
+    -- when the event was authored
+    created_at_from_relay INTEGER NOT NULL,
     -- event kind
     kind INTEGER NOT NULL,
     -- serialized json of event object 
@@ -13,7 +14,12 @@ CREATE TABLE IF NOT EXISTS event (
     -- serialized json vector of strings
     tags TEXT,
     -- event signature
-    sig TEXT NOT NULL
+    sig TEXT NOT NULL,
+    --
+    --
+    confirmed INTEGER NOT NULL DEFAULT 0,
+    --
+    confirmed_at INTEGER
 );
 
 -- Events Indexes

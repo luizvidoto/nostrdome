@@ -2,9 +2,9 @@ use std::str::FromStr;
 
 use crate::{
     error::{Error, FromDbEventError},
-    utils::{event_id_or_err, handle_decode_error, millis_to_naive_or_err, pubkey_or_err},
+    utils::{event_hash_or_err, handle_decode_error, millis_to_naive_or_err, pubkey_or_err},
 };
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, Utc};
 use nostr_sdk::{
     nips::nip04, prelude::UncheckedUrl, secp256k1::XOnlyPublicKey, EventId, Keys, Url,
 };
@@ -57,6 +57,10 @@ impl DbMessage {
     pub fn created_at(&self) -> NaiveDateTime {
         self.created_at.to_owned()
     }
+    pub fn status(&self) -> MessageStatus {
+        self.status.to_owned()
+    }
+
     pub fn update_status(&mut self, status: MessageStatus) {
         self.status = status;
     }
@@ -70,28 +74,7 @@ impl DbMessage {
         self
     }
 
-    pub fn new_local(
-        keys: &Keys,
-        to_pubkey: &XOnlyPublicKey,
-        message: &str,
-    ) -> Result<Self, Error> {
-        let secret_key = keys.secret_key()?;
-        let encrypted_content = nip04::encrypt(&secret_key, &to_pubkey, message)
-            .map_err(|e| Error::EncryptionError(e.to_string()))?;
-        Ok(Self {
-            msg_id: None,
-            encrypted_content,
-            from_pubkey: keys.public_key(),
-            to_pubkey: to_pubkey.to_owned(),
-            event_id: None,
-            event_hash: None,
-            created_at: chrono::Utc::now().naive_utc(),
-            updated_at: chrono::Utc::now().naive_utc(),
-            status: MessageStatus::Offline,
-            relay_url: None,
-        })
-    }
-    pub fn from_db_event(db_event: DbEvent, relay_url: Option<Url>) -> Result<Self, Error> {
+    pub fn from_db_event(db_event: DbEvent, relay_url: Option<&Url>) -> Result<Self, Error> {
         let (to_pub, event_id, event_hash) = Self::info_from_tags(&db_event)?;
         Ok(Self {
             msg_id: None,
@@ -102,8 +85,8 @@ impl DbMessage {
             event_hash: Some(event_hash),
             created_at: db_event.created_at,
             updated_at: db_event.created_at,
-            status: MessageStatus::Delivered,
-            relay_url: relay_url.map(|url| url.into()),
+            status: MessageStatus::from_db_event(&db_event),
+            relay_url: relay_url.map(|url| url.to_owned().into()),
         })
     }
     pub fn decrypt_message(&self, keys: &Keys) -> Result<String, Error> {
@@ -123,9 +106,7 @@ impl DbMessage {
         let tag = db_event.tags.get(0).ok_or(FromDbEventError::NoTags)?;
         match tag {
             nostr_sdk::Tag::PubKey(to_pub, _url) => {
-                let event_id = db_event.event_id.ok_or_else(|| {
-                    FromDbEventError::EventNotInDatabase(db_event.event_hash.clone())
-                })?;
+                let event_id = db_event.event_id()?;
                 Ok((to_pub.clone(), event_id, db_event.event_hash))
             }
             _ => Err(FromDbEventError::WrongTag),
@@ -141,6 +122,14 @@ impl DbMessage {
         let messages = sqlx::query_as::<_, DbMessage>(&sql).fetch_all(pool).await?;
 
         Ok(messages)
+    }
+
+    pub async fn fetch_one(pool: &SqlitePool, event_id: i64) -> Result<Option<DbMessage>, Error> {
+        let sql = format!("{} WHERE event_id = ?", Self::FETCH_QUERY);
+        Ok(sqlx::query_as::<_, DbMessage>(&sql)
+            .bind(event_id)
+            .fetch_optional(pool)
+            .await?)
     }
 
     pub async fn insert_message(pool: &SqlitePool, db_message: &DbMessage) -> Result<i64, Error> {
@@ -165,27 +154,49 @@ impl DbMessage {
         Ok(output.last_insert_rowid())
     }
 
+    pub async fn confirm_message(
+        pool: &SqlitePool,
+        mut db_message: DbMessage,
+    ) -> Result<DbMessage, Error> {
+        let sql = r#"
+            UPDATE message 
+            SET status = ?, updated_at = ?
+            WHERE msg_id = ?
+        "#;
+
+        let msg_id = db_message.msg_id()?;
+        db_message.status = MessageStatus::Delivered;
+        db_message.updated_at = Utc::now().naive_utc();
+
+        sqlx::query(sql)
+            .bind(&db_message.status.to_i32())
+            .bind(&db_message.updated_at.timestamp_millis())
+            .bind(&msg_id)
+            .execute(pool)
+            .await?;
+
+        Ok(db_message)
+    }
+
     pub async fn update_message_status(
         pool: &SqlitePool,
         db_message: &DbMessage,
     ) -> Result<(), Error> {
-        if let Some(msg_id) = db_message.msg_id {
-            let sql = r#"
+        let sql = r#"
             UPDATE message 
             SET status = ?1
             WHERE msg_id = ?2
             "#;
 
-            sqlx::query(sql)
-                .bind(&db_message.status.to_i32())
-                .bind(&msg_id)
-                .execute(pool)
-                .await?;
+        let msg_id = db_message.msg_id()?;
 
-            Ok(())
-        } else {
-            Err(Error::MessageNotInDatabase)
-        }
+        sqlx::query(sql)
+            .bind(&db_message.status.to_i32())
+            .bind(&msg_id)
+            .execute(pool)
+            .await?;
+
+        Ok(())
     }
 }
 
@@ -200,7 +211,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbMessage {
         let to_pubkey = pubkey_or_err(&row.try_get::<String, &str>("to_pubkey")?, "to_pubkey")?;
 
         let event_hash = row.try_get::<String, &str>("event_hash")?;
-        let event_hash = event_id_or_err(&event_hash, "event_hash")?;
+        let event_hash = event_hash_or_err(&event_hash, "event_hash")?;
 
         Ok(DbMessage {
             msg_id: row.get::<Option<i64>, &str>("msg_id"),
@@ -230,6 +241,13 @@ pub enum MessageStatus {
 }
 
 impl MessageStatus {
+    pub fn from_db_event(db_event: &DbEvent) -> Self {
+        if db_event.confirmed {
+            Self::Delivered
+        } else {
+            Self::Offline
+        }
+    }
     pub fn from_i32(value: i32) -> Self {
         match value {
             0 => MessageStatus::Offline,

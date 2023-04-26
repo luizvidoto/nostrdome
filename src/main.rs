@@ -2,6 +2,7 @@ pub mod components;
 pub mod crypto;
 pub mod db;
 pub mod error;
+pub mod icon;
 pub mod net;
 pub mod style;
 pub mod types;

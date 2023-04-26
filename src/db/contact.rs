@@ -9,7 +9,7 @@ use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use crate::{
     error::{Error, Result},
     types::ChatMessage,
-    utils::{millis_to_naive, millis_to_naive_or_err},
+    utils::millis_to_naive_or_err,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -48,13 +48,6 @@ impl PartialEq for DbContact {
 }
 
 impl DbContact {
-    // const FETCH_QUERY: &'static str = r#"
-    //     SELECT contact.pubkey, contact.petname, contact.relay_url, contact.profile_image, contact.status,
-    //         contact.created_at AS contact_created_at, contact.updated_at, contact.unseen_messages,
-    //         message.created_at AS message_created_at, message.content, message.from_pubkey, message.msg_id
-    //     FROM contact
-    //     LEFT JOIN message ON contact.last_message_id = message.msg_id
-    // "#;
     const FETCH_QUERY: &'static str = r#"SELECT * FROM contact"#;
 
     pub fn new(pubkey: &XOnlyPublicKey) -> Self {
@@ -71,22 +64,6 @@ impl DbContact {
             last_message_date: None,
         }
     }
-    // pub fn from_temp_contact(
-    //     temp_contact: &TempContact,
-    //     last_message: Option<ChatMessage>,
-    // ) -> Self {
-    //     Self {
-    //         pubkey: temp_contact.ct_pubkey,
-    //         relay_url: temp_contact.ct_relay_url.to_owned(),
-    //         petname: temp_contact.ct_petname.to_owned(),
-    //         profile_image: temp_contact.ct_profile_image.to_owned(),
-    //         status: temp_contact.ct_status,
-    //         unseen_messages: temp_contact.ct_unseen_messages,
-    //         created_at: temp_contact.ct_created_at,
-    //         updated_at: temp_contact.ct_updated_at,
-    //         last_message,
-    //     }
-    // }
 
     pub fn from_tag(tag: &Tag) -> Result<Self> {
         match tag {
@@ -369,23 +346,6 @@ impl DbContact {
         Ok(())
     }
 
-    // pub async fn update_last_message(pool: &SqlitePool, contact: &DbContact) -> Result<(), Error> {
-    //     let last_msg = contact
-    //         .last_message
-    //         .as_ref()
-    //         .ok_or(Error::MissingMessageIdForContactUpdate)?;
-    //     let sql = "UPDATE contact SET updated_at=?, last_message_id=? WHERE pubkey=?";
-
-    //     sqlx::query(sql)
-    //         .bind(Utc::now().timestamp_millis())
-    //         .bind(last_msg.msg_id)
-    //         .bind(&contact.pubkey.to_string())
-    //         .execute(pool)
-    //         .await?;
-
-    //     Ok(())
-    // }
-
     pub async fn delete(pool: &SqlitePool, contact: &DbContact) -> Result<()> {
         let sql = "DELETE FROM contact WHERE pubkey=?";
 
@@ -397,26 +357,6 @@ impl DbContact {
         Ok(())
     }
 }
-
-// fn temp_contact_to_db_contact(row: &TempContact) -> Result<DbContact, Error> {
-//     let last_message = match (
-//         row.msg_id,
-//         row.msg_created_at,
-//         &row.msg_content,
-//         &row.msg_from_pubkey,
-//     ) {
-//         (Some(msg_id), Some(created_at), Some(content), Some(from_pubkey)) => Some(ChatMessage {
-//             msg_id,
-//             created_at: millis_to_naive(created_at),
-//             content: content.to_owned(),
-//             from_pubkey: XOnlyPublicKey::from_str(from_pubkey)?,
-//             is_from_user: false, // não importa
-//             petname: row.ct_petname.clone(),
-//         }),
-//         _ => None,
-//     };
-//     Ok(DbContact::from_temp_contact(row, last_message))
-// }
 
 impl sqlx::FromRow<'_, SqliteRow> for DbContact {
     fn from_row(row: &'_ SqliteRow) -> StdResult<Self, sqlx::Error> {
@@ -445,54 +385,8 @@ impl sqlx::FromRow<'_, SqliteRow> for DbContact {
             last_message_content: row.get::<Option<String>, &str>("last_message_content"),
             last_message_date: row
                 .get::<Option<i64>, &str>("last_message_date")
-                .map(|n| millis_to_naive(n)),
+                .map(|n| millis_to_naive_or_err(n, "db_contact created_at"))
+                .transpose()?,
         })
     }
 }
-
-// #[derive(Debug, Deserialize)]
-// pub struct TempContact {
-//     pub ct_pubkey: XOnlyPublicKey,
-//     pub ct_relay_url: Option<String>,
-//     pub ct_petname: Option<String>,
-//     pub ct_profile_image: Option<String>,
-//     pub ct_status: ContactStatus,
-//     pub ct_unseen_messages: u8,
-//     pub ct_created_at: NaiveDateTime,
-//     pub ct_updated_at: NaiveDateTime,
-//     pub msg_id: Option<i64>,
-//     pub msg_created_at: Option<i64>,
-//     pub msg_content: Option<String>,
-//     pub msg_from_pubkey: Option<String>,
-// }
-
-// impl sqlx::FromRow<'_, SqliteRow> for TempContact {
-//     fn from_row(row: &'_ SqliteRow) -> Result<Self, sqlx::Error> {
-//         let ct_created_at = millis_to_naive_or_err(
-//             row.try_get::<i64, &str>("contact_created_at")?,
-//             "temp contact_created_at",
-//         )?;
-//         let ct_updated_at =
-//             millis_to_naive_or_err(row.try_get::<i64, &str>("updated_at")?, "temp updated_at")?;
-//         let pubkey = row.try_get::<String, &str>("pubkey")?;
-//         Ok(TempContact {
-//             ct_pubkey: XOnlyPublicKey::from_str(&pubkey).map_err(|e| {
-//                 sqlx::Error::ColumnDecode {
-//                     index: "pubkey".into(),
-//                     source: Box::new(e),
-//                 }
-//             })?,
-//             ct_created_at,
-//             ct_updated_at,
-//             ct_petname: row.try_get::<Option<String>, &str>("petname")?,
-//             ct_relay_url: row.try_get::<Option<String>, &str>("relay_url")?,
-//             ct_profile_image: row.try_get::<Option<String>, &str>("profile_image")?,
-//             ct_status: row.get::<u8, &str>("status").into(),
-//             ct_unseen_messages: row.try_get::<i64, &str>("unseen_messages")? as u8,
-//             msg_id: row.get::<Option<i64>, &str>("msg_id"),
-//             msg_created_at: row.get::<Option<i64>, &str>("message_created_at"),
-//             msg_from_pubkey: row.get::<Option<String>, &str>("from_pubkey"),
-//             msg_content: row.get::<Option<String>, &str>("content"),
-//         })
-//     }
-// }

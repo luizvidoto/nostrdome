@@ -1,7 +1,7 @@
-use crate::db::{Database, DbChat, DbContact, DbEvent, DbMessage, MessageStatus};
+use crate::db::{Database, DbChat, DbContact, DbEvent, DbMessage, DbRelayResponse, MessageStatus};
 use crate::error::Error;
 use crate::net::contact::{insert_batch_of_contacts, insert_contact};
-use crate::net::event::insert_event_with_tt;
+use crate::net::event::{received_event, send_dm};
 use crate::net::relay::{
     add_relay, connect_relay, connect_relays, fetch_relays, toggle_read_for_relay,
     toggle_write_for_relay, update_relay_db_and_client,
@@ -14,9 +14,7 @@ use iced::futures::stream::Fuse;
 use iced::futures::{channel::mpsc, StreamExt};
 use iced::{subscription, Subscription};
 use nostr_sdk::secp256k1::XOnlyPublicKey;
-use nostr_sdk::{
-    Client, Contact, EventBuilder, EventId, Keys, Relay, RelayMessage, RelayPoolNotification, Url,
-};
+use nostr_sdk::{Client, Contact, EventId, Keys, Relay, RelayMessage, RelayPoolNotification, Url};
 use sqlx::SqlitePool;
 use std::pin::Pin;
 use std::time::Duration;
@@ -55,6 +53,8 @@ pub enum State {
 }
 #[derive(Debug, Clone)]
 pub enum Event {
+    LocalPendingEvent(DbEvent),
+
     /// Event triggered when a connection to the back-end is established
     Connected(BackEndConnection),
 
@@ -76,6 +76,8 @@ pub enum Event {
 
     /// Event triggered when a public key is received
     GotPublicKey(XOnlyPublicKey),
+
+    GotRelayResponses(Vec<DbRelayResponse>),
 
     /// Event triggered when an event is successfully processed
     SomeEventSuccessId(EventId),
@@ -103,7 +105,7 @@ pub enum Event {
 
     /// DATABASE EVENTS
     /// Event triggered when a database operation is successful
-    DatabaseSuccessEvent(DatabaseSuccessEventKind),
+    DBSuccessEvent(SuccessKind),
 
     /// Event triggered when a list of chat messages is received
     GotChatMessages((DbContact, Vec<ChatMessage>)),
@@ -133,6 +135,7 @@ pub enum Message {
     ToggleRelayWrite((Url, bool)),
 
     // DATABASE MESSAGES
+    FetchRelayResponses(i64),
     FetchMessages(DbContact),
     AddContact(DbContact),
     ImportContacts(Vec<DbContact>),
@@ -145,7 +148,7 @@ pub enum Message {
 }
 
 #[derive(Debug, Clone)]
-pub enum DatabaseSuccessEventKind {
+pub enum SuccessKind {
     RelayCreated,
     RelayUpdated,
     RelayDeleted,
@@ -156,6 +159,11 @@ pub enum DatabaseSuccessEventKind {
     EventInserted(DbEvent),
     ReceivedDM((DbContact, ChatMessage)),
     NewDMAndContact((DbContact, ChatMessage)),
+    UpdateWithRelayResponse {
+        relay_response: DbRelayResponse,
+        db_event: DbEvent,
+        db_message: Option<DbMessage>,
+    },
     // SentDM((EventId, DbContact, ChatMessage)),
 }
 
@@ -222,10 +230,16 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                     let event = futures::select! {
                         message = receiver.select_next_some() => {
                             let event = match message {
+                                Message::FetchRelayResponses(event_id) => {
+                                    process_async_fn(
+                                        fetch_relays_responses(&database.pool, event_id),
+                                        |responses| Event::GotRelayResponses(responses)
+                                    ).await
+                                }
                                 Message::AddToUnseenCount(db_contact) => {
                                     process_async_fn(
                                         add_to_unseen_count(&database.pool, db_contact),
-                                        |contact| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::ContactUpdated(contact))
+                                        |contact| Event::DBSuccessEvent(SuccessKind::ContactUpdated(contact))
                                     ).await
                                 }
                                 // Message::UpdateUnseenCount(contact) => {
@@ -237,28 +251,28 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                 Message::AddContact(db_contact) => {
                                     process_async_fn(
                                         insert_contact(&keys, &database.pool, &db_contact),
-                                        |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::ContactCreated(db_contact.clone())),
+                                        |_| Event::DBSuccessEvent(SuccessKind::ContactCreated(db_contact.clone())),
                                     )
                                     .await
                                 }
                                 Message::ImportContacts(db_contacts) => {
                                     process_async_fn(
                                         insert_batch_of_contacts(&keys, &database.pool, &db_contacts),
-                                        |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::ContactsImported(db_contacts.clone())),
+                                        |_| Event::DBSuccessEvent(SuccessKind::ContactsImported(db_contacts.clone())),
                                     )
                                     .await
                                 }
                                 Message::UpdateContact(db_contact) => {
                                     process_async_fn(
                                         DbContact::update(&database.pool, &db_contact),
-                                        |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::ContactUpdated(db_contact.clone())),
+                                        |_| Event::DBSuccessEvent(SuccessKind::ContactUpdated(db_contact.clone())),
                                     )
                                     .await
                                 }
                                 Message::DeleteContact(contact) => {
                                     process_async_fn(
                                         DbContact::delete(&database.pool, &contact),
-                                        |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::ContactDeleted(contact.clone())),
+                                        |_| Event::DBSuccessEvent(SuccessKind::ContactDeleted(contact.clone())),
                                     )
                                     .await
                                 }
@@ -279,7 +293,7 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                 }
                                 Message::SendDMTo((contact, msg)) => {
                                     process_async_fn(
-                                        send_and_store_dm(&database.pool, &nostr_client, &keys, &contact, &msg),
+                                        send_dm(&database.pool, &nostr_client, &keys, &contact, &msg),
                                         |event| event,
                                     )
                                     .await
@@ -305,21 +319,21 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                     process_async_fn(
                                         // DbRelay::delete(&database.pool, &relay_url),
                                         nostr_client.remove_relay(relay_url.as_str()),
-                                        |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayDeleted),
+                                        |_| Event::DBSuccessEvent(SuccessKind::RelayDeleted),
                                     )
                                     .await
                                 }
                                 Message::AddRelay(url) => {
                                     process_async_fn(
                                         add_relay(&nostr_client, &url),
-                                        |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayCreated),
+                                        |_| Event::DBSuccessEvent(SuccessKind::RelayCreated),
                                     )
                                     .await
                                 }
                                 Message::UpdateRelay(url) => {
                                     process_async_fn(
                                         update_relay_db_and_client(&database.pool, &nostr_client, &url),
-                                        |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayUpdated),
+                                        |_| Event::DBSuccessEvent(SuccessKind::RelayUpdated),
                                     )
                                     .await
                                 }
@@ -333,13 +347,13 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                 Message::ToggleRelayRead((url, read)) => {
                                     process_async_fn(
                                         toggle_read_for_relay(&nostr_client, &url, read),
-                                        |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayUpdated)
+                                        |_| Event::DBSuccessEvent(SuccessKind::RelayUpdated)
                                     ).await
                                 }
                                 Message::ToggleRelayWrite((url, write)) => {
                                     process_async_fn(
                                         toggle_write_for_relay(&nostr_client, &url, write),
-                                        |_| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::RelayUpdated)
+                                        |_| Event::DBSuccessEvent(SuccessKind::RelayUpdated)
                                     ).await
                                 }
                             };
@@ -349,13 +363,18 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                         notification = notifications_stream.select_next_some() => {
                             let event = match notification {
                                 RelayPoolNotification::Event(relay_url, event) => {
+                                    // println!("*** NOTIFICATION ***");
+                                    // dbg!(&event);
                                     process_async_fn(
-                                        insert_event_with_tt(&database.pool, &keys, event, &relay_url),
+                                        received_event(&database.pool, &keys, event, &relay_url),
                                         |event| event
                                     ).await
                                 },
-                                RelayPoolNotification::Message(_url, relay_msg) => {
-                                    Event::RelayMessage(relay_msg)
+                                RelayPoolNotification::Message(relay_url, msg) => {
+                                    process_async_fn(
+                                        on_relay_message(&database.pool, &relay_url, &msg),
+                                        |event| event
+                                    ).await
                                 }
                                 RelayPoolNotification::Shutdown => {
                                     Event::Shutdown
@@ -401,38 +420,6 @@ async fn _fetch_contacts_from_relays(nostr_client: &Client) -> Result<Vec<Contac
     Ok(contacts)
 }
 
-async fn send_and_store_dm(
-    pool: &SqlitePool,
-    nostr_client: &Client,
-    keys: &Keys,
-    db_contact: &DbContact,
-    message: &str,
-) -> Result<Event, Error> {
-    tracing::info!("Sending DM to relays");
-    let mut has_event: Option<(nostr_sdk::Event, Url)> = None;
-    let builder =
-        EventBuilder::new_encrypted_direct_msg(&keys, db_contact.pubkey().to_owned(), message)?;
-    let event = builder.to_event(keys)?;
-
-    for (url, relay) in nostr_client.relays().await {
-        if !relay.opts().write() {
-            // return Err(Error::WriteActionsDisabled(url.clone()))
-            tracing::error!("{}", Error::WriteActionsDisabled(url.to_string()));
-            continue;
-        }
-
-        if let Ok(_id) = nostr_client.send_event_to(url.clone(), event.clone()).await {
-            has_event = Some((event.clone(), url.clone()));
-        }
-    }
-
-    if let Some((event, relay_url)) = has_event {
-        Ok(insert_event_with_tt(pool, keys, event, &relay_url).await?)
-    } else {
-        Err(Error::NoRelayToWrite)
-    }
-}
-
 async fn add_to_unseen_count(
     pool: &SqlitePool,
     mut db_contact: DbContact,
@@ -469,6 +456,64 @@ async fn fetch_and_decrypt_chat(
     db_contact = DbContact::update_unseen_count(pool, &mut db_contact, 0).await?;
 
     Ok((db_contact, chat_messages))
+}
+
+async fn on_relay_message(
+    pool: &SqlitePool,
+    relay_url: &Url,
+    relay_message: &RelayMessage,
+) -> Result<Event, Error> {
+    let event = match relay_message {
+        RelayMessage::Ok {
+            event_id: event_hash,
+            status,
+            message,
+        } => {
+            let mut db_event = DbEvent::fetch_one(pool, event_hash)
+                .await?
+                .ok_or(Error::EventNotInDatabase(event_hash.to_owned()))?;
+            let mut db_message = None;
+            if !db_event.confirmed {
+                db_event = DbEvent::confirm_event(pool, db_event).await?;
+
+                db_message = if let Some(db_message) =
+                    DbMessage::fetch_one(pool, db_event.event_id()?).await?
+                {
+                    let confirmed_db_message = DbMessage::confirm_message(pool, db_message).await?;
+                    Some(confirmed_db_message)
+                } else {
+                    None
+                };
+            }
+
+            let mut relay_response = DbRelayResponse::from_response(
+                *status,
+                db_event.event_id()?,
+                event_hash,
+                relay_url,
+                message,
+            );
+            let id = DbRelayResponse::insert(pool, &relay_response).await?;
+            relay_response = relay_response.with_id(id);
+            Event::DBSuccessEvent(SuccessKind::UpdateWithRelayResponse {
+                relay_response,
+                db_event,
+                db_message,
+            })
+        }
+        other => Event::RelayMessage(other.to_owned()),
+    };
+
+    Ok(event)
+}
+
+async fn fetch_relays_responses(
+    pool: &SqlitePool,
+    event_id: i64,
+) -> Result<Vec<DbRelayResponse>, Error> {
+    let responses = DbRelayResponse::fetch_by_event(pool, event_id).await?;
+
+    Ok(responses)
 }
 
 const IN_MEMORY: bool = false;

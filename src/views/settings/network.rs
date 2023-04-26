@@ -78,10 +78,10 @@ impl State {
                         .filter_map(|r| RelayRow::new(r).ok())
                         .collect();
                 }
-                net::Event::DatabaseSuccessEvent(kind) => match kind {
-                    net::DatabaseSuccessEventKind::RelayCreated
-                    | net::DatabaseSuccessEventKind::RelayDeleted
-                    | net::DatabaseSuccessEventKind::RelayUpdated => {
+                net::Event::DBSuccessEvent(kind) => match kind {
+                    net::SuccessKind::RelayCreated
+                    | net::SuccessKind::RelayDeleted
+                    | net::SuccessKind::RelayUpdated => {
                         back_conn.send(net::Message::FetchRelays);
                     }
                     _ => (),

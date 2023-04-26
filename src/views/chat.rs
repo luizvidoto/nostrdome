@@ -1,13 +1,14 @@
 use chrono::{Datelike, NaiveDateTime};
-use iced::widget::{button, column, container, row, scrollable, text, text_input};
+use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
 use iced::{Command, Length};
 
 use crate::components::contact_card;
 use crate::db::DbContact;
+use crate::icon::send_icon;
 use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::types::{chat_message, ChatMessage};
-use crate::utils::send_icon;
+use crate::utils::contact_matches_search;
 use crate::widget::{Column, Element};
 use once_cell::sync::Lazy;
 
@@ -23,6 +24,7 @@ pub enum Message {
     DMSentPress,
     AddContactPress,
     ChatMessage(chat_message::Message),
+    SearchContactInputChange(String),
 }
 
 #[derive(Debug, Clone)]
@@ -32,6 +34,8 @@ pub struct State {
     active_contact: Option<DbContact>,
     dm_msg: String,
     messages: Vec<ChatMessage>,
+    search_contact_input: String,
+    show_only_profile: bool,
 }
 impl State {
     pub fn new(back_conn: &mut BackEndConnection) -> Self {
@@ -42,20 +46,13 @@ impl State {
             ver_divider_position: Some(300),
             active_contact: None,
             dm_msg: "".into(),
+            search_contact_input: "".into(),
+            show_only_profile: false,
         }
     }
 
     pub fn view(&self) -> Element<Message> {
-        // let first = container(column![scrollable(
-        //     self.chats.iter().fold(column![].spacing(0), |col, card| {
-        //         col.push(card.view().map(Message::ChatCardMessage))
-        //     })
-        // )])
-        // .width(Length::Fill)
-        // .height(Length::Fill)
-        // .center_x()
-        // .center_y();
-
+        // --- FIRST SPLIT ---
         let contact_list: Element<_> = if self.contacts.is_empty() {
             button("Add Contact")
                 .on_press(Message::AddContactPress)
@@ -64,6 +61,7 @@ impl State {
             scrollable(
                 self.contacts
                     .iter()
+                    .filter(|c| contact_matches_search(&c.contact, &self.search_contact_input))
                     .fold(column![].spacing(0), |col, contact| {
                         col.push(contact.view().map(Message::ContactCardMessage))
                     }),
@@ -71,7 +69,20 @@ impl State {
             // .id(CONTACTS_SCROLLABLE_ID.clone())
             .into()
         };
-        let first = container(contact_list);
+        let search_contact: Element<_> = match self.show_only_profile {
+            true => text("").into(),
+            false => text_input("Search", &self.search_contact_input)
+                .on_input(Message::SearchContactInputChange)
+                .style(style::TextInput::ChatSearch)
+                .into(),
+        };
+        let search_container = container(row![search_contact])
+            .padding([10, 20])
+            .width(Length::Fill)
+            .height(NAVBAR_HEIGHT);
+        let first = container(column![search_container, contact_list]);
+        // ---
+        // --- SECOND SPLIT ---
         let (chat_content, _): (Column<_>, Option<NaiveDateTime>) = self.messages.iter().fold(
             (column![], None),
             |(mut col, last_date), msg: &ChatMessage| {
@@ -92,39 +103,54 @@ impl State {
                 )
             },
         );
-        let chat_messages = scrollable(chat_content)
-            .vertical_scroll(
-                scrollable::Properties::new()
-                    .width(6.0)
-                    .margin(0.0)
-                    .scroller_width(6.0),
-            )
-            .id(CHAT_SCROLLABLE_ID.clone())
-            .height(Length::Fill);
+
+        let chat_messages = container(
+            scrollable(chat_content)
+                .vertical_scroll(
+                    scrollable::Properties::new()
+                        .width(6.0)
+                        .margin(0.0)
+                        .scroller_width(6.0),
+                )
+                .id(CHAT_SCROLLABLE_ID.clone())
+                .height(Length::Fill),
+        )
+        .style(style::Container::ChatContainer)
+        .height(Length::Fill);
+
         let message_input = text_input("Write a message...", &self.dm_msg)
             .on_submit(Message::DMSentPress)
             .on_input(Message::DMNMessageChange);
         let send_btn = button(send_icon().style(style::Text::Primary))
             .style(style::Button::Invisible)
             .on_press(Message::DMSentPress);
-        let msg_input_row = container(row![message_input, send_btn].spacing(5)).padding([10, 5]);
+        let msg_input_row = container(row![message_input, send_btn].spacing(5))
+            .style(style::Container::Default)
+            .height(CHAT_INPUT_HEIGHT)
+            .padding([10, 5]);
 
-        let second_content: Element<_> = if self.active_contact.is_some() {
-            column![chat_messages, msg_input_row].into()
+        let settings_btn = button("Settings")
+            .padding(10)
+            .on_press(Message::NavSettingsPress);
+        let chat_navbar =
+            container(row![Space::with_width(Length::Fill), settings_btn].width(Length::Fill))
+                .padding(10)
+                .height(NAVBAR_HEIGHT)
+                .style(style::Container::Default);
+
+        let second: Element<_> = if self.active_contact.is_some() {
+            column![chat_navbar, chat_messages, msg_input_row].into()
         } else {
             container(text("Select a chat to start messaging"))
                 .center_x()
                 .center_y()
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(style::Container::ChatContainer)
                 .into()
         };
 
-        let second = container(second_content)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(style::Container::ChatContainer)
-            .center_x()
-            .center_y();
-        let content = iced_aw::split::Split::new(
+        iced_aw::split::Split::new(
             first,
             second,
             self.ver_divider_position,
@@ -132,22 +158,8 @@ impl State {
             Message::OnVerResize,
         )
         .spacing(1.0)
-        .min_size_second(300);
-
-        let search_input = container(text("Search")).padding(10);
-        let settings_btn = button("Settings")
-            .padding(10)
-            .on_press(Message::NavSettingsPress);
-        let empty = container(text("")).width(Length::Fill);
-        let navbar = row![search_input, empty, settings_btn]
-            .width(Length::Fill)
-            .padding(10)
-            .spacing(10);
-
-        column![navbar, content]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        .min_size_second(300)
+        .into()
     }
     pub fn backend_event(
         &mut self,
@@ -155,7 +167,7 @@ impl State {
         back_conn: &mut BackEndConnection,
     ) -> Command<Message> {
         match event {
-            net::Event::DatabaseSuccessEvent(kind) => {
+            net::Event::DBSuccessEvent(kind) => {
                 match kind {
                     // net::DatabaseSuccessEventKind::SentDM((_id, db_contact, msg)) => {
                     //     self.update_contact(db_contact.clone());
@@ -172,7 +184,7 @@ impl State {
                     //         tracing::error!("Impossible to send message outside chat");
                     //     }
                     // }
-                    net::DatabaseSuccessEventKind::ReceivedDM((db_contact, msg)) => {
+                    net::SuccessKind::ReceivedDM((db_contact, msg)) => {
                         self.update_contact(db_contact.clone());
 
                         if self.active_contact.as_ref() == Some(&db_contact) {
@@ -180,7 +192,7 @@ impl State {
                             self.messages.push(msg.clone());
                             return scrollable::snap_to(
                                 CHAT_SCROLLABLE_ID.clone(),
-                                scrollable::RelativeOffset::END,
+                                scrollable::RelativeOffset::START,
                             );
                         } else {
                             // não estou na conversa
@@ -188,19 +200,33 @@ impl State {
                         }
                     }
 
-                    net::DatabaseSuccessEventKind::NewDMAndContact((db_contact, _)) => {
+                    net::SuccessKind::NewDMAndContact((db_contact, _)) => {
                         self.contacts
                             .push(contact_card::State::from_db_contact(&db_contact));
                         // não estou na conversa
                         back_conn.send(net::Message::AddToUnseenCount(db_contact))
                     }
 
-                    net::DatabaseSuccessEventKind::ContactUpdated(db_contact) => {
+                    net::SuccessKind::ContactUpdated(db_contact) => {
                         self.update_contact(db_contact);
+                    }
+
+                    net::SuccessKind::UpdateWithRelayResponse { db_message, .. } => {
+                        if let Some(msg) = &db_message {
+                            if let Ok(msg_id) = msg.msg_id() {
+                                self.messages
+                                    .iter_mut()
+                                    .find(|m| m.msg_id == msg_id)
+                                    .map(|chat_msg| chat_msg.confirm_msg(msg));
+                            }
+                        }
                     }
 
                     _ => (),
                 }
+            }
+            net::Event::GotRelayResponses(responses) => {
+                dbg!(responses);
             }
             net::Event::GotChatMessages((db_contact, chat_msgs)) => {
                 self.update_contact(db_contact.clone());
@@ -227,9 +253,14 @@ impl State {
 
         Command::none()
     }
-
     fn update_contact(&mut self, db_contact: DbContact) {
         // change active to be an ID again...
+        // println!("Update Contact: {}", &db_contact.pubkey().to_string());
+        // dbg!(&db_contact);
+
+        if self.active_contact.as_ref() == Some(&db_contact) {
+            self.active_contact = Some(db_contact.clone());
+        }
 
         if let Some(found_card) = self
             .contacts
@@ -238,17 +269,15 @@ impl State {
         {
             found_card.update(contact_card::Message::ContactUpdated(db_contact.clone()));
         }
-
-        if self.active_contact.as_ref() == Some(&db_contact) {
-            self.active_contact = Some(db_contact);
-        }
     }
 
     pub fn update(&mut self, message: Message, back_conn: &mut BackEndConnection) {
         match message {
+            Message::SearchContactInputChange(text) => self.search_contact_input = text,
             Message::ChatMessage(chat_msg) => match chat_msg {
-                chat_message::Message::ChatRightClick(msg_clicked) => {
-                    dbg!(msg_clicked);
+                chat_message::Message::ChatRightClick(msg) => {
+                    back_conn.send(net::Message::FetchRelayResponses(msg.event_id));
+                    // dbg!(msg_clicked);
                 }
             },
             Message::AddContactPress => (),
@@ -274,13 +303,16 @@ impl State {
             Message::OnVerResize(position) => {
                 if position > 200 && position < 400 {
                     self.ver_divider_position = Some(position);
+                    self.show_only_profile = false;
                 } else if position <= 200 && position > PIC_WIDTH {
                     self.ver_divider_position = Some(200);
+                    self.show_only_profile = false;
                     for c in &mut self.contacts {
                         c.update(contact_card::Message::ShowFullCard);
                     }
                 } else if position <= PIC_WIDTH {
                     self.ver_divider_position = Some(80);
+                    self.show_only_profile = true;
                     for c in &mut self.contacts {
                         c.update(contact_card::Message::ShowOnlyProfileImage);
                     }
@@ -317,3 +349,5 @@ fn chat_day_divider<Message: 'static>(date: NaiveDateTime) -> Element<'static, M
 }
 
 const PIC_WIDTH: u16 = 50;
+const NAVBAR_HEIGHT: f32 = 50.0;
+const CHAT_INPUT_HEIGHT: f32 = 50.0;

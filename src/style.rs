@@ -37,8 +37,11 @@ pub struct AppPalette {
     pub hovered_bg_scrollbar_mo: Color,
     pub hovered_bg_scroller_mo: Color,
     pub sent_message_bg: Color,
+    pub sent_message_status: Color,
+    pub sent_message_date: Color,
     pub received_message_bg: Color,
     pub chat_divider_bg: Color,
+    pub chat_search_input_bg: Color,
 }
 impl AppPalette {
     pub const LIGHT: Self = Self {
@@ -60,7 +63,10 @@ impl AppPalette {
         hovered_bg_scroller_mo: Color::from_rgba(120.0 / 255.0, 120.0 / 255.0, 120.0 / 255.0, 0.6),
         received_message_bg: Color::from_rgb(24.0 / 255.0, 37.0 / 255.0, 51.0 / 255.0),
         sent_message_bg: Color::from_rgb(43.0 / 255.0, 83.0 / 255.0, 120.0 / 255.0),
+        sent_message_status: Color::from_rgb(88.0 / 255.0, 161.0 / 255.0, 217.0 / 255.0),
+        sent_message_date: Color::from_rgb(125.0 / 255.0, 168.0 / 255.0, 211.0 / 255.0),
         chat_divider_bg: Color::from_rgb(43.0 / 255.0, 83.0 / 255.0, 120.0 / 255.0),
+        chat_search_input_bg: Color::from_rgb(36.0 / 255.0, 47.0 / 255.0, 61.0 / 255.0),
     };
     pub const DARK: Self = Self {
         background: Color::from_rgb(23.0 / 255.0, 33.0 / 255.0, 43.0 / 255.0),
@@ -81,7 +87,10 @@ impl AppPalette {
         hovered_bg_scroller_mo: Color::from_rgba(255.0 / 255.0, 255.0 / 255.0, 255.0 / 255.0, 0.5),
         received_message_bg: Color::from_rgb(24.0 / 255.0, 37.0 / 255.0, 51.0 / 255.0),
         sent_message_bg: Color::from_rgb(43.0 / 255.0, 83.0 / 255.0, 120.0 / 255.0),
+        sent_message_status: Color::from_rgb(88.0 / 255.0, 161.0 / 255.0, 217.0 / 255.0),
+        sent_message_date: Color::from_rgb(125.0 / 255.0, 168.0 / 255.0, 211.0 / 255.0),
         chat_divider_bg: Color::from_rgb(30.0 / 255.0, 44.0 / 255.0, 58.0 / 255.0),
+        chat_search_input_bg: Color::from_rgb(36.0 / 255.0, 47.0 / 255.0, 61.0 / 255.0),
     };
 }
 
@@ -101,6 +110,8 @@ pub enum Text {
     #[default]
     Default,
     Primary,
+    ChatMessageStatus,
+    ChatMessageDate,
     Placeholder,
 }
 
@@ -117,6 +128,12 @@ impl text::StyleSheet for Theme {
             }
             Text::Primary => text::Appearance {
                 color: self.pallete().send_button.into(),
+            },
+            Text::ChatMessageStatus => text::Appearance {
+                color: self.pallete().sent_message_status.into(),
+            },
+            Text::ChatMessageDate => text::Appearance {
+                color: self.pallete().sent_message_date.into(),
             },
             Text::Placeholder => text::Appearance {
                 color: self.pallete().placeholder.into(),
@@ -383,17 +400,27 @@ impl button::StyleSheet for Theme {
 pub enum TextInput {
     #[default]
     Default,
+    ChatSearch,
 }
 
 impl text_input::StyleSheet for Theme {
     type Style = TextInput;
-    fn active(&self, _style: &Self::Style) -> text_input::Appearance {
-        text_input::Appearance {
-            background: self.pallete().background.into(),
-            border_color: self.pallete().background,
-            border_radius: 4.0,
-            border_width: 1.0,
-            icon_color: self.pallete().icons,
+    fn active(&self, style: &Self::Style) -> text_input::Appearance {
+        match style {
+            TextInput::Default => text_input::Appearance {
+                background: self.pallete().background.into(),
+                border_color: self.pallete().background,
+                border_radius: 4.0,
+                border_width: 1.0,
+                icon_color: self.pallete().icons,
+            },
+            TextInput::ChatSearch => text_input::Appearance {
+                background: self.pallete().chat_search_input_bg.into(),
+                border_color: self.pallete().background,
+                border_radius: 4.0,
+                border_width: 0.0,
+                icon_color: self.pallete().icons,
+            },
         }
     }
     fn focused(&self, style: &Self::Style) -> text_input::Appearance {

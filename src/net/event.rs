@@ -1,14 +1,14 @@
-use crate::db::{store_last_event_received, DbContact, DbEvent, DbMessage};
+use crate::db::{store_last_event_timestamp, DbContact, DbEvent, DbMessage, DbRelayResponse};
 use crate::error::Error;
 use crate::net::contact::insert_contact;
 use crate::types::ChatMessage;
 
-use nostr_sdk::{Keys, Kind, Url};
+use nostr_sdk::{Client, EventBuilder, Keys, Kind, Url};
 use sqlx::SqlitePool;
 
-use super::{DatabaseSuccessEventKind, Event};
+use super::{Event, SuccessKind};
 
-pub async fn insert_event_with_tt(
+pub async fn received_event(
     pool: &SqlitePool,
     keys: &Keys,
     event: nostr_sdk::Event,
@@ -16,46 +16,19 @@ pub async fn insert_event_with_tt(
 ) -> Result<Event, Error> {
     let event = insert_event(pool, keys, event, relay_url).await?;
 
-    store_last_event_received(pool).await?;
+    store_last_event_timestamp(pool).await?;
 
     Ok(event)
 }
 
-async fn insert_event(
-    pool: &SqlitePool,
-    keys: &Keys,
-    event: nostr_sdk::Event,
-    relay_url: &Url,
-) -> Result<Event, Error> {
-    tracing::info!("Inserting event: {:?}", event);
-
-    let mut db_event = DbEvent::from_event(event)?;
-    let (row_id, rows_changed) = DbEvent::insert(pool, &db_event).await?;
-    db_event.event_id = Some(row_id);
-
-    if rows_changed == 0 {
-        return Ok(Event::None);
-    }
-
-    if let Kind::EncryptedDirectMessage = db_event.kind {
-        let database_success_event_kind =
-            insert_encrypted_dm(pool, keys, db_event, relay_url).await?;
-        return Ok(Event::DatabaseSuccessEvent(database_success_event_kind));
-    }
-
-    Ok(Event::DatabaseSuccessEvent(
-        DatabaseSuccessEventKind::EventInserted(db_event),
-    ))
-}
-
-async fn insert_encrypted_dm(
+async fn received_encrypted_dm(
     pool: &SqlitePool,
     keys: &Keys,
     db_event: DbEvent,
-    relay_url: &Url,
-) -> Result<DatabaseSuccessEventKind, Error> {
+    relay_url: Option<&Url>,
+) -> Result<SuccessKind, Error> {
     // Convert DbEvent to DbMessage
-    let db_message = DbMessage::from_db_event(db_event, Some(relay_url.to_owned()))?;
+    let db_message = DbMessage::from_db_event(db_event, relay_url)?;
     tracing::info!("Inserting external message");
 
     // Insert message into the database and get the message ID
@@ -79,10 +52,7 @@ async fn insert_encrypted_dm(
             let chat_message =
                 ChatMessage::from_db_message(&db_message, is_from_user, &db_contact, &content)?;
             db_contact = DbContact::new_message(pool, &db_contact, &chat_message).await?;
-            Ok(DatabaseSuccessEventKind::ReceivedDM((
-                db_contact,
-                chat_message,
-            )))
+            Ok(SuccessKind::ReceivedDM((db_contact, chat_message)))
         }
         None => {
             // Create a new contact and insert it into the database
@@ -94,10 +64,157 @@ async fn insert_encrypted_dm(
                 ChatMessage::from_db_message(&db_message, is_from_user, &db_contact, &content)?;
             db_contact = DbContact::new_message(pool, &db_contact, &chat_message).await?;
 
-            Ok(DatabaseSuccessEventKind::NewDMAndContact((
-                db_contact,
-                chat_message,
-            )))
+            Ok(SuccessKind::NewDMAndContact((db_contact, chat_message)))
         }
     }
+}
+
+pub async fn send_dm(
+    pool: &SqlitePool,
+    nostr_client: &Client,
+    keys: &Keys,
+    db_contact: &DbContact,
+    content: &str,
+) -> Result<Event, Error> {
+    tracing::info!("Sending DM to relays");
+    let mut has_event: Option<(nostr_sdk::Event, Url)> = None;
+    let builder =
+        EventBuilder::new_encrypted_direct_msg(&keys, db_contact.pubkey().to_owned(), content)?;
+    let event = builder.to_event(keys)?;
+
+    for (url, relay) in nostr_client.relays().await {
+        if !relay.opts().write() {
+            // return Err(Error::WriteActionsDisabled(url.clone()))
+            tracing::error!("{}", Error::WriteActionsDisabled(url.to_string()));
+            continue;
+        }
+
+        if let Ok(_id) = nostr_client.send_event_to(url.clone(), event.clone()).await {
+            has_event = Some((event.clone(), url.clone()));
+        }
+    }
+
+    if let Some((event, _relay_url)) = has_event {
+        Ok(insert_pending_event(pool, keys, event).await?)
+    } else {
+        Err(Error::NoRelayToWrite)
+    }
+}
+
+async fn relay_response_ok(
+    pool: &SqlitePool,
+    db_event: &DbEvent,
+    relay_url: &Url,
+) -> Result<Event, Error> {
+    let mut relay_response = DbRelayResponse::from_response(
+        true,
+        db_event.event_id()?,
+        &db_event.event_hash,
+        relay_url,
+        "",
+    );
+    let id = DbRelayResponse::insert(pool, &relay_response).await?;
+    relay_response = relay_response.with_id(id);
+    Ok(Event::DBSuccessEvent(
+        SuccessKind::UpdateWithRelayResponse {
+            relay_response,
+            db_event: db_event.clone(),
+            db_message: None,
+        },
+    ))
+}
+async fn insert_specific_kind(
+    pool: &SqlitePool,
+    keys: &Keys,
+    relay_url: Option<&Url>,
+    db_event: &DbEvent,
+) -> Result<Option<Event>, Error> {
+    let event = match db_event.kind {
+        Kind::EncryptedDirectMessage => {
+            let database_success_event_kind =
+                received_encrypted_dm(pool, keys, db_event.clone(), relay_url).await?;
+            Some(Event::DBSuccessEvent(database_success_event_kind))
+        }
+        Kind::RecommendRelay => None,
+        Kind::ContactList => None,
+        _ => None,
+        // Kind::EventDeletion => todo!(),
+        // Kind::ChannelCreation => todo!(),
+        // Kind::ChannelMetadata => todo!(),
+        // Kind::ChannelMessage => todo!(),
+        // Kind::ChannelHideMessage => todo!(),
+        // Kind::ChannelMuteUser => todo!(),
+        // Kind::PublicChatReserved45 => todo!(),
+        // Kind::PublicChatReserved46 => todo!(),
+        // Kind::PublicChatReserved47 => todo!(),
+        // Kind::PublicChatReserved48 => todo!(),
+        // Kind::PublicChatReserved49 => todo!(),
+        // Kind::ZapRequest => todo!(),
+        // Kind::Zap => todo!(),
+        // Kind::MuteList => todo!(),
+        // Kind::PinList => todo!(),
+        // Kind::RelayList => todo!(),
+        // Kind::Authentication => todo!(),
+    };
+
+    Ok(event)
+}
+
+async fn handle_insert_event(
+    pool: &SqlitePool,
+    keys: &Keys,
+    event: nostr_sdk::Event,
+    relay_url: Option<&Url>,
+    is_pending: bool,
+) -> Result<Event, Error> {
+    tracing::info!(
+        "Inserting {} event: {:?}",
+        if is_pending { "pending" } else { "confirmed" },
+        event
+    );
+
+    let mut db_event = if is_pending {
+        DbEvent::pending_event(event)?
+    } else {
+        DbEvent::confirmed_event(event)?
+    };
+
+    let (row_id, rows_changed) = DbEvent::insert(pool, &db_event).await?;
+    db_event = db_event.with_id(row_id);
+
+    if let Some(url) = relay_url {
+        let _ev = relay_response_ok(pool, &db_event, url).await?;
+    }
+
+    if rows_changed == 0 {
+        return Ok(Event::None);
+    }
+
+    match insert_specific_kind(pool, keys, relay_url, &db_event).await? {
+        Some(has_event) => Ok(has_event),
+        None => {
+            if is_pending {
+                Ok(Event::LocalPendingEvent(db_event))
+            } else {
+                Ok(Event::DBSuccessEvent(SuccessKind::EventInserted(db_event)))
+            }
+        }
+    }
+}
+
+pub async fn insert_pending_event(
+    pool: &SqlitePool,
+    keys: &Keys,
+    event: nostr_sdk::Event,
+) -> Result<Event, Error> {
+    handle_insert_event(pool, keys, event, None, true).await
+}
+
+async fn insert_event(
+    pool: &SqlitePool,
+    keys: &Keys,
+    event: nostr_sdk::Event,
+    relay_url: &Url,
+) -> Result<Event, Error> {
+    handle_insert_event(pool, keys, event, Some(relay_url), false).await
 }

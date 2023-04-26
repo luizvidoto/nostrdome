@@ -46,7 +46,7 @@ impl Database {
     }
 }
 
-pub async fn store_last_event_received(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+pub async fn store_last_event_timestamp(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let sql = r#"
         INSERT INTO last_event_received (id, timestamp)
         VALUES (1, ?)
@@ -160,7 +160,7 @@ pub const DB_VERSION: usize = 1;
 // pragma mmap_size = 17179869184; -- cap mmap at 16GB
 // "##;
 
-const INITIAL_SETUP: [&str; 7] = [
+const INITIAL_SETUP: [&str; 8] = [
     include_str!("../../migrations/1_setup.sql"),
     include_str!("../../migrations/2_event.sql"),
     include_str!("../../migrations/3_relay.sql"),
@@ -168,4 +168,5 @@ const INITIAL_SETUP: [&str; 7] = [
     include_str!("../../migrations/5_contact.sql"),
     include_str!("../../migrations/6_message.sql"),
     include_str!("../../migrations/7_event_timestamp.sql"),
+    include_str!("../../migrations/8_relay_response.sql"),
 ];

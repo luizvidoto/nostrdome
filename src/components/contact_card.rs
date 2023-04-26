@@ -1,5 +1,7 @@
+use chrono::{Datelike, Utc};
 use iced::widget::{button, column, container, row, text};
 use iced::{alignment, Length};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::db::DbContact;
 use crate::style;
@@ -36,12 +38,14 @@ impl State {
             is_active = contact == &self.contact;
         }
 
-        let unseen_messages: Element<_> = match self.contact.unseen_messages() {
-            0 => text("").into(),
-            msg => container(text(format!("{}", msg)))
-                .align_x(alignment::Horizontal::Right)
-                .width(Length::Fill)
-                .into(),
+        let unseen_messages: Element<_> = {
+            match self.contact.unseen_messages() {
+                0 => text("").into(),
+                count => container(text(count))
+                    .width(NOTIFICATION_COUNT_WIDTH)
+                    .align_x(alignment::Horizontal::Right)
+                    .into(),
+            }
         };
 
         let pic: Element<_> = match self.contact.get_profile_image() {
@@ -53,23 +57,66 @@ impl State {
         let btn_content: Element<_> = if self.only_profile {
             column![pic_container, unseen_messages].into()
         } else {
-            let (last_message, last_date): (Element<_>, Element<_>) =
-                match self.contact.last_message_pair() {
-                    (Some(content), Some(date)) => (
-                        text(&content).size(18.0).into(),
-                        container(text(&date.format("%Y-%m-%d")).size(20.0))
+            // --- TOP ROW ---
+
+            let last_date_cp: Element<_> = match self.contact.last_message_date() {
+                Some(date) => {
+                    let now = Utc::now().naive_utc();
+                    let date_format = if date.day() == now.day() {
+                        "%H:%M"
+                    } else {
+                        "%Y-%m-%d"
+                    };
+
+                    container(text(&date.format(date_format)).size(18.0))
+                        .align_x(alignment::Horizontal::Right)
+                        .width(Length::Fill)
+                        .into()
+                }
+                None => text("").into(),
+            };
+            let card_top_row = container(row![self.name_element(false), last_date_cp,].spacing(5))
+                .width(Length::Fill);
+
+            let card_bottom_row = iced_lazy::responsive(|size| {
+                let unseen_messages: Element<_> = {
+                    match self.contact.unseen_messages() {
+                        0 => text("").into(),
+                        count => container(text(count))
+                            .width(NOTIFICATION_COUNT_WIDTH)
                             .align_x(alignment::Horizontal::Right)
-                            .width(Length::Fill)
                             .into(),
-                    ),
-                    _ => (text("").into(), text("").into()),
+                    }
                 };
-            let expanded_card = column![
-                container(row![self.name_element(false), last_date,].spacing(5))
-                    .width(Length::Fill),
-                container(row![last_message, unseen_messages,].spacing(5)).width(Length::Fill)
-            ]
-            .width(Length::Fill);
+                // --- BOTTOM ROW ---
+                let last_message_cp: Element<_> = match self.contact.last_message_content() {
+                    Some(content) => {
+                        let left_pixels = size.width - NOTIFICATION_COUNT_WIDTH - 5.0; //spacing;
+                        let pixel_p_char = 8.0; // 8px = 1 char
+                        let taker = (left_pixels / pixel_p_char).floor() as usize;
+                        let content = if taker > content.len() {
+                            content
+                        } else {
+                            let truncated = content.graphemes(true).take(taker).collect::<String>();
+                            format!("{}...", &truncated)
+                        };
+                        container(text(&content).size(18.0))
+                            .width(Length::Fill)
+                            .into()
+                    }
+                    None => text("").into(),
+                };
+                container(
+                    row![last_message_cp, unseen_messages,]
+                        .align_items(alignment::Alignment::Center)
+                        .spacing(5),
+                )
+                .width(Length::Fill)
+                .into()
+            });
+
+            let expanded_card = column![card_top_row, card_bottom_row].width(Length::Fill);
+
             row![pic_container, expanded_card,]
                 .width(Length::Fill)
                 .spacing(2)
@@ -128,3 +175,4 @@ impl State {
 
 const PIC_WIDTH: f32 = 50.0;
 const CARD_HEIGHT: f32 = 80.0;
+const NOTIFICATION_COUNT_WIDTH: f32 = 30.0;

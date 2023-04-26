@@ -39,6 +39,10 @@ pub enum Error {
     #[error("Formatting Error: {0}")]
     Fmt(#[from] std::fmt::Error),
 
+    /// Formatting error
+    #[error("Invalid Unix timestamp: {0}")]
+    InvalidTimestamp(i64),
+
     /// Hex string decoding error
     // #[error("Hex Decode Error: {0}")]
     // HexDecode(#[from] hex::FromHexError),

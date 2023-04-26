@@ -20,7 +20,9 @@ pub fn text_input_group<'a, Message: Clone + 'a>(
         text("").into()
     };
     let label_row = row![label, tooltip].spacing(4);
-    let mut txt_input = text_input(placeholder, value).on_input(on_change);
+    let mut txt_input = text_input(placeholder, value)
+        .on_input(on_change)
+        .style(style::TextInput::ChatSearch);
     if let Some(on_submit) = on_submit {
         txt_input = txt_input.on_submit(on_submit);
     }

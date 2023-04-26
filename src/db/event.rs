@@ -1,11 +1,11 @@
 use std::str::FromStr;
 
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, Utc};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
 use crate::{
-    error::Error,
-    utils::{event_tt_to_naive, handle_decode_error},
+    error::{Error, FromDbEventError},
+    utils::{event_tt_to_naive, handle_decode_error, millis_to_naive_or_err},
 };
 use nostr_sdk::{
     secp256k1::{schnorr::Signature, XOnlyPublicKey},
@@ -14,33 +14,61 @@ use nostr_sdk::{
 
 #[derive(Debug, Clone)]
 pub struct DbEvent {
-    pub event_id: Option<i64>,
+    event_id: Option<i64>,
     pub event_hash: EventId,
     pub pubkey: XOnlyPublicKey,
     pub created_at: NaiveDateTime,
+    pub confirmed_at: Option<NaiveDateTime>,
+    created_at_from_relay: NaiveDateTime,
     pub tags: Vec<nostr_sdk::Tag>,
     pub kind: Kind,
     pub content: String,
     pub sig: Signature,
+    pub confirmed: bool,
 }
 
 impl DbEvent {
     const FETCH_QUERY: &'static str =
-        "SELECT event_hash, pubkey, created_at, kind, content, sig, tags FROM event";
+        "SELECT event_id, event_hash, pubkey, created_at, kind, content, sig, tags, confirmed, confirmed_at FROM event";
 
-    pub fn from_event(event: Event) -> Result<Self, Error> {
-        let created_at = event_tt_to_naive(event.created_at);
+    fn from_event(event: Event, confirmed: bool) -> Result<Self, Error> {
+        let created_at_from_relay = event_tt_to_naive(event.created_at)?;
         return Ok(DbEvent {
             event_id: None,
             event_hash: event.id,
             pubkey: event.pubkey,
             tags: event.tags.clone(),
-            created_at,
+            created_at: created_at_from_relay.clone(),
+            confirmed_at: if confirmed {
+                Some(created_at_from_relay.clone())
+            } else {
+                None
+            },
+            created_at_from_relay,
             kind: event.kind,
             content: event.content,
             sig: event.sig,
+            confirmed,
         });
-        // Err(Error::DbEventTimestampError)
+    }
+
+    pub fn confirmed_event(event: Event) -> Result<Self, Error> {
+        Ok(Self::from_event(event, true)?)
+    }
+
+    pub fn pending_event(event: Event) -> Result<Self, Error> {
+        Ok(Self::from_event(event, false)?)
+    }
+
+    pub fn event_id(&self) -> Result<i64, FromDbEventError> {
+        self.event_id.ok_or(FromDbEventError::EventNotInDatabase(
+            self.event_hash.clone(),
+        ))
+    }
+
+    pub fn with_id(mut self, id: i64) -> Self {
+        self.event_id = Some(id);
+        self
     }
 
     pub async fn fetch(pool: &SqlitePool, criteria: Option<&str>) -> Result<Vec<DbEvent>, Error> {
@@ -65,19 +93,27 @@ impl DbEvent {
             .await?)
     }
 
-    pub async fn insert(pool: &SqlitePool, event: &DbEvent) -> Result<(i64, u8), Error> {
+    pub async fn insert(pool: &SqlitePool, db_event: &DbEvent) -> Result<(i64, u8), Error> {
         let sql =
-            "INSERT OR IGNORE INTO event (event_hash, pubkey, created_at, kind, content, sig, tags) \
-                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+            "INSERT OR IGNORE INTO event (event_hash, pubkey, created_at, kind, content, sig, tags, created_at_from_relay, confirmed, confirmed_at) \
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)";
 
         let inserted = sqlx::query(sql)
-            .bind(&event.event_hash.to_hex())
-            .bind(&event.pubkey.to_string())
-            .bind(&event.created_at.timestamp_millis())
-            .bind(&event.kind.as_u32())
-            .bind(&event.content)
-            .bind(&event.sig.to_string())
-            .bind(&serde_json::to_string(&event.tags)?)
+            .bind(&db_event.event_hash.to_hex())
+            .bind(&db_event.pubkey.to_string())
+            .bind(&db_event.created_at.timestamp_millis())
+            .bind(&db_event.kind.as_u32())
+            .bind(&db_event.content)
+            .bind(&db_event.sig.to_string())
+            .bind(&serde_json::to_string(&db_event.tags)?)
+            .bind(&db_event.created_at_from_relay.timestamp_millis())
+            .bind(&db_event.confirmed)
+            .bind(
+                &db_event
+                    .confirmed_at
+                    .as_ref()
+                    .map(|date| date.timestamp_millis()),
+            )
             .execute(pool)
             .await?;
 
@@ -87,24 +123,24 @@ impl DbEvent {
         ))
     }
 
-    pub async fn update(pool: &SqlitePool, event: DbEvent) -> Result<(), Error> {
-        if let Some(event_id) = event.event_id {
-            let sql =
-            "UPDATE event SET pubkey=?, created_at=?, kind=?, content=?, sig=? WHERE event_id=?";
+    pub async fn confirm_event(pool: &SqlitePool, mut db_event: DbEvent) -> Result<DbEvent, Error> {
+        let sql = "UPDATE event SET confirmed_at=?, confirmed = 1 WHERE event_id=?";
 
-            sqlx::query(sql)
-                .bind(&event.pubkey.to_string())
-                .bind(&event.created_at.timestamp_millis())
-                .bind(&event.kind.as_u32())
-                .bind(&event.content)
-                .bind(&event.sig.to_string())
-                .bind(&event_id)
-                .execute(pool)
-                .await?;
-            Ok(())
-        } else {
-            Err(Error::EventNotInDatabase(event.event_hash))
-        }
+        let event_id = db_event.event_id()?;
+        db_event.confirmed_at = Some(Utc::now().naive_utc());
+
+        sqlx::query(sql)
+            .bind(
+                &db_event
+                    .confirmed_at
+                    .as_ref()
+                    .map(|date| date.timestamp_millis()),
+            )
+            .bind(&event_id)
+            .execute(pool)
+            .await?;
+
+        Ok(db_event)
     }
 
     pub async fn delete(pool: &SqlitePool, event_id: i32) -> Result<(), Error> {
@@ -137,7 +173,11 @@ impl sqlx::FromRow<'_, SqliteRow> for DbEvent {
         };
 
         Ok(DbEvent {
-            event_id: row.get("event_id"),
+            confirmed_at: row
+                .get::<Option<i64>, &str>("confirmed_at")
+                .map(|n| millis_to_naive_or_err(n, "confirmed_at"))
+                .transpose()?,
+            event_id: Some(row.try_get::<i64, &str>("event_id")?),
             event_hash: EventId::from_hex(hex_hash)
                 .map_err(|e| handle_decode_error(e, "event_hash"))?,
             pubkey: XOnlyPublicKey::from_str(&pubkey)
@@ -145,10 +185,14 @@ impl sqlx::FromRow<'_, SqliteRow> for DbEvent {
             created_at: NaiveDateTime::from_timestamp_millis(created_at).ok_or(
                 handle_decode_error(Box::new(Error::DbEventTimestampError), "created_at"),
             )?,
+            created_at_from_relay: NaiveDateTime::from_timestamp_millis(created_at).ok_or(
+                handle_decode_error(Box::new(Error::DbEventTimestampError), "relay_created_at"),
+            )?,
             kind: Kind::from(kind as u64),
             tags,
             content: row.try_get::<String, &str>("content")?,
             sig: Signature::from_str(&sig).map_err(|e| handle_decode_error(e, "sig"))?,
+            confirmed: row.try_get::<bool, &str>("confirmed")?,
         })
     }
 }
