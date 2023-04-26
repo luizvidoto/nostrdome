@@ -114,24 +114,33 @@ pub async fn request_events(
     last_timestamp: u64,
 ) -> Result<(), Error> {
     tracing::info!("Requesting events");
-    let sent_msgs_sub = Filter::new()
+    let sent_msgs_sub_past = Filter::new()
         .author(own_pubkey.to_string())
         .kind(Kind::EncryptedDirectMessage)
         .since(Timestamp::from(last_timestamp))
         .until(Timestamp::now());
-    let recv_msgs_sub = Filter::new()
+    let recv_msgs_sub_past = Filter::new()
         .pubkey(pubkey.to_owned())
         .kind(Kind::EncryptedDirectMessage)
         .since(Timestamp::from(last_timestamp))
         .until(Timestamp::now());
 
-    // let timeout = Duration::from_secs(10);
-    // nostr_client
-    //     .req_events_of(vec![sent_msgs_sub, recv_msgs_sub], Some(timeout))
-    //     .await;
+    let timeout = Duration::from_secs(10);
+    nostr_client
+        .req_events_of(vec![sent_msgs_sub_past, recv_msgs_sub_past], Some(timeout))
+        .await;
+
+    let sent_msgs_sub_future = Filter::new()
+        .author(own_pubkey.to_string())
+        .kind(Kind::EncryptedDirectMessage)
+        .since(Timestamp::now());
+    let recv_msgs_sub_future = Filter::new()
+        .pubkey(pubkey.to_owned())
+        .kind(Kind::EncryptedDirectMessage)
+        .since(Timestamp::now());
 
     nostr_client
-        .subscribe(vec![sent_msgs_sub, recv_msgs_sub])
+        .subscribe(vec![sent_msgs_sub_future, recv_msgs_sub_future])
         .await;
 
     Ok(())
