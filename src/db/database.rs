@@ -1,4 +1,5 @@
 use crate::error::Error;
+use chrono::Utc;
 use directories::ProjectDirs;
 use sqlx::SqlitePool;
 use std::cmp::Ordering;
@@ -42,6 +43,37 @@ impl Database {
         } else {
             Err(Error::DatabaseSetup("Not found project directory".into()))
         }
+    }
+}
+
+pub async fn store_last_event_received(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let sql = r#"
+        INSERT INTO last_event_received (id, timestamp)
+        VALUES (1, ?)
+        ON CONFLICT(id) DO UPDATE SET timestamp = excluded.timestamp;
+    "#;
+
+    sqlx::query(sql)
+        .bind(Utc::now().timestamp_millis())
+        .execute(pool)
+        .await?;
+
+    Ok(())
+}
+
+pub async fn get_last_event_received(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
+    tracing::info!("Get last time an event was received");
+    let last_received_timestamp: Option<i64> =
+        sqlx::query_scalar("SELECT timestamp FROM last_event_received WHERE id = 1")
+            .fetch_optional(pool)
+            .await?;
+
+    match last_received_timestamp {
+        Some(timestamp) => {
+            // Convert i64 to u64
+            Ok(timestamp as u64)
+        }
+        None => Ok(0),
     }
 }
 
@@ -128,11 +160,12 @@ pub const DB_VERSION: usize = 1;
 // pragma mmap_size = 17179869184; -- cap mmap at 16GB
 // "##;
 
-const INITIAL_SETUP: [&str; 6] = [
+const INITIAL_SETUP: [&str; 7] = [
     include_str!("../../migrations/1_setup.sql"),
     include_str!("../../migrations/2_event.sql"),
     include_str!("../../migrations/3_relay.sql"),
     include_str!("../../migrations/4_tag.sql"),
     include_str!("../../migrations/5_contact.sql"),
     include_str!("../../migrations/6_message.sql"),
+    include_str!("../../migrations/7_event_timestamp.sql"),
 ];
