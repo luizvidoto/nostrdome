@@ -135,13 +135,11 @@ impl DbContact {
 
     pub async fn new_message(
         pool: &SqlitePool,
-        db_contact: &mut DbContact,
+        db_contact: &DbContact,
         chat_message: &ChatMessage,
-    ) -> Result<()> {
+    ) -> Result<DbContact> {
+        // do not update unseen count here because we may be in the chat
         if Some(&chat_message.created_at) >= db_contact.last_message_date.as_ref() {
-            db_contact.last_message_content = Some(chat_message.content.to_owned());
-            db_contact.last_message_date = Some(chat_message.created_at.to_owned());
-
             let sql = r#"
                 UPDATE contact 
                 SET updated_at=?, last_message_content=?, last_message_date=?
@@ -150,46 +148,51 @@ impl DbContact {
 
             sqlx::query(sql)
                 .bind(Utc::now().timestamp_millis())
-                .bind(&db_contact.last_message_content)
-                .bind(
-                    db_contact
-                        .last_message_date
-                        .as_ref()
-                        .map(|date| date.timestamp_millis()),
-                )
+                .bind(&chat_message.content)
+                .bind(chat_message.created_at.timestamp_millis())
                 .bind(&db_contact.pubkey.to_string())
                 .execute(pool)
                 .await?;
         } else {
             tracing::info!("Can't update last_message with an older message.");
         }
-        Ok(())
+
+        let db_contact_updated = Self::fetch_one(pool, &db_contact.pubkey)
+            .await?
+            .ok_or(Error::NotFoundContact(db_contact.pubkey().to_string()))?;
+
+        Ok(db_contact_updated)
     }
 
-    pub async fn add_to_unseen_count(pool: &SqlitePool, db_contact: &mut DbContact) -> Result<()> {
-        db_contact.unseen_messages += 1;
+    pub async fn add_to_unseen_count(
+        pool: &SqlitePool,
+        db_contact: &DbContact,
+    ) -> Result<DbContact> {
         let sql = r#"
-                UPDATE contact 
-                SET updated_at=?, unseen_messages=?
-                WHERE pubkey=?
+                UPDATE contact
+                SET updated_at = ?, unseen_messages = unseen_messages + 1
+                WHERE pubkey = ?
             "#;
 
         sqlx::query(sql)
             .bind(Utc::now().timestamp_millis())
-            .bind(&db_contact.unseen_messages)
             .bind(&db_contact.pubkey.to_string())
             .execute(pool)
             .await?;
-        Ok(())
+
+        let db_contact_updated = Self::fetch_one(pool, &db_contact.pubkey)
+            .await?
+            .ok_or(Error::NotFoundContact(db_contact.pubkey().to_string()))?;
+
+        Ok(db_contact_updated)
     }
 
     pub async fn update_unseen_count(
         pool: &SqlitePool,
-        db_contact: &mut DbContact,
+        db_contact: &DbContact,
         count: u8,
-    ) -> Result<()> {
+    ) -> Result<DbContact> {
         tracing::info!("updated contact count: {}", count);
-        db_contact.unseen_messages = count;
         let sql = r#"
                 UPDATE contact 
                 SET updated_at=?, unseen_messages=?
@@ -198,11 +201,16 @@ impl DbContact {
 
         sqlx::query(sql)
             .bind(Utc::now().timestamp_millis())
-            .bind(&db_contact.unseen_messages)
+            .bind(count)
             .bind(&db_contact.pubkey.to_string())
             .execute(pool)
             .await?;
-        Ok(())
+
+        let db_contact_updated = Self::fetch_one(pool, &db_contact.pubkey)
+            .await?
+            .ok_or(Error::NotFoundContact(db_contact.pubkey().to_string()))?;
+
+        Ok(db_contact_updated)
     }
 
     fn with_relay_url(mut self, relay_url: Option<String>) -> Self {

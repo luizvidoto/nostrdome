@@ -10,8 +10,6 @@ use crate::components::{relay_row, RelayRow};
 use crate::net::{self, BackEndConnection};
 use crate::widget::Element;
 
-const CARD_MAX_WIDTH: f32 = 300.0;
-
 #[derive(Debug, Clone)]
 pub enum Message {
     RelayMessage(relay_row::Message),
@@ -147,3 +145,5 @@ impl State {
         .into()
     }
 }
+
+const CARD_MAX_WIDTH: f32 = 300.0;

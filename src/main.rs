@@ -138,8 +138,11 @@ impl Application for App {
             .into()
     }
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
-        match message {
-            Message::ToLogin => self.state = State::login(),
+        let command = match message {
+            Message::ToLogin => {
+                self.state = State::login();
+                Command::none()
+            }
             Message::LoginMessage(login_msg) => {
                 if let State::Login { state } = &mut self.state {
                     if let login::Message::SubmitPress(secret_key) = login_msg {
@@ -148,6 +151,7 @@ impl Application for App {
                         state.update(login_msg);
                     }
                 }
+                Command::none()
             }
             Message::RouterMessage(msg) => {
                 if let State::Loaded {
@@ -162,9 +166,11 @@ impl Application for App {
                         }
                     }
 
-                    return router
+                    router
                         .update(msg, back_conn, self.color_theme)
-                        .map(Message::RouterMessage);
+                        .map(Message::RouterMessage)
+                } else {
+                    Command::none()
                 }
             }
             Message::BackEndEvent(event) => match event {
@@ -174,27 +180,32 @@ impl Application for App {
                         back_conn.send(net::Message::ConnectRelays);
                         self.state = State::loaded(keys.clone(), back_conn);
                     }
+                    Command::none()
                 }
                 net::Event::Disconnected => {
                     self.state = State::login();
+                    Command::none()
                 }
                 net::Event::Error(e) => {
                     tracing::error!("{}", e);
+                    Command::none()
                 }
                 ev => {
                     if let State::Loaded {
                         router, back_conn, ..
                     } = &mut self.state
                     {
-                        return router
+                        router
                             .back_end_event(ev, back_conn)
-                            .map(Message::RouterMessage);
+                            .map(Message::RouterMessage)
+                    } else {
+                        Command::none()
                     }
                 }
             },
-        }
+        };
 
-        Command::none()
+        command
     }
 }
 

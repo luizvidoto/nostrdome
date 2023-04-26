@@ -1,17 +1,18 @@
 use chrono::{Datelike, NaiveDateTime};
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
-use iced::{alignment, Command, Length};
+use iced::{Command, Length};
 
 use crate::components::contact_card;
 use crate::db::DbContact;
 use crate::net::{self, BackEndConnection};
 use crate::style;
-use crate::types::ChatMessage;
+use crate::types::{chat_message, ChatMessage};
 use crate::utils::send_icon;
 use crate::widget::{Column, Element};
 use once_cell::sync::Lazy;
 
-static SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
+// static CONTACTS_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
+static CHAT_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -21,6 +22,7 @@ pub enum Message {
     DMNMessageChange(String),
     DMSentPress,
     AddContactPress,
+    ChatMessage(chat_message::Message),
 }
 
 #[derive(Debug, Clone)]
@@ -66,13 +68,13 @@ impl State {
                         col.push(contact.view().map(Message::ContactCardMessage))
                     }),
             )
-            .id(SCROLLABLE_ID.clone())
+            // .id(CONTACTS_SCROLLABLE_ID.clone())
             .into()
         };
         let first = container(contact_list);
-        let (chat_content, _) = self.messages.iter().fold(
+        let (chat_content, _): (Column<_>, Option<NaiveDateTime>) = self.messages.iter().fold(
             (column![], None),
-            |(mut col, last_date): (Column<'_, _>, Option<NaiveDateTime>), msg| {
+            |(mut col, last_date), msg: &ChatMessage| {
                 match (last_date, msg.created_at) {
                     (None, msg_date) => {
                         col = col.push(chat_day_divider(msg_date.clone()));
@@ -84,10 +86,21 @@ impl State {
                     }
                 }
 
-                (col.push(chat_message(&msg)), Some(msg.created_at))
+                (
+                    col.push(msg.view().map(Message::ChatMessage)),
+                    Some(msg.created_at),
+                )
             },
         );
-        let chat_messages = scrollable(chat_content).height(Length::Fill);
+        let chat_messages = scrollable(chat_content)
+            .vertical_scroll(
+                scrollable::Properties::new()
+                    .width(6.0)
+                    .margin(0.0)
+                    .scroller_width(6.0),
+            )
+            .id(CHAT_SCROLLABLE_ID.clone())
+            .height(Length::Fill);
         let message_input = text_input("Write a message...", &self.dm_msg)
             .on_submit(Message::DMSentPress)
             .on_input(Message::DMNMessageChange);
@@ -144,21 +157,21 @@ impl State {
         match event {
             net::Event::DatabaseSuccessEvent(kind) => {
                 match kind {
-                    net::DatabaseSuccessEventKind::SentDM((_id, db_contact, msg)) => {
-                        self.update_contact(db_contact.clone());
+                    // net::DatabaseSuccessEventKind::SentDM((_id, db_contact, msg)) => {
+                    //     self.update_contact(db_contact.clone());
 
-                        if self.active_contact.as_ref() == Some(&db_contact) {
-                            // estou na conversa
-                            self.messages.push(msg);
-                            return scrollable::snap_to(
-                                SCROLLABLE_ID.clone(),
-                                scrollable::RelativeOffset::END,
-                            );
-                        } else {
-                            // não estou na conversa
-                            tracing::error!("Impossible to send message outside chat");
-                        }
-                    }
+                    //     if self.active_contact.as_ref() == Some(&db_contact) {
+                    //         // estou na conversa
+                    //         self.messages.push(msg);
+                    //         return scrollable::snap_to(
+                    //             CHAT_SCROLLABLE_ID.clone(),
+                    //             scrollable::RelativeOffset::END,
+                    //         );
+                    //     } else {
+                    //         // não estou na conversa
+                    //         tracing::error!("Impossible to send message outside chat");
+                    //     }
+                    // }
                     net::DatabaseSuccessEventKind::ReceivedDM((db_contact, msg)) => {
                         self.update_contact(db_contact.clone());
 
@@ -166,18 +179,21 @@ impl State {
                             // estou na conversa
                             self.messages.push(msg.clone());
                             return scrollable::snap_to(
-                                SCROLLABLE_ID.clone(),
+                                CHAT_SCROLLABLE_ID.clone(),
                                 scrollable::RelativeOffset::END,
                             );
                         } else {
                             // não estou na conversa
-                            back_conn.send(net::Message::UpdateUnseenCount(db_contact))
+                            back_conn.send(net::Message::AddToUnseenCount(db_contact))
                         }
                     }
 
-                    net::DatabaseSuccessEventKind::NewDMAndContact((db_contact, _)) => self
-                        .contacts
-                        .push(contact_card::State::from_db_contact(&db_contact)),
+                    net::DatabaseSuccessEventKind::NewDMAndContact((db_contact, _)) => {
+                        self.contacts
+                            .push(contact_card::State::from_db_contact(&db_contact));
+                        // não estou na conversa
+                        back_conn.send(net::Message::AddToUnseenCount(db_contact))
+                    }
 
                     net::DatabaseSuccessEventKind::ContactUpdated(db_contact) => {
                         self.update_contact(db_contact);
@@ -195,7 +211,7 @@ impl State {
                         .sort_by(|a, b| a.created_at.cmp(&b.created_at));
 
                     return scrollable::snap_to(
-                        SCROLLABLE_ID.clone(),
+                        CHAT_SCROLLABLE_ID.clone(),
                         scrollable::RelativeOffset::END,
                     );
                 }
@@ -230,6 +246,11 @@ impl State {
 
     pub fn update(&mut self, message: Message, back_conn: &mut BackEndConnection) {
         match message {
+            Message::ChatMessage(chat_msg) => match chat_msg {
+                chat_message::Message::ChatRightClick(msg_clicked) => {
+                    dbg!(msg_clicked);
+                }
+            },
             Message::AddContactPress => (),
             Message::DMNMessageChange(text) => {
                 self.dm_msg = text;
@@ -282,38 +303,6 @@ impl State {
             }
         }
     }
-}
-
-fn chat_message<Message: 'static>(chat_msg: &ChatMessage) -> Element<'static, Message> {
-    let chat_alignment = match chat_msg.is_from_user {
-        false => alignment::Horizontal::Left,
-        true => alignment::Horizontal::Right,
-    };
-
-    let container_style = if chat_msg.is_from_user {
-        style::Container::SentMessage
-    } else {
-        style::Container::ReceivedMessage
-    };
-
-    let time_str = chat_msg.created_at.time().format("%H:%M").to_string();
-    let data_cp = column![
-        // container(text("")).height(10.0),
-        container(text(&time_str).style(style::Text::Placeholder).size(14))
-    ];
-
-    let msg_content = text(&chat_msg.content).size(18);
-
-    let message_container = container(row![msg_content, data_cp].spacing(5))
-        .padding([5, 10])
-        .style(container_style);
-
-    container(message_container)
-        .width(Length::Fill)
-        .center_y()
-        .align_x(chat_alignment)
-        .padding([2, 20])
-        .into()
 }
 
 fn chat_day_divider<Message: 'static>(date: NaiveDateTime) -> Element<'static, Message> {

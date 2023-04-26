@@ -4,8 +4,9 @@ CREATE TABLE message (
     content TEXT NOT NULL,
     from_pubkey TEXT NOT NULL,
     to_pubkey TEXT NOT NULL,
-    -- event_id (optional)
-    event_id INTEGER,
+    -- database event_id
+    event_id INTEGER NOT NULL REFERENCES event(event_id) ON UPDATE CASCADE ON DELETE CASCADE,
+    event_hash BLOB NOT NULL,
     -- UNIX timestamp as integer milliseconds
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,

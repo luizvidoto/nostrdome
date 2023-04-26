@@ -3,26 +3,6 @@ use directories::ProjectDirs;
 use sqlx::SqlitePool;
 use std::cmp::Ordering;
 
-/// Latest database version
-pub const DB_VERSION: usize = 1;
-
-// /// Startup DB Pragmas
-// pub const STARTUP_SQL: &str = r##"
-// PRAGMA main.synchronous=NORMAL;
-// PRAGMA foreign_keys = ON;
-// PRAGMA journal_size_limit=32768;
-// pragma mmap_size = 17179869184; -- cap mmap at 16GB
-// "##;
-
-const INITIAL_SETUP: [&str; 6] = [
-    include_str!("../../migrations/1_setup.sql"),
-    include_str!("../../migrations/2_event.sql"),
-    include_str!("../../migrations/3_relay.sql"),
-    include_str!("../../migrations/4_tag.sql"),
-    include_str!("../../migrations/5_contact.sql"),
-    include_str!("../../migrations/6_message.sql"),
-];
-
 #[derive(Debug, Clone)]
 pub struct Database {
     pub pool: SqlitePool,
@@ -136,3 +116,23 @@ const _UPGRADE_SQL: [&str; 0] = [
     log::info!("database schema upgraded v1 -> v2");
     Ok(2)
 } */
+
+/// Latest database version
+pub const DB_VERSION: usize = 1;
+
+// /// Startup DB Pragmas
+// pub const STARTUP_SQL: &str = r##"
+// PRAGMA main.synchronous=NORMAL;
+// PRAGMA foreign_keys = ON;
+// PRAGMA journal_size_limit=32768;
+// pragma mmap_size = 17179869184; -- cap mmap at 16GB
+// "##;
+
+const INITIAL_SETUP: [&str; 6] = [
+    include_str!("../../migrations/1_setup.sql"),
+    include_str!("../../migrations/2_event.sql"),
+    include_str!("../../migrations/3_relay.sql"),
+    include_str!("../../migrations/4_tag.sql"),
+    include_str!("../../migrations/5_contact.sql"),
+    include_str!("../../migrations/6_message.sql"),
+];

@@ -1,4 +1,4 @@
-mod chat_message;
+pub mod chat_message;
 mod event;
 mod relay_url;
 

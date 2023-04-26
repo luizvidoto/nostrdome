@@ -107,12 +107,9 @@ pub fn millis_to_naive_or_err(millis: i64, index: &str) -> Result<NaiveDateTime,
 pub fn pubkey_or_err(pubkey_str: &str, index: &str) -> Result<XOnlyPublicKey, sqlx::Error> {
     XOnlyPublicKey::from_str(pubkey_str).map_err(|e| handle_decode_error(e, index))
 }
-
-// Fonts
-const ICONS: Font = Font::External {
-    name: "Icons",
-    bytes: include_bytes!("../fonts/fa_icons.otf"),
-};
+pub fn event_id_or_err(event_id: &str, index: &str) -> Result<EventId, sqlx::Error> {
+    EventId::from_str(event_id).map_err(|e| handle_decode_error(e, index))
+}
 
 fn icon(unicode: char) -> Text<'static> {
     text(unicode.to_string())
@@ -133,3 +130,9 @@ pub fn delete_icon() -> Text<'static> {
 pub fn send_icon() -> Text<'static> {
     icon('\u{F1D8}')
 }
+
+// Fonts
+const ICONS: Font = Font::External {
+    name: "Icons",
+    bytes: include_bytes!("../fonts/fa_icons.otf"),
+};

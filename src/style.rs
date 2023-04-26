@@ -75,10 +75,10 @@ impl AppPalette {
         contact_selected: Color::from_rgb(43.0 / 255.0, 82.0 / 255.0, 120.0 / 255.0),
         contact_hover: Color::from_rgb(32.0 / 255.0, 43.0 / 255.0, 54.0 / 255.0),
         contact: Color::from_rgb(23.0 / 255.0, 33.0 / 255.0, 43.0 / 255.0),
-        hovered_bg_scrollbar: Color::from_rgba(255.0 / 255.0, 255.0 / 255.0, 255.0 / 255.0, 0.1),
-        hovered_bg_scroller: Color::from_rgba(120.0 / 255.0, 120.0 / 255.0, 120.0 / 255.0, 0.4),
-        hovered_bg_scrollbar_mo: Color::from_rgba(255.0 / 255.0, 255.0 / 255.0, 255.0 / 255.0, 0.3),
-        hovered_bg_scroller_mo: Color::from_rgba(120.0 / 255.0, 120.0 / 255.0, 120.0 / 255.0, 0.6),
+        hovered_bg_scrollbar: Color::from_rgba(120.0 / 255.0, 120.0 / 255.0, 120.0 / 255.0, 0.1),
+        hovered_bg_scroller: Color::from_rgba(255.0 / 255.0, 255.0 / 255.0, 255.0 / 255.0, 0.2),
+        hovered_bg_scrollbar_mo: Color::from_rgba(120.0 / 255.0, 120.0 / 255.0, 120.0 / 255.0, 0.2),
+        hovered_bg_scroller_mo: Color::from_rgba(255.0 / 255.0, 255.0 / 255.0, 255.0 / 255.0, 0.5),
         received_message_bg: Color::from_rgb(24.0 / 255.0, 37.0 / 255.0, 51.0 / 255.0),
         sent_message_bg: Color::from_rgb(43.0 / 255.0, 83.0 / 255.0, 120.0 / 255.0),
         chat_divider_bg: Color::from_rgb(30.0 / 255.0, 44.0 / 255.0, 58.0 / 255.0),
@@ -202,9 +202,9 @@ impl scrollable::StyleSheet for Theme {
         scrollable::Scrollbar {
             scroller: scrollable::Scroller {
                 color: self.pallete().text_color,
-                ..self.active(style).scroller
+                ..self.hovered(style, true).scroller
             },
-            ..self.active(style)
+            ..self.hovered(style, true)
         }
     }
     fn hovered(&self, style: &Self::Style, is_mouse_over_scrollbar: bool) -> scrollable::Scrollbar {
