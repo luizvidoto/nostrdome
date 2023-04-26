@@ -1,9 +1,11 @@
-use crate::db::{
-    get_last_event_received, Database, DbChat, DbContact, DbEvent, DbMessage, MessageStatus,
-};
+use crate::db::{Database, DbChat, DbContact, DbEvent, DbMessage, MessageStatus};
 use crate::error::Error;
 use crate::net::contact::{insert_batch_of_contacts, insert_contact};
 use crate::net::event::insert_event_with_tt;
+use crate::net::relay::{
+    add_relay, connect_relay, connect_relays, fetch_relays, toggle_read_for_relay,
+    toggle_write_for_relay, update_relay_db_and_client,
+};
 use crate::types::ChatMessage;
 use async_stream::stream;
 use futures::channel::mpsc::TrySendError;
@@ -13,8 +15,7 @@ use iced::futures::{channel::mpsc, StreamExt};
 use iced::{subscription, Subscription};
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 use nostr_sdk::{
-    Client, Contact, EventBuilder, EventId, Filter, Keys, Kind, Relay, RelayMessage,
-    RelayPoolNotification, Timestamp, Url,
+    Client, Contact, EventBuilder, EventId, Keys, Relay, RelayMessage, RelayPoolNotification, Url,
 };
 use sqlx::SqlitePool;
 use std::pin::Pin;
@@ -22,6 +23,7 @@ use std::time::Duration;
 
 mod contact;
 mod event;
+mod relay;
 
 #[derive(Debug, Clone)]
 pub struct BackEndConnection(mpsc::UnboundedSender<Message>);
@@ -399,128 +401,6 @@ async fn _fetch_contacts_from_relays(nostr_client: &Client) -> Result<Vec<Contac
     Ok(contacts)
 }
 
-async fn fetch_relays(nostr_client: &Client) -> Result<Vec<Relay>, Error> {
-    tracing::info!("Fetching relays");
-    let relays = nostr_client.relays().await;
-    Ok(relays.into_iter().map(|(_url, r)| r).collect())
-}
-async fn add_relay(nostr_client: &Client, url: &Url) -> Result<(), Error> {
-    tracing::info!("Add relay to client: {}", url);
-    nostr_client.add_relay(url.as_str(), None).await?;
-    Ok(())
-}
-async fn update_relay_db_and_client(
-    _pool: &SqlitePool,
-    _nostr_client: &Client,
-    _url: &Url,
-) -> Result<(), Error> {
-    tracing::info!("Updating relay db");
-    Ok(())
-}
-
-async fn connect_relay(nostr_client: &Client, relay_url: &Url) -> Result<(), Error> {
-    if let Some(relay) = nostr_client
-        .relays()
-        .await
-        .values()
-        .find(|r| &r.url() == relay_url)
-    {
-        if let nostr_sdk::RelayStatus::Connected = relay.status().await {
-            tracing::info!("Disconnecting from relay");
-            nostr_client.disconnect_relay(relay_url.as_str()).await?;
-            tokio::time::sleep(Duration::from_secs(3)).await;
-        }
-        tracing::info!("Connecting to relay: {}", relay_url);
-        nostr_client.connect_relay(relay_url.as_str()).await?;
-    } else {
-        tracing::warn!("Relay not found on client: {}", relay_url);
-    }
-
-    Ok(())
-}
-
-async fn connect_relays(
-    pool: &SqlitePool,
-    nostr_client: &Client,
-    keys: &Keys,
-) -> Result<(), Error> {
-    let last_timestamp = get_last_event_received(pool).await?;
-
-    tracing::info!("Adding relays to client");
-    // Add relays to client
-    for r in vec![
-        // "wss://eden.nostr.land",
-        // "wss://relay.snort.social",
-        // "wss://relay.nostr.band",
-        // "wss://nostr.fmt.wiz.biz",
-        // "wss://relay.damus.io",
-        // "wss://nostr.anchel.nl/",
-        // "ws://192.168.15.119:8080"
-        "ws://192.168.15.151:8080",
-        // "ws://0.0.0.0:8080",
-    ] {
-        match nostr_client.add_relay(r, None).await {
-            Ok(_) => tracing::info!("Added: {}", r),
-            Err(e) => tracing::error!("{}", e),
-        }
-    }
-
-    tracing::info!("Connecting to relays");
-    nostr_client.connect().await;
-
-    request_events(
-        &nostr_client,
-        &keys.public_key(),
-        &keys.public_key(),
-        last_timestamp,
-    )
-    .await?;
-
-    Ok(())
-}
-async fn toggle_read_for_relay(nostr_client: &Client, url: &Url, read: bool) -> Result<(), Error> {
-    let mut relays = nostr_client.relays().await;
-    if let Some(relay) = relays.get_mut(url) {
-        relay.opts().set_read(read)
-    }
-    Ok(())
-}
-async fn toggle_write_for_relay(
-    nostr_client: &Client,
-    url: &Url,
-    write: bool,
-) -> Result<(), Error> {
-    let mut relays = nostr_client.relays().await;
-    if let Some(relay) = relays.get_mut(url) {
-        relay.opts().set_write(write)
-    }
-    Ok(())
-}
-
-async fn request_events(
-    nostr_client: &Client,
-    own_pubkey: &XOnlyPublicKey,
-    pubkey: &XOnlyPublicKey,
-    last_timestamp: u64,
-) -> Result<(), Error> {
-    tracing::info!("Requesting events");
-    let sent_msgs_sub = Filter::new()
-        .author(own_pubkey.to_string())
-        .kind(Kind::EncryptedDirectMessage)
-        .since(Timestamp::from(last_timestamp))
-        .until(Timestamp::now());
-    let recv_msgs_sub = Filter::new()
-        .pubkey(pubkey.to_owned())
-        .kind(Kind::EncryptedDirectMessage)
-        .since(Timestamp::from(last_timestamp))
-        .until(Timestamp::now());
-    let timeout = Duration::from_secs(10);
-    nostr_client
-        .req_events_of(vec![sent_msgs_sub, recv_msgs_sub], Some(timeout))
-        .await;
-    Ok(())
-}
-
 async fn send_and_store_dm(
     pool: &SqlitePool,
     nostr_client: &Client,
@@ -548,35 +428,10 @@ async fn send_and_store_dm(
 
     if let Some((event, relay_url)) = has_event {
         Ok(insert_event_with_tt(pool, keys, event, &relay_url).await?)
-        // tracing::info!("Encrypting local message");
-        // let db_message = DbMessage::new_local(&keys, db_contact.pubkey(), message)?;
-
-        // tracing::info!("Inserting local message");
-        // let msg_id = DbMessage::insert_message(pool, &db_message).await?;
-        // let db_message = db_message.with_id(msg_id);
-
-        // let chat_message = ChatMessage::from_db_message(&db_message, true, &db_contact, message)?;
-        // DbContact::new_message(pool, &mut db_contact, &chat_message).await?;
-        // Ok((event_id, db_contact, chat_message))
     } else {
         Err(Error::NoRelayToWrite)
     }
 }
-
-// async fn update_unseen_count(
-//     pool: &SqlitePool,
-//     keys: &Keys,
-//     mut db_contact: DbContact,
-// ) -> Result<DbContact, Error> {
-//     let own_pubkey = keys.public_key();
-//     let chat = DbChat::new(&own_pubkey, db_contact.pubkey());
-//     // sera q é necessário fazer isso
-//     // ou somente falar unseen_messages += 1?
-//     let count = chat.fetch_unseen_count(pool).await?;
-//     DbContact::update_unseen_count(pool, &mut db_contact, count).await?;
-
-//     Ok(db_contact)
-// }
 
 async fn add_to_unseen_count(
     pool: &SqlitePool,
