@@ -3,7 +3,7 @@ use iced::{alignment, Length};
 
 use crate::components::{contact_row, ContactRow};
 use crate::icon::{import_icon, plus_icon, to_cloud_icon};
-use crate::net::BackEndConnection;
+use crate::net::DBConnection;
 use crate::style;
 use crate::utils::contact_matches_search;
 use crate::widget::Element;
@@ -27,19 +27,15 @@ pub struct State {
     search_contact_input: String,
 }
 impl State {
-    pub fn new(back_conn: &mut BackEndConnection) -> Self {
-        back_conn.send(net::Message::FetchContacts);
+    pub fn new(db_conn: &mut DBConnection) -> Self {
+        db_conn.send(net::Message::FetchContacts);
         Self {
             contacts: vec![],
             search_contact_input: "".into(),
         }
     }
 
-    pub fn update(
-        &mut self,
-        message: Message,
-        back_conn: &mut BackEndConnection,
-    ) -> Option<Message> {
+    pub fn update(&mut self, message: Message, db_conn: &mut DBConnection) -> Option<Message> {
         match message {
             Message::OpenSendContactModal => (),
             Message::OpenEditContactModal(_) => (),
@@ -48,7 +44,7 @@ impl State {
             Message::SearchContactInputChange(text) => self.search_contact_input = text,
             Message::ContactRowMessage(ct_msg) => match ct_msg {
                 contact_row::Message::DeleteContact(contact) => {
-                    back_conn.send(net::Message::DeleteContact(contact))
+                    db_conn.send(net::Message::DeleteContact(contact))
                 }
                 contact_row::Message::EditContact(contact) => {
                     // self.modal_state = ModalState::add_contact(Some(contact));
@@ -56,7 +52,7 @@ impl State {
                 }
             },
             Message::DeleteContact(contact) => {
-                back_conn.send(net::Message::DeleteContact(contact));
+                db_conn.send(net::Message::DeleteContact(contact));
             }
             Message::BackEndEvent(db_ev) => match db_ev {
                 net::Event::GotContacts(db_contacts) => {
@@ -67,7 +63,7 @@ impl State {
                     | net::SuccessKind::ContactDeleted(_)
                     | net::SuccessKind::ContactUpdated(_)
                     | net::SuccessKind::ContactsImported(_) => {
-                        back_conn.send(net::Message::FetchContacts);
+                        db_conn.send(net::Message::FetchContacts);
                     }
                     _ => (),
                 },
@@ -90,9 +86,14 @@ impl State {
                 .align_items(alignment::Alignment::Center)
                 .spacing(2),
         )
+        .padding(5)
         .on_press(Message::OpenAddContactModal);
-        let import_btn = button(import_icon().size(18)).on_press(Message::OpenImportContactModal);
-        let send_btn = button(to_cloud_icon().size(18)).on_press(Message::OpenSendContactModal);
+        let import_btn = button(import_icon().size(18))
+            .padding(5)
+            .on_press(Message::OpenImportContactModal);
+        let send_btn = button(to_cloud_icon().size(18))
+            .padding(5)
+            .on_press(Message::OpenSendContactModal);
 
         let utils_row = row![
             search_contact,

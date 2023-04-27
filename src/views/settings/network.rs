@@ -1,4 +1,4 @@
-use iced::alignment::Horizontal;
+use iced::alignment::{self, Horizontal};
 use iced::widget::{button, column, container, row, text};
 use iced::{Command, Length, Subscription};
 use iced_aw::{Card, Modal};
@@ -7,7 +7,8 @@ use nostr_sdk::Url;
 use crate::components::text::title;
 use crate::components::text_input_group::text_input_group;
 use crate::components::{relay_row, RelayRow};
-use crate::net::{self, BackEndConnection};
+use crate::icon::plus_icon;
+use crate::net::{self, DBConnection};
 use crate::widget::Element;
 
 #[derive(Debug, Clone)]
@@ -36,8 +37,8 @@ impl State {
             .collect();
         iced::Subscription::batch(relay_subs)
     }
-    pub fn new(back_conn: &mut BackEndConnection) -> Self {
-        back_conn.send(net::Message::FetchRelays);
+    pub fn new(db_conn: &mut DBConnection) -> Self {
+        db_conn.send(net::Message::FetchRelays);
         Self {
             relays: vec![],
             show_modal: false,
@@ -45,11 +46,7 @@ impl State {
         }
     }
 
-    pub fn update(
-        &mut self,
-        message: Message,
-        back_conn: &mut BackEndConnection,
-    ) -> Command<Message> {
+    pub fn update(&mut self, message: Message, db_conn: &mut DBConnection) -> Command<Message> {
         match message {
             Message::AddRelayInputChange(relay_addrs) => self.add_relay_input = relay_addrs,
             Message::CloseModal | Message::CancelButtonPressed => {
@@ -59,7 +56,7 @@ impl State {
             Message::OkButtonPressed => {
                 match Url::try_from(self.add_relay_input.as_str()) {
                     Ok(url) => {
-                        back_conn.send(net::Message::AddRelay(url));
+                        db_conn.send(net::Message::AddRelay(url));
                     }
                     Err(e) => {
                         // SOME VALIDATION TO THE USER
@@ -82,7 +79,7 @@ impl State {
                     net::SuccessKind::RelayCreated
                     | net::SuccessKind::RelayDeleted
                     | net::SuccessKind::RelayUpdated => {
-                        back_conn.send(net::Message::FetchRelays);
+                        db_conn.send(net::Message::FetchRelays);
                     }
                     _ => (),
                 },
@@ -90,7 +87,7 @@ impl State {
             },
             Message::RelayMessage(msg) => {
                 self.relays.iter_mut().for_each(|r| {
-                    let _ = r.update(msg.clone(), back_conn);
+                    let _ = r.update(msg.clone(), db_conn);
                 });
             }
         }
@@ -104,7 +101,13 @@ impl State {
             col.push(relay.view().map(Message::RelayMessage))
         });
         let empty = container(text("")).width(Length::Fill);
-        let add_btn = button("Add").on_press(Message::OpenAddRelayModal);
+        let add_btn = button(
+            row![text("Add").size(18), plus_icon().size(14)]
+                .align_items(alignment::Alignment::Center)
+                .spacing(2),
+        )
+        .padding(5)
+        .on_press(Message::OpenAddRelayModal);
         let add_row = row![empty, add_btn];
         let content: Element<_> = container(column![title, add_row, relays])
             .width(Length::Fill)

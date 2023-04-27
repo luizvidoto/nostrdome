@@ -1,6 +1,6 @@
 use crate::{
     components::text::title,
-    net::{self, BackEndConnection},
+    net::{self, DBConnection},
     style,
     widget::Element,
 };
@@ -25,7 +25,7 @@ impl State {
     pub fn backend_event(
         &mut self,
         event: net::Event,
-        _back_conn: &mut BackEndConnection,
+        _db_conn: &mut DBConnection,
     ) -> Command<Message> {
         match event {
             net::Event::ChannelCreated(event_id) => {
@@ -36,11 +36,11 @@ impl State {
         }
         Command::none()
     }
-    pub fn update(&mut self, message: Message, back_conn: &mut BackEndConnection) {
+    pub fn update(&mut self, message: Message, db_conn: &mut DBConnection) {
         match message {
             Message::GoToChat => (),
             Message::CreateChannel => {
-                back_conn.send(net::Message::CreateChannel);
+                db_conn.send(net::Message::CreateChannel);
             }
         }
     }

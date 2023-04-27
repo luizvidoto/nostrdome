@@ -70,7 +70,6 @@ async fn received_encrypted_dm(
 }
 
 pub async fn send_dm(
-    pool: &SqlitePool,
     nostr_client: &Client,
     keys: &Keys,
     db_contact: &DbContact,
@@ -95,7 +94,8 @@ pub async fn send_dm(
     }
 
     if let Some((event, _relay_url)) = has_event {
-        Ok(insert_pending_event(pool, keys, event).await?)
+        // Ok(insert_pending_event(pool, keys, event).await?)
+        Ok(Event::InsertPendingEvent(event))
     } else {
         Err(Error::NoRelayToWrite)
     }

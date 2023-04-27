@@ -1,7 +1,7 @@
 use crate::db::{Database, DbChat, DbContact, DbEvent, DbMessage, DbRelayResponse, MessageStatus};
 use crate::error::Error;
 use crate::net::contact::{insert_batch_of_contacts, insert_contact};
-use crate::net::event::{received_event, send_contact_list_to, send_dm};
+use crate::net::event::send_dm;
 use crate::net::relay::{
     add_relay, connect_relay, connect_relays, fetch_relays, fetch_relays_urls,
     toggle_read_for_relay, toggle_write_for_relay, update_relay_db_and_client,
@@ -26,228 +26,119 @@ mod contact;
 mod event;
 mod relay;
 
-#[derive(Debug, Clone)]
-pub struct BackEndConnection(mpsc::UnboundedSender<Message>);
-impl BackEndConnection {
-    pub fn send(&mut self, message: Message) {
-        // TODO
-        // error: send failed because receiver is gone
-        if let Err(e) = self.0.unbounded_send(message).map_err(|e| e.to_string()) {
+pub trait Connection {
+    fn sender(&self) -> &mpsc::UnboundedSender<Message>;
+
+    fn send(&mut self, message: Message) {
+        if let Err(e) = self
+            .sender()
+            .unbounded_send(message)
+            .map_err(|e| e.to_string())
+        {
             tracing::error!("{}", e);
         }
     }
-    pub fn try_send(&mut self, message: Message) -> Result<(), TrySendError<Message>> {
-        self.0.unbounded_send(message)
+
+    fn try_send(&mut self, message: Message) -> Result<(), TrySendError<Message>> {
+        self.sender().unbounded_send(message)
     }
 }
-pub enum State {
+
+#[derive(Debug, Clone)]
+pub struct DBConnection(mpsc::UnboundedSender<Message>);
+impl Connection for DBConnection {
+    fn sender(&self) -> &mpsc::UnboundedSender<Message> {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NostrConnection(mpsc::UnboundedSender<Message>);
+impl Connection for NostrConnection {
+    fn sender(&self) -> &mpsc::UnboundedSender<Message> {
+        &self.0
+    }
+}
+
+pub enum DatabaseState {
     Disconnected {
         keys: Keys,
         in_memory: bool,
     },
     Connected {
         receiver: mpsc::UnboundedReceiver<Message>,
-        nostr_client: Client,
         database: Database,
+        keys: Keys,
+    },
+}
+
+pub enum NostrClientState {
+    Disconnected {
+        keys: Keys,
+    },
+    Connected {
+        receiver: mpsc::UnboundedReceiver<Message>,
+        nostr_client: Client,
         keys: Keys,
         notifications_stream:
             Fuse<Pin<Box<dyn futures::Stream<Item = RelayPoolNotification> + Send>>>,
     },
 }
-#[derive(Debug, Clone)]
-pub enum Event {
-    LocalPendingEvent(DbEvent),
 
-    /// Event triggered when a connection to the back-end is established
-    Connected(BackEndConnection),
+pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
+    let database_sub = database_connect(keys);
+    let nostr_client_sub = nostr_client_connect(keys);
 
-    /// Event triggered when the connection to the back-end is lost
-    Disconnected,
-
-    /// Event triggered when an error occurs
-    Error(String),
-
-    /// NOSTR CLIENT EVENTS
-    /// Event triggered when relays are connected
-    RelaysConnected,
-
-    /// Event triggered when a list of relays is received
-    GotRelays(Vec<Relay>),
-
-    GotRelaysUrls(Vec<nostr_sdk::Url>),
-
-    /// Event triggered when a list of own events is received
-    GotOwnEvents(Vec<nostr_sdk::Event>),
-
-    /// Event triggered when a public key is received
-    GotPublicKey(XOnlyPublicKey),
-
-    GotRelayResponses(Vec<DbRelayResponse>),
-
-    /// Event triggered when an event is successfully processed
-    SomeEventSuccessId(EventId),
-
-    /// Event triggered when an event string is received
-    GotEvent(String),
-
-    /// Event triggered when a relay is removed
-    RelayRemoved(String),
-
-    /// Event triggered when a Nostr event is received
-    NostrEvent(nostr_sdk::Event),
-
-    /// Event triggered when a relay message is received
-    RelayMessage(RelayMessage),
-
-    /// Event triggered when the system is shutting down
-    Shutdown,
-
-    /// Event triggered when a relay is connected
-    RelayConnected(Url),
-
-    /// Event triggered when a relay is updated
-    UpdatedRelay,
-
-    /// DATABASE EVENTS
-    /// Event triggered when a database operation is successful
-    DBSuccessEvent(SuccessKind),
-
-    /// Event triggered when a list of chat messages is received
-    GotChatMessages((DbContact, Vec<ChatMessage>)),
-
-    /// Event triggered when a list of contacts is received
-    GotContacts(Vec<DbContact>),
-
-    RequestedEvents,
-
-    ChannelCreated(EventId),
-
-    /// Event triggered when no event is to be processed
-    None,
+    vec![database_sub, nostr_client_sub]
 }
 
-#[derive(Debug, Clone)]
-pub enum Message {
-    // NOSTR CLIENT MESSAGES
-    ConnectRelays,
-    ConnectToRelay(Url),
-    SendDMTo((DbContact, String)),
-    ShowPublicKey,
-    FetchRelays,
-    FetchRelaysUrls,
-    AddRelay(Url),
-    UpdateRelay(Url),
-    DeleteRelay(Url),
-    ToggleRelayRead((Url, bool)),
-    ToggleRelayWrite((Url, bool)),
-    SendContactListToRelay(Url),
-
-    // DATABASE MESSAGES
-    FetchRelayResponses(i64),
-    FetchMessages(DbContact),
-    AddContact(DbContact),
-    ImportContacts(Vec<DbContact>),
-    FetchContacts,
-    UpdateContact(DbContact),
-    DeleteContact(DbContact),
-    AddToUnseenCount(DbContact),
-    CreateChannel,
-}
-
-#[derive(Debug, Clone)]
-pub enum SuccessKind {
-    RelayCreated,
-    RelayUpdated,
-    RelayDeleted,
-    ContactCreated(DbContact),
-    ContactUpdated(DbContact),
-    ContactDeleted(DbContact),
-    ContactsImported(Vec<DbContact>),
-    EventInserted(DbEvent),
-    ReceivedDM((DbContact, ChatMessage)),
-    NewDMAndContact((DbContact, ChatMessage)),
-    UpdateWithRelayResponse {
-        relay_response: DbRelayResponse,
-        db_event: DbEvent,
-        db_message: Option<DbMessage>,
-    },
-}
-
-pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
+pub fn database_connect(keys: &Keys) -> Subscription<Event> {
     struct Backend;
-    let id = std::any::TypeId::of::<Backend>();
+    let id = std::any::TypeId::of::<Database>();
 
     subscription::unfold(
         id,
-        State::Disconnected {
+        DatabaseState::Disconnected {
             keys: keys.clone(),
             in_memory: IN_MEMORY,
         },
         |state| async move {
             match state {
-                State::Disconnected { keys, in_memory } => {
-                    // Create new client
-                    tracing::info!("Creating Nostr Client");
-                    let nostr_client = Client::new(&keys);
-
-                    let mut notifications = nostr_client.notifications();
-                    let notifications_stream = stream! {
-                        while let Ok(notification) = notifications.recv().await {
-                            yield notification;
-                        }
-                    }
-                    .boxed()
-                    .fuse();
-
+                DatabaseState::Disconnected { keys, in_memory } => {
                     let (sender, receiver) = mpsc::unbounded();
 
-                    let database = match Database::new(in_memory, &keys.public_key().to_string())
-                        .await
-                    {
-                        Ok(database) => database,
-                        Err(e) => {
-                            tracing::error!("Failed to init database");
-                            tracing::error!("{}", e);
-                            tracing::warn!("Trying again in 2 secs");
-                            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                            return (Event::Disconnected, State::Disconnected { keys, in_memory });
-                        }
-                    };
+                    let database =
+                        match Database::new(in_memory, &keys.public_key().to_string()).await {
+                            Ok(database) => database,
+                            Err(e) => {
+                                tracing::error!("Failed to init database");
+                                tracing::error!("{}", e);
+                                tracing::warn!("Trying again in 2 secs");
+                                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                                return (
+                                    Event::Disconnected,
+                                    DatabaseState::Disconnected { keys, in_memory },
+                                );
+                            }
+                        };
 
                     (
-                        Event::Connected(BackEndConnection(sender)),
-                        State::Connected {
+                        Event::DbConnected(DBConnection(sender)),
+                        DatabaseState::Connected {
                             database,
                             receiver,
-                            nostr_client,
                             keys,
-                            notifications_stream,
                         },
                     )
                 }
-                State::Connected {
+                DatabaseState::Connected {
                     database,
                     mut receiver,
-                    nostr_client,
                     keys,
-                    mut notifications_stream,
                 } => {
-                    // tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
                     let event = futures::select! {
                         message = receiver.select_next_some() => {
                             let event = match message {
-                                Message::SendContactListToRelay(url)=>{
-                                    process_async_fn(
-                                        send_contact_list_to(&database.pool,&keys, &nostr_client, url),
-                                        |event| event
-                                    ).await
-                                }
-                                Message::CreateChannel => {
-                                    process_async_fn(
-                                        create_channel(&nostr_client),
-                                        |event| event
-                                    ).await
-                                }
                                 Message::FetchRelayResponses(event_id) => {
                                     process_async_fn(
                                         fetch_relays_responses(&database.pool, event_id),
@@ -260,12 +151,6 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                         |contact| Event::DBSuccessEvent(SuccessKind::ContactUpdated(contact))
                                     ).await
                                 }
-                                // Message::UpdateUnseenCount(contact) => {
-                                //     process_async_fn(
-                                //         update_unseen_count(&database.pool, &keys, contact),
-                                //         |contact| Event::DatabaseSuccessEvent(DatabaseSuccessEventKind::ContactUpdated(contact))
-                                //     ).await
-                                // }
                                 Message::AddContact(db_contact) => {
                                     process_async_fn(
                                         insert_contact(&keys, &database.pool, &db_contact),
@@ -301,7 +186,6 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                     )
                                     .await
                                 }
-
                                 Message::FetchMessages (contact) => {
                                     process_async_fn(
                                         fetch_and_decrypt_chat(&keys, &database.pool, contact),
@@ -309,9 +193,82 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                     )
                                     .await
                                 }
+                                _ => {
+                                    Event::None //TODO: remove this
+                                }
+                            };
+
+                            event
+                        }
+                    };
+                    (
+                        event,
+                        DatabaseState::Connected {
+                            database,
+                            receiver,
+                            keys,
+                        },
+                    )
+                }
+            }
+        },
+    )
+}
+
+pub fn nostr_client_connect(keys: &Keys) -> Subscription<Event> {
+    struct NostrClient;
+    let id = std::any::TypeId::of::<NostrClient>();
+
+    subscription::unfold(
+        id,
+        NostrClientState::Disconnected { keys: keys.clone() },
+        |state| async move {
+            match state {
+                NostrClientState::Disconnected { keys } => {
+                    // Create new client
+                    tracing::info!("Creating Nostr Client");
+                    let nostr_client = Client::new(&keys);
+
+                    let mut notifications = nostr_client.notifications();
+                    let notifications_stream = stream! {
+                        while let Ok(notification) = notifications.recv().await {
+                            yield notification;
+                        }
+                    }
+                    .boxed()
+                    .fuse();
+
+                    let (sender, receiver) = mpsc::unbounded();
+
+                    (
+                        Event::NostrConnected(NostrConnection(sender)),
+                        NostrClientState::Connected {
+                            receiver,
+                            nostr_client,
+                            keys,
+                            notifications_stream,
+                        },
+                    )
+                }
+                NostrClientState::Connected {
+                    mut receiver,
+                    nostr_client,
+                    keys,
+                    mut notifications_stream,
+                } => {
+                    // tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                    let event = futures::select! {
+                        message = receiver.select_next_some() => {
+                            let event = match message {
+                                Message::CreateChannel => {
+                                    process_async_fn(
+                                        create_channel(&nostr_client),
+                                        |event| event
+                                    ).await
+                                }
                                 Message::SendDMTo((contact, msg)) => {
                                     process_async_fn(
-                                        send_dm(&database.pool, &nostr_client, &keys, &contact, &msg),
+                                        send_dm(&nostr_client, &keys, &contact, &msg),
                                         |event| event,
                                     )
                                     .await
@@ -349,6 +306,7 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                     .await
                                 }
                                 Message::AddRelay(url) => {
+                                    println!("Message::AddRelay");
                                     process_async_fn(
                                         add_relay(&nostr_client, &url),
                                         |_| Event::DBSuccessEvent(SuccessKind::RelayCreated),
@@ -357,14 +315,14 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                 }
                                 Message::UpdateRelay(url) => {
                                     process_async_fn(
-                                        update_relay_db_and_client(&database.pool, &nostr_client, &url),
+                                        update_relay_db_and_client(&nostr_client, &url),
                                         |_| Event::DBSuccessEvent(SuccessKind::RelayUpdated),
                                     )
                                     .await
                                 }
                                 Message::ConnectRelays => {
                                     process_async_fn(
-                                        connect_relays(&database.pool,&nostr_client, &keys),
+                                        connect_relays(&nostr_client, &keys, 0), //TODO: fetch from db
                                         |_| Event::RelaysConnected,
                                     )
                                     .await
@@ -380,7 +338,8 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                         toggle_write_for_relay(&nostr_client, &url, write),
                                         |_| Event::DBSuccessEvent(SuccessKind::RelayUpdated)
                                     ).await
-                                }
+                                },
+                                _ => Event::None //TODO: remove this
                             };
 
                             event
@@ -390,16 +349,18 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                 RelayPoolNotification::Event(relay_url, event) => {
                                     // println!("*** NOTIFICATION ***");
                                     // dbg!(&event);
-                                    process_async_fn(
-                                        received_event(&database.pool, &keys, event, &relay_url),
-                                        |event| event
-                                    ).await
+                                    // process_async_fn(
+                                    //     received_event(&database.pool, &keys, event, &relay_url),
+                                    //     |event| event
+                                    // ).await
+                                    Event::ReceivedEvent((relay_url, event))
                                 },
                                 RelayPoolNotification::Message(relay_url, msg) => {
-                                    process_async_fn(
-                                        on_relay_message(&database.pool, &relay_url, &msg),
-                                        |event| event
-                                    ).await
+                                    // process_async_fn(
+                                    //     on_relay_message(&database.pool, &relay_url, &msg),
+                                    //     |event| event
+                                    // ).await
+                                    Event::ReceivedRelayMessage((relay_url, msg))
                                 }
                                 RelayPoolNotification::Shutdown => {
                                     Event::Shutdown
@@ -411,8 +372,7 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                     };
                     (
                         event,
-                        State::Connected {
-                            database,
+                        NostrClientState::Connected {
                             receiver,
                             nostr_client,
                             keys,
@@ -563,6 +523,129 @@ async fn create_channel(client: &Client) -> Result<Event, Error> {
 
     let event_id = client.new_channel(metadata).await?;
     Ok(Event::ChannelCreated(event_id))
+}
+
+#[derive(Debug, Clone)]
+pub enum Event {
+    LocalPendingEvent(DbEvent),
+    InsertPendingEvent(nostr_sdk::Event),
+    ReceivedEvent((Url, nostr_sdk::Event)),
+    ReceivedRelayMessage((Url, nostr_sdk::RelayMessage)),
+
+    /// Event triggered when a connection to the back-end is established
+    DbConnected(DBConnection),
+    NostrConnected(NostrConnection),
+
+    /// Event triggered when the connection to the back-end is lost
+    Disconnected,
+
+    /// Event triggered when an error occurs
+    Error(String),
+
+    /// NOSTR CLIENT EVENTS
+    /// Event triggered when relays are connected
+    RelaysConnected,
+
+    /// Event triggered when a list of relays is received
+    GotRelays(Vec<Relay>),
+
+    GotRelaysUrls(Vec<nostr_sdk::Url>),
+
+    /// Event triggered when a list of own events is received
+    GotOwnEvents(Vec<nostr_sdk::Event>),
+
+    /// Event triggered when a public key is received
+    GotPublicKey(XOnlyPublicKey),
+
+    GotRelayResponses(Vec<DbRelayResponse>),
+
+    /// Event triggered when an event is successfully processed
+    SomeEventSuccessId(EventId),
+
+    /// Event triggered when an event string is received
+    GotEvent(String),
+
+    /// Event triggered when a relay is removed
+    RelayRemoved(String),
+
+    /// Event triggered when a Nostr event is received
+    NostrEvent(nostr_sdk::Event),
+
+    /// Event triggered when a relay message is received
+    RelayMessage(RelayMessage),
+
+    /// Event triggered when the system is shutting down
+    Shutdown,
+
+    /// Event triggered when a relay is connected
+    RelayConnected(Url),
+
+    /// Event triggered when a relay is updated
+    UpdatedRelay,
+
+    /// DATABASE EVENTS
+    /// Event triggered when a database operation is successful
+    DBSuccessEvent(SuccessKind),
+
+    /// Event triggered when a list of chat messages is received
+    GotChatMessages((DbContact, Vec<ChatMessage>)),
+
+    /// Event triggered when a list of contacts is received
+    GotContacts(Vec<DbContact>),
+
+    RequestedEvents,
+
+    ChannelCreated(EventId),
+
+    /// Event triggered when no event is to be processed
+    None,
+}
+
+#[derive(Debug, Clone)]
+pub enum Message {
+    // NOSTR CLIENT MESSAGES
+    ConnectRelays,
+    ConnectToRelay(Url),
+    SendDMTo((DbContact, String)),
+    ShowPublicKey,
+    FetchRelays,
+    FetchRelaysUrls,
+    AddRelay(Url),
+    UpdateRelay(Url),
+    DeleteRelay(Url),
+    ToggleRelayRead((Url, bool)),
+    ToggleRelayWrite((Url, bool)),
+    SendContactListToRelay(Url),
+
+    // DATABASE MESSAGES
+    FetchRelayResponses(i64),
+    FetchMessages(DbContact),
+    AddContact(DbContact),
+    ImportContacts(Vec<DbContact>),
+    FetchContacts,
+    UpdateContact(DbContact),
+    DeleteContact(DbContact),
+    AddToUnseenCount(DbContact),
+    CreateChannel,
+}
+
+#[derive(Debug, Clone)]
+pub enum SuccessKind {
+    RelayCreated,
+    RelayUpdated,
+    RelayDeleted,
+    ContactCreated(DbContact),
+    ContactUpdated(DbContact),
+    ContactDeleted(DbContact),
+    ContactsImported(Vec<DbContact>),
+    EventInserted(DbEvent),
+    ReceivedDM((DbContact, ChatMessage)),
+    NewDMAndContact((DbContact, ChatMessage)),
+    UpdateWithRelayResponse {
+        relay_response: DbRelayResponse,
+        db_event: DbEvent,
+        db_message: Option<DbMessage>,
+    },
 }
 
 const IN_MEMORY: bool = false;

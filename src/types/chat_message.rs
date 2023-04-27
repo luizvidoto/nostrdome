@@ -5,7 +5,7 @@ use nostr_sdk::{secp256k1::XOnlyPublicKey, EventId};
 use serde::{Deserialize, Serialize};
 
 use crate::db::MessageStatus;
-use crate::icon::{check_icon, circle_check_icon, double_check_icon, xmark_icon};
+use crate::icon::{check_icon, double_check_icon, xmark_icon};
 use crate::widget::Element;
 use crate::{
     db::{DbContact, DbEvent, DbMessage},

@@ -16,7 +16,7 @@ use iced::{
     widget::{button, column, container, text},
     window, Application, Command, Length, Settings,
 };
-use net::{backend_connect, BackEndConnection};
+use net::{backend_connect, DBConnection, NostrConnection};
 use nostr_sdk::{prelude::FromSkStr, Keys};
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::EnvFilter;
@@ -44,7 +44,8 @@ pub enum State {
     },
     Loaded {
         keys: Keys,
-        back_conn: BackEndConnection,
+        db_conn: DBConnection,
+        ns_conn: Option<NostrConnection>,
         router: Router,
     },
     OutsideError {
@@ -65,11 +66,12 @@ impl State {
             },
         }
     }
-    pub fn loaded(keys: Keys, mut back_conn: BackEndConnection) -> Self {
-        let router = Router::new(&mut back_conn);
+    pub fn loaded(keys: Keys, mut db_conn: DBConnection) -> Self {
+        let router = Router::new(&mut db_conn);
         Self::Loaded {
             keys,
-            back_conn,
+            db_conn,
+            ns_conn: None,
             router,
         }
     }
@@ -106,18 +108,22 @@ impl Application for App {
         String::from("NostrDome")
     }
     fn subscription(&self) -> iced::Subscription<Self::Message> {
-        let backend_subscription = match &self.state {
-            State::Login { .. } | State::OutsideError { .. } => iced::Subscription::none(),
-            State::Loading { keys, .. } | State::Loaded { keys, .. } => {
-                backend_connect(keys).map(Message::BackEndEvent)
-            }
+        let backend_subscription: Vec<_> = match &self.state {
+            State::Login { .. } | State::OutsideError { .. } => vec![],
+            State::Loading { keys, .. } | State::Loaded { keys, .. } => backend_connect(keys)
+                .iter()
+                .map(|stream| stream.map(Message::BackEndEvent))
+                .collect(),
         };
         let app_sub = match &self.state {
             State::Loaded { router, .. } => router.subscription().map(Message::RouterMessage),
             _ => iced::Subscription::none(),
         };
-        iced::Subscription::batch(vec![backend_subscription, app_sub])
+        let mut subscriptions = backend_subscription;
+        subscriptions.push(app_sub);
+        iced::Subscription::batch(subscriptions)
     }
+
     fn view(&self) -> Element<Self::Message> {
         let content: Element<_> = match &self.state {
             State::Login { state } => state.view().map(Message::LoginMessage),
@@ -156,7 +162,9 @@ impl Application for App {
             }
             Message::RouterMessage(msg) => {
                 if let State::Loaded {
-                    back_conn, router, ..
+                    db_conn: db_conn,
+                    router,
+                    ..
                 } = &mut self.state
                 {
                     if let views::Message::SettingsMsg(settings_msg) = msg.clone() {
@@ -168,18 +176,26 @@ impl Application for App {
                     }
 
                     router
-                        .update(msg, back_conn, self.color_theme)
+                        .update(msg, db_conn, self.color_theme)
                         .map(Message::RouterMessage)
                 } else {
                     Command::none()
                 }
             }
             Message::BackEndEvent(event) => match event {
-                net::Event::Connected(mut back_conn) => {
-                    tracing::warn!("Received BackEnd Connected Event");
+                net::Event::NostrConnected(mut client) => {
+                    tracing::warn!("Received Nostr Client Connected Event");
+                    if let State::Loaded { keys, ns_conn, .. } = &mut self.state {
+                        // db_conn.send(net::Message::ConnectRelays);
+                        *ns_conn = Some(client);
+                    }
+                    Command::none()
+                }
+                net::Event::DbConnected(mut db_conn) => {
+                    tracing::warn!("Received Database Connected Event");
                     if let State::Loading { keys } = &mut self.state {
-                        back_conn.send(net::Message::ConnectRelays);
-                        self.state = State::loaded(keys.clone(), back_conn);
+                        // db_conn.send(net::Message::ConnectRelays);
+                        self.state = State::loaded(keys.clone(), db_conn);
                     }
                     Command::none()
                 }
@@ -193,12 +209,10 @@ impl Application for App {
                 }
                 ev => {
                     if let State::Loaded {
-                        router, back_conn, ..
+                        router, db_conn, ..
                     } = &mut self.state
                     {
-                        router
-                            .back_end_event(ev, back_conn)
-                            .map(Message::RouterMessage)
+                        router.db_event(ev, db_conn).map(Message::RouterMessage)
                     } else {
                         Command::none()
                     }
@@ -244,7 +258,7 @@ async fn main() {
     .expect("Failed to run app");
 }
 
-const APP_WIDTH: u32 = 600;
-const APP_HEIGHT: u32 = 400;
+const APP_WIDTH: u32 = 800;
+const APP_HEIGHT: u32 = 600;
 const APP_MIN_WIDTH: u32 = 600;
 const APP_MIN_HEIGHT: u32 = 400;

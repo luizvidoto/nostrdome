@@ -5,7 +5,7 @@ use iced::{alignment, Command, Length};
 use crate::components::contact_card;
 use crate::db::DbContact;
 use crate::icon::{menu_bars_icon, send_icon};
-use crate::net::{self, BackEndConnection};
+use crate::net::{self, DBConnection};
 use crate::style;
 use crate::types::{chat_message, ChatMessage};
 use crate::utils::contact_matches_search;
@@ -41,8 +41,8 @@ pub struct State {
     current_scroll_offset: scrollable::RelativeOffset,
 }
 impl State {
-    pub fn new(back_conn: &mut BackEndConnection) -> Self {
-        back_conn.send(net::Message::FetchContacts);
+    pub fn new(db_conn: &mut DBConnection) -> Self {
+        db_conn.send(net::Message::FetchContacts);
         Self {
             contacts: vec![],
             messages: vec![],
@@ -94,42 +94,7 @@ impl State {
         let first = container(column![search_container, contact_list]).width(Length::Fixed(300.0));
         // ---
         // --- SECOND SPLIT ---
-        let (chat_content, _): (Column<_>, Option<NaiveDateTime>) = self.messages.iter().fold(
-            (column![], None),
-            |(mut col, last_date), msg: &ChatMessage| {
-                match (last_date, msg.created_at) {
-                    (None, msg_date) => {
-                        col = col.push(chat_day_divider(msg_date.clone()));
-                    }
-                    (Some(last_date), msg_date) => {
-                        if last_date.day() != msg_date.day() {
-                            col = col.push(chat_day_divider(msg_date.clone()));
-                        }
-                    }
-                }
-
-                (
-                    col.push(msg.view().map(Message::ChatMessage)),
-                    Some(msg.created_at),
-                )
-            },
-        );
-
-        let chat_messages = container(
-            scrollable(chat_content)
-                .height(Length::Fill)
-                .vertical_scroll(
-                    scrollable::Properties::new()
-                        .width(6.0)
-                        .margin(0.0)
-                        .scroller_width(6.0),
-                )
-                .id(CHAT_SCROLLABLE_ID.clone())
-                .on_scroll(Message::Scrolled),
-        )
-        .style(style::Container::ChatContainer)
-        .height(Length::Fill);
-
+        let chat_messages = create_chat_content(&self.messages);
         let message_input = text_input("Write a message...", &self.dm_msg)
             .on_submit(Message::DMSentPress)
             .on_input(Message::DMNMessageChange);
@@ -184,7 +149,7 @@ impl State {
     pub fn backend_event(
         &mut self,
         event: net::Event,
-        back_conn: &mut BackEndConnection,
+        db_conn: &mut DBConnection,
     ) -> Command<Message> {
         let command = match event {
             net::Event::DBSuccessEvent(kind) => {
@@ -202,7 +167,7 @@ impl State {
                             )
                         } else {
                             // não estou na conversa
-                            back_conn.send(net::Message::AddToUnseenCount(db_contact));
+                            db_conn.send(net::Message::AddToUnseenCount(db_contact));
                             Command::none()
                         }
                     }
@@ -211,7 +176,7 @@ impl State {
                         self.contacts
                             .push(contact_card::State::from_db_contact(&db_contact));
                         // não estou na conversa
-                        back_conn.send(net::Message::AddToUnseenCount(db_contact));
+                        db_conn.send(net::Message::AddToUnseenCount(db_contact));
                         Command::none()
                     }
 
@@ -283,7 +248,7 @@ impl State {
         }
     }
 
-    pub fn update(&mut self, message: Message, back_conn: &mut BackEndConnection) {
+    pub fn update(&mut self, message: Message, db_conn: &mut DBConnection) {
         match message {
             Message::GoToChannelsPress => (),
             Message::Scrolled(offset) => {
@@ -292,7 +257,7 @@ impl State {
             Message::SearchContactInputChange(text) => self.search_contact_input = text,
             Message::ChatMessage(chat_msg) => match chat_msg {
                 chat_message::Message::ChatRightClick(msg) => {
-                    back_conn.send(net::Message::FetchRelayResponses(msg.event_id));
+                    db_conn.send(net::Message::FetchRelayResponses(msg.event_id));
                     // dbg!(msg_clicked);
                 }
             },
@@ -302,7 +267,7 @@ impl State {
             }
             Message::DMSentPress => {
                 if let Some(contact) = &self.active_contact {
-                    match back_conn.try_send(net::Message::SendDMTo((
+                    match db_conn.try_send(net::Message::SendDMTo((
                         contact.to_owned(),
                         self.dm_msg.clone(),
                     ))) {
@@ -338,7 +303,7 @@ impl State {
             Message::ContactCardMessage(card_msg) => {
                 if let contact_card::Message::UpdateActiveContact(contact) = &card_msg {
                     if self.active_contact.as_ref() != Some(&contact) {
-                        back_conn.send(net::Message::FetchMessages(contact.clone()));
+                        db_conn.send(net::Message::FetchMessages(contact.clone()));
                         self.messages = vec![];
                     }
                     self.dm_msg = "".into();
@@ -361,6 +326,52 @@ fn chat_day_divider<Message: 'static>(date: NaiveDateTime) -> Element<'static, M
         .width(Length::Fill)
         .center_x()
         .center_y()
+        .into()
+}
+
+fn create_chat_content<'a>(messages: &[ChatMessage]) -> Element<'a, Message> {
+    let chat_content: Element<_> = if messages.is_empty() {
+        text("No messages").size(24).into()
+    } else {
+        let (chat_content, _): (Column<_>, Option<NaiveDateTime>) = messages.iter().fold(
+            (column![], None),
+            |(mut col, last_date), msg: &ChatMessage| {
+                if let (Some(last_date), msg_date) = (last_date, msg.created_at) {
+                    if last_date.day() != msg_date.day() {
+                        col = col.push(chat_day_divider(msg_date.clone()));
+                    }
+                } else {
+                    col = col.push(chat_day_divider(msg.created_at.clone()));
+                }
+
+                (
+                    col.push(msg.view().map(Message::ChatMessage)),
+                    Some(msg.created_at),
+                )
+            },
+        );
+
+        container(
+            scrollable(chat_content)
+                .height(Length::Fill)
+                .vertical_scroll(
+                    scrollable::Properties::new()
+                        .width(6.0)
+                        .margin(0.0)
+                        .scroller_width(6.0),
+                )
+                .id(CHAT_SCROLLABLE_ID.clone())
+                .on_scroll(Message::Scrolled),
+        )
+        .into()
+    };
+
+    container(chat_content)
+        .center_x()
+        .center_y()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(style::Container::ChatContainer)
         .into()
 }
 

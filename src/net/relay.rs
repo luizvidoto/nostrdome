@@ -21,11 +21,7 @@ pub async fn add_relay(nostr_client: &Client, url: &Url) -> Result<(), Error> {
     nostr_client.add_relay(url.as_str(), None).await?;
     Ok(())
 }
-pub async fn update_relay_db_and_client(
-    _pool: &SqlitePool,
-    _nostr_client: &Client,
-    _url: &Url,
-) -> Result<(), Error> {
+pub async fn update_relay_db_and_client(_nostr_client: &Client, _url: &Url) -> Result<(), Error> {
     tracing::info!("Updating relay db");
     Ok(())
 }
@@ -40,6 +36,7 @@ pub async fn connect_relay(nostr_client: &Client, relay_url: &Url) -> Result<(),
         if let nostr_sdk::RelayStatus::Connected = relay.status().await {
             tracing::info!("Disconnecting from relay");
             nostr_client.disconnect_relay(relay_url.as_str()).await?;
+            // it was bugged without sleep
             tokio::time::sleep(Duration::from_secs(3)).await;
         }
         tracing::info!("Connecting to relay: {}", relay_url);
@@ -52,11 +49,11 @@ pub async fn connect_relay(nostr_client: &Client, relay_url: &Url) -> Result<(),
 }
 
 pub async fn connect_relays(
-    pool: &SqlitePool,
     nostr_client: &Client,
     keys: &Keys,
+    _last_timestamp: u64,
 ) -> Result<(), Error> {
-    let last_timestamp = get_last_event_received(pool).await?;
+    // let last_timestamp = get_last_event_received(pool).await?;
 
     tracing::info!("Adding relays to client");
     // Add relays to client
@@ -72,7 +69,7 @@ pub async fn connect_relays(
         "ws://0.0.0.0:8080",
     ] {
         match nostr_client.add_relay(r, None).await {
-            Ok(_) => tracing::info!("Added: {}", r),
+            Ok(_) => tracing::info!("Nostr Client Added Relay: {}", r),
             Err(e) => tracing::error!("{}", e),
         }
     }
@@ -80,13 +77,13 @@ pub async fn connect_relays(
     tracing::info!("Connecting to relays");
     nostr_client.connect().await;
 
-    request_events(
-        &nostr_client,
-        &keys.public_key(),
-        &keys.public_key(),
-        last_timestamp,
-    )
-    .await?;
+    // request_events(
+    //     &nostr_client,
+    //     &keys.public_key(),
+    //     &keys.public_key(),
+    //     last_timestamp,
+    // )
+    // .await?;
 
     Ok(())
 }
@@ -136,18 +133,18 @@ pub async fn request_events(
         .req_events_of(vec![sent_msgs_sub_past, recv_msgs_sub_past], Some(timeout))
         .await;
 
-    let sent_msgs_sub_future = Filter::new()
-        .author(own_pubkey.to_string())
-        // .kind(Kind::EncryptedDirectMessage)
-        .since(Timestamp::now());
-    let recv_msgs_sub_future = Filter::new()
-        .pubkey(pubkey.to_owned())
-        // .kind(Kind::EncryptedDirectMessage)
-        .since(Timestamp::now());
+    // let sent_msgs_sub_future = Filter::new()
+    //     .author(own_pubkey.to_string())
+    //     // .kind(Kind::EncryptedDirectMessage)
+    //     .since(Timestamp::now());
+    // let recv_msgs_sub_future = Filter::new()
+    //     .pubkey(pubkey.to_owned())
+    //     // .kind(Kind::EncryptedDirectMessage)
+    //     .since(Timestamp::now());
 
-    nostr_client
-        .subscribe(vec![sent_msgs_sub_future, recv_msgs_sub_future])
-        .await;
+    // nostr_client
+    //     .subscribe(vec![sent_msgs_sub_future, recv_msgs_sub_future])
+    //     .await;
 
     Ok(())
 }

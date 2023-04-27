@@ -2,7 +2,7 @@ use std::ops::Not;
 
 use crate::error::Error;
 use crate::icon::{circle_icon, delete_icon, server_icon};
-use crate::net::{self, BackEndConnection};
+use crate::net::{self, DBConnection};
 use crate::style;
 use crate::widget::Element;
 use iced::widget::{button, checkbox, container, row, text};
@@ -69,7 +69,7 @@ impl RelayRow {
             |state| async move {
                 match state {
                     State::Idle { relay, url } => {
-                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                         let (sender, receiver) = mpsc::unbounded();
                         (
                             Message::Ready(RelayRowConnection(sender)),
@@ -87,7 +87,7 @@ impl RelayRow {
                     } => {
                         use iced_native::futures::StreamExt;
 
-                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
                         let input = receiver.select_next_some().await;
 
@@ -109,36 +109,32 @@ impl RelayRow {
         )
     }
 
-    pub fn update(
-        &mut self,
-        message: Message,
-        back_conn: &mut BackEndConnection,
-    ) -> Command<Message> {
+    pub fn update(&mut self, message: Message, db_conn: &mut DBConnection) -> Command<Message> {
         match message {
             Message::None => (),
             Message::ConnectToRelay(url) => {
-                back_conn.send(net::Message::ConnectToRelay(url));
+                db_conn.send(net::Message::ConnectToRelay(url));
             }
             Message::UpdateStatus((url, status, last_connected_at)) => {
                 if self.url == url {
                     self.status = status;
                     self.last_connected_at = last_connected_at;
                     // self.last_connected_at = Some(last_connected_at);
-                    // back_conn.send(net::Message::UpdateRelay(self.into_db_relay()));
+                    // db_conn.send(net::Message::UpdateRelay(self.into_db_relay()));
                 }
             }
             Message::DeleteRelay(relay_url) => {
-                back_conn.send(net::Message::DeleteRelay(relay_url));
+                db_conn.send(net::Message::DeleteRelay(relay_url));
             }
             Message::ToggleRead((url, read)) => {
-                back_conn.send(net::Message::ToggleRelayRead((url, read)));
+                db_conn.send(net::Message::ToggleRelayRead((url, read)));
             }
             Message::ToggleWrite((url, write)) => {
-                back_conn.send(net::Message::ToggleRelayWrite((url, write)));
+                db_conn.send(net::Message::ToggleRelayWrite((url, write)));
             }
             // Message::ToggleAdvertise(mut db_relay) => {
             //     // db_relay.advertise = !db_relay.advertise;
-            //     back_conn.send(net::Message::UpdateRelay(db_relay));
+            //     db_conn.send(net::Message::UpdateRelay(db_relay));
             // }
             Message::Ready(mut conn) => {
                 conn.send(Input::GetStatus);

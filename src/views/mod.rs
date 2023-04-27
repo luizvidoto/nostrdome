@@ -1,7 +1,7 @@
 use iced::{Command, Subscription};
 
 use crate::{
-    net::{self, BackEndConnection},
+    net::{self, DBConnection},
     style,
     widget::Element,
 };
@@ -23,10 +23,10 @@ pub struct Router {
     state: ViewState,
 }
 impl Router {
-    pub fn new(back_conn: &mut BackEndConnection) -> Self {
+    pub fn new(db_conn: &mut DBConnection) -> Self {
         Self {
             previous_state: None,
-            state: ViewState::chat(back_conn),
+            state: ViewState::chat(db_conn),
         }
     }
     fn next_state(&mut self, next: ViewState) {
@@ -47,21 +47,17 @@ impl Router {
     pub fn view(&self) -> Element<Message> {
         self.state.view()
     }
-    pub fn back_end_event(
-        &mut self,
-        event: net::Event,
-        back_conn: &mut BackEndConnection,
-    ) -> Command<Message> {
+    pub fn db_event(&mut self, event: net::Event, db_conn: &mut DBConnection) -> Command<Message> {
         match event {
             event => match &mut self.state {
                 ViewState::Channels { state } => state
-                    .backend_event(event, back_conn)
+                    .backend_event(event, db_conn)
                     .map(Message::ChannelsMsg),
                 ViewState::Chat { state } => {
-                    state.backend_event(event, back_conn).map(Message::ChatMsg)
+                    state.backend_event(event, db_conn).map(Message::ChatMsg)
                 }
                 ViewState::Settings { state } => state
-                    .back_end_event(event, back_conn)
+                    .back_end_event(event, db_conn)
                     .map(Message::SettingsMsg),
             },
         }
@@ -70,15 +66,15 @@ impl Router {
     pub fn update(
         &mut self,
         message: Message,
-        back_conn: &mut BackEndConnection,
+        db_conn: &mut DBConnection,
         selected_theme: Option<style::Theme>,
     ) -> Command<Message> {
         match message {
             Message::ChannelsMsg(msg) => {
                 if let ViewState::Channels { state } = &mut self.state {
                     match msg {
-                        channels::Message::GoToChat => self.next_state(ViewState::chat(back_conn)),
-                        msg => state.update(msg, back_conn),
+                        channels::Message::GoToChat => self.next_state(ViewState::chat(db_conn)),
+                        msg => state.update(msg, db_conn),
                     }
                 }
             }
@@ -86,27 +82,25 @@ impl Router {
                 if let ViewState::Chat { state } = &mut self.state {
                     match msg {
                         chat::Message::AddContactPress => {
-                            self.next_state(ViewState::settings_contacts(back_conn))
+                            self.next_state(ViewState::settings_contacts(db_conn))
                         }
                         chat::Message::GoToChannelsPress => {
-                            self.next_state(ViewState::channels(back_conn))
+                            self.next_state(ViewState::channels(db_conn))
                         }
                         chat::Message::NavSettingsPress => {
-                            self.next_state(ViewState::settings(back_conn))
+                            self.next_state(ViewState::settings(db_conn))
                         }
-                        msg => state.update(msg, back_conn),
+                        msg => state.update(msg, db_conn),
                     }
                 }
             }
             Message::SettingsMsg(msg) => {
                 if let ViewState::Settings { state } = &mut self.state {
                     match msg {
-                        settings::Message::NavEscPress => {
-                            self.next_state(ViewState::chat(back_conn))
-                        }
+                        settings::Message::NavEscPress => self.next_state(ViewState::chat(db_conn)),
                         msg => {
                             return state
-                                .update(msg, back_conn, selected_theme)
+                                .update(msg, db_conn, selected_theme)
                                 .map(Message::SettingsMsg);
                         }
                     }
@@ -131,24 +125,24 @@ impl ViewState {
             _ => Subscription::none(),
         }
     }
-    pub fn channels(_back_conn: &mut BackEndConnection) -> Self {
+    pub fn channels(_db_conn: &mut DBConnection) -> Self {
         Self::Channels {
             state: channels::State::new(),
         }
     }
-    pub fn chat(back_conn: &mut BackEndConnection) -> Self {
+    pub fn chat(db_conn: &mut DBConnection) -> Self {
         Self::Chat {
-            state: chat::State::new(back_conn),
+            state: chat::State::new(db_conn),
         }
     }
-    pub fn settings(back_conn: &mut BackEndConnection) -> Self {
+    pub fn settings(db_conn: &mut DBConnection) -> Self {
         Self::Settings {
-            state: settings::Settings::new(back_conn),
+            state: settings::Settings::new(db_conn),
         }
     }
-    pub fn settings_contacts(back_conn: &mut BackEndConnection) -> Self {
+    pub fn settings_contacts(db_conn: &mut DBConnection) -> Self {
         Self::Settings {
-            state: settings::Settings::contacts(back_conn),
+            state: settings::Settings::contacts(db_conn),
         }
     }
     pub fn view(&self) -> Element<Message> {

@@ -3,7 +3,6 @@ use iced::Length;
 
 use crate::db::DbContact;
 use crate::icon::{delete_icon, edit_icon};
-use crate::style;
 use crate::utils::format_pubkey;
 use crate::widget::Element;
 
