@@ -2,6 +2,8 @@ use iced::widget::{button, row, text};
 use iced::Length;
 
 use crate::db::DbContact;
+use crate::icon::{delete_icon, edit_icon};
+use crate::style;
 use crate::utils::format_pubkey;
 use crate::widget::Element;
 
@@ -57,12 +59,8 @@ impl ContactRow {
             )
             .width(Length::Fill),
             // text("Image").width(Length::Fill),
-            button("Edit")
-                .on_press(Message::EditContact(self.into()))
-                .width(EDIT_BTN_WIDTH),
-            button("Remove")
-                .on_press(Message::DeleteContact(self.contact.clone()))
-                .width(REMOVE_BTN_WIDTH)
+            button(edit_icon().size(16)).on_press(Message::EditContact(self.into())),
+            button(delete_icon().size(16)).on_press(Message::DeleteContact(self.contact.clone())) // .style(style::Button::Danger)
         ]
         .into()
     }

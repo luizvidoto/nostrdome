@@ -1,7 +1,8 @@
-use iced::widget::{button, column, container, row, scrollable, text_input, Space};
-use iced::Length;
+use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
+use iced::{alignment, Length};
 
 use crate::components::{contact_row, ContactRow};
+use crate::icon::{import_icon, plus_icon, to_cloud_icon};
 use crate::net::BackEndConnection;
 use crate::style;
 use crate::utils::contact_matches_search;
@@ -84,9 +85,14 @@ impl State {
             .on_input(Message::SearchContactInputChange)
             .style(style::TextInput::ChatSearch)
             .width(SEARCH_CONTACT_WIDTH);
-        let add_contact_btn = button("Add").on_press(Message::OpenAddContactModal);
-        let import_btn = button("Import").on_press(Message::OpenImportContactModal);
-        let send_btn = button("Send").on_press(Message::OpenSendContactModal);
+        let add_contact_btn = button(
+            row![text("Add").size(18), plus_icon().size(14)]
+                .align_items(alignment::Alignment::Center)
+                .spacing(2),
+        )
+        .on_press(Message::OpenAddContactModal);
+        let import_btn = button(import_icon().size(18)).on_press(Message::OpenImportContactModal);
+        let send_btn = button(to_cloud_icon().size(18)).on_press(Message::OpenSendContactModal);
 
         let utils_row = row![
             search_contact,
@@ -97,6 +103,7 @@ impl State {
         ]
         .spacing(5)
         .width(Length::Fill);
+
         let contact_list: Element<_> = self
             .contacts
             .iter()
@@ -108,6 +115,7 @@ impl State {
             .into();
         let contact_list_scroller = column![ContactRow::header(), scrollable(contact_list)];
         let content: Element<_> = column![title, utils_row, contact_list_scroller]
+            .spacing(10)
             .width(Length::Fill)
             .height(Length::Fill)
             .into();

@@ -68,8 +68,8 @@ pub async fn connect_relays(
         // "wss://relay.damus.io",
         // "wss://nostr.anchel.nl/",
         // "ws://192.168.15.119:8080"
-        "ws://192.168.15.151:8080",
-        // "ws://0.0.0.0:8080",
+        // "ws://192.168.15.151:8080",
+        "ws://0.0.0.0:8080",
     ] {
         match nostr_client.add_relay(r, None).await {
             Ok(_) => tracing::info!("Added: {}", r),

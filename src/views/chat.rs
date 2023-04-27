@@ -1,10 +1,10 @@
 use chrono::{Datelike, NaiveDateTime};
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
-use iced::{Command, Length};
+use iced::{alignment, Command, Length};
 
 use crate::components::contact_card;
 use crate::db::DbContact;
-use crate::icon::send_icon;
+use crate::icon::{menu_bars_icon, send_icon};
 use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::types::{chat_message, ChatMessage};
@@ -80,10 +80,17 @@ impl State {
                 .style(style::TextInput::ChatSearch)
                 .into(),
         };
-        let search_container = container(row![search_contact])
-            .padding([10, 20])
-            .width(Length::Fill)
-            .height(NAVBAR_HEIGHT);
+        let menu_btn = button(menu_bars_icon())
+            .on_press(Message::NavSettingsPress)
+            .style(style::Button::Invisible);
+        let search_container = container(
+            row![menu_btn, search_contact]
+                .spacing(5)
+                .align_items(alignment::Alignment::Center),
+        )
+        .padding([10, 10])
+        .width(Length::Fill)
+        .height(NAVBAR_HEIGHT);
         let first = container(column![search_container, contact_list]).width(Length::Fixed(300.0));
         // ---
         // --- SECOND SPLIT ---
@@ -137,17 +144,11 @@ impl State {
         let goto_channels_btn = button("Channels")
             .padding(5)
             .on_press(Message::GoToChannelsPress);
-        let settings_btn = button("Settings")
-            .padding(5)
-            .on_press(Message::NavSettingsPress);
+
         let chat_navbar = container(
-            row![
-                Space::with_width(Length::Fill),
-                goto_channels_btn,
-                settings_btn
-            ]
-            .spacing(5)
-            .width(Length::Fill),
+            row![Space::with_width(Length::Fill), goto_channels_btn]
+                .spacing(5)
+                .width(Length::Fill),
         )
         .padding(10)
         .height(NAVBAR_HEIGHT)

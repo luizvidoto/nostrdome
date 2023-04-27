@@ -3,7 +3,7 @@ use crate::error::Error;
 use crate::net::contact::insert_contact;
 use crate::types::ChatMessage;
 
-use nostr_sdk::{Client, EventBuilder, Keys, Kind, Url};
+use nostr_sdk::{Client, Contact, EventBuilder, Keys, Kind, Url};
 use sqlx::SqlitePool;
 
 use super::{Event, SuccessKind};
@@ -245,4 +245,21 @@ async fn insert_event(
     relay_url: &Url,
 ) -> Result<Event, Error> {
     handle_insert_event(pool, keys, event, Some(relay_url), false).await
+}
+
+pub async fn send_contact_list_to(
+    pool: &SqlitePool,
+    keys: &Keys,
+    client: &Client,
+    url: Url,
+) -> Result<Event, Error> {
+    let list = DbContact::fetch(pool).await?;
+    let c_list: Vec<Contact> = list.iter().map(|c| c.into()).collect();
+
+    let builder = EventBuilder::set_contact_list(c_list);
+    let event = builder.to_event(keys)?;
+
+    let _event_id = client.send_event_to(url, event.clone()).await?;
+
+    Ok(insert_pending_event(pool, keys, event).await?)
 }

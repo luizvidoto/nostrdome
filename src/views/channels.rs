@@ -49,7 +49,7 @@ impl State {
         let nav_bar = container(
             row![
                 Space::with_width(Length::Fill),
-                button("Create New").on_press(Message::CreateChannel),
+                button("Create New"),
                 button("Go To Chat").on_press(Message::GoToChat),
             ]
             .spacing(5),

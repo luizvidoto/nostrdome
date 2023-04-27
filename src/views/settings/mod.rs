@@ -1,5 +1,5 @@
-use iced::alignment::{self, Horizontal};
-use iced::widget::{button, column, container, row, text, Space};
+use iced::alignment;
+use iced::widget::{button, column, container, row, scrollable, text, Space};
 use iced::{Command, Length, Subscription};
 use iced_aw::{Card, Modal};
 use nostr_sdk::{Metadata, Tag};
@@ -12,7 +12,8 @@ use crate::net::{self, BackEndConnection, Event};
 use crate::style;
 use crate::types::UncheckedEvent;
 use crate::utils::json_reader;
-use crate::widget::Element;
+use crate::views::settings::relay_row_modal::RelayRowModal;
+use crate::widget::{Button, Element};
 
 mod account;
 pub mod appearance;
@@ -22,6 +23,7 @@ mod network;
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    RelayRowMessage(relay_row_modal::Message),
     AccountMessage(account::Message),
     AppearanceMessage(appearance::Message),
     NetworkMessage(network::Message),
@@ -49,20 +51,30 @@ pub enum Message {
     CloseImportContactModal,
     CloseAddContactModal,
     CloseSendContactsModal,
-    SendContactListToRelay(nostr_sdk::Url),
     SendContactListToAll,
 }
 
 #[derive(Debug)]
+#[repr(u8)]
 pub enum MenuState {
-    Account { state: account::State },
-    Appearance { state: appearance::State },
-    Network { state: network::State },
-    Backup { state: backup::State },
-    Contacts { state: contacts::State },
+    Account { state: account::State } = 0,
+    Appearance { state: appearance::State } = 1,
+    Network { state: network::State } = 2,
+    Backup { state: backup::State } = 3,
+    Contacts { state: contacts::State } = 4,
 }
 
 impl MenuState {
+    pub fn is_same_type(&self, other: u8) -> bool {
+        match (self, other) {
+            (MenuState::Account { .. }, 0) => true,
+            (MenuState::Appearance { .. }, 1) => true,
+            (MenuState::Network { .. }, 2) => true,
+            (MenuState::Backup { .. }, 3) => true,
+            (MenuState::Contacts { .. }, 4) => true,
+            _ => false,
+        }
+    }
     fn account(_back_conn: &mut BackEndConnection) -> Self {
         let profile = Metadata::new();
         // conn.send(message)
@@ -232,46 +244,20 @@ impl Settings {
     }
 
     pub fn view(&self) -> Element<Message> {
-        let account_btn = button("Account")
-            .style(match self.menu_state {
-                MenuState::Account { .. } => style::Button::ActiveMenuBtn,
-                _ => style::Button::InactiveMenuBtn,
-            })
-            .width(Length::Fill)
-            .padding(10)
-            .on_press(Message::MenuAccountPress);
-        let appearance_btn = button("Appearance")
-            .style(match self.menu_state {
-                MenuState::Appearance { .. } => style::Button::ActiveMenuBtn,
-                _ => style::Button::InactiveMenuBtn,
-            })
-            .width(Length::Fill)
-            .padding(10)
-            .on_press(Message::MenuAppearancePress);
-        let network_btn = button("Network")
-            .style(match self.menu_state {
-                MenuState::Network { .. } => style::Button::ActiveMenuBtn,
-                _ => style::Button::InactiveMenuBtn,
-            })
-            .width(Length::Fill)
-            .padding(10)
-            .on_press(Message::MenuNetworkPress);
-        let backup_btn = button("Backup")
-            .style(match self.menu_state {
-                MenuState::Backup { .. } => style::Button::ActiveMenuBtn,
-                _ => style::Button::InactiveMenuBtn,
-            })
-            .width(Length::Fill)
-            .padding(10)
-            .on_press(Message::MenuBackupPress);
-        let contacts_btn = button("Contacts")
-            .style(match self.menu_state {
-                MenuState::Contacts { .. } => style::Button::ActiveMenuBtn,
-                _ => style::Button::InactiveMenuBtn,
-            })
-            .width(Length::Fill)
-            .padding(10)
-            .on_press(Message::MenuContactsPress);
+        let account_btn =
+            create_menu_button("Account", &self.menu_state, 0, Message::MenuAccountPress);
+        let appearance_btn = create_menu_button(
+            "Appearance",
+            &self.menu_state,
+            1,
+            Message::MenuAppearancePress,
+        );
+        let network_btn =
+            create_menu_button("Network", &self.menu_state, 2, Message::MenuNetworkPress);
+        let backup_btn =
+            create_menu_button("Backup", &self.menu_state, 3, Message::MenuBackupPress);
+        let contacts_btn =
+            create_menu_button("Contacts", &self.menu_state, 4, Message::MenuContactsPress);
         let esc_btn = button("Esc")
             .padding(10)
             .on_press(Message::NavEscPress)
@@ -326,7 +312,7 @@ enum ModalState {
         file_importer: FileImporter,
     },
     SendContactList {
-        relays: Vec<nostr_sdk::Url>,
+        relays: Vec<relay_row_modal::RelayRowModal>,
     },
     Off,
 }
@@ -334,13 +320,27 @@ enum ModalState {
 impl ModalState {
     pub fn backend_event(&mut self, event: Event, _back_conn: &mut BackEndConnection) {
         if let ModalState::SendContactList { relays } = self {
-            if let Event::GotRelaysUrls(new_relays) = event {
-                *relays = new_relays;
+            match event {
+                Event::GotRelaysUrls(new_relays) => {
+                    *relays = new_relays
+                        .iter()
+                        .map(|url| RelayRowModal::new(url))
+                        .collect();
+                }
+                Event::DBSuccessEvent(kind) => match kind {
+                    net::SuccessKind::UpdateWithRelayResponse { relay_response, .. } => {
+                        if let Some(relay_row) = relays
+                            .iter_mut()
+                            .find(|r| r.url == relay_response.relay_url)
+                        {
+                            relay_row.success();
+                        }
+                    }
+                    _ => (),
+                },
+                _ => (),
             }
         }
-    }
-    pub fn _send_contacts(relays: Vec<nostr_sdk::Url>) -> Self {
-        Self::SendContactList { relays }
     }
     pub fn load_send_contacts(back_conn: &mut BackEndConnection) -> Self {
         back_conn.send(net::Message::FetchRelaysUrls);
@@ -382,6 +382,19 @@ impl ModalState {
             Message::CloseSendContactsModal => *self = Self::Off,
             Message::CloseAddContactModal => *self = Self::Off,
             Message::CloseImportContactModal => *self = Self::Off,
+            Message::SendContactListToAll => {
+                println!("Send contacts to all relays");
+            }
+            Message::RelayRowMessage(r_msg) => match r_msg {
+                relay_row_modal::Message::SendContactListToRelay(relay_url) => {
+                    back_conn.send(net::Message::SendContactListToRelay(relay_url.clone()));
+                    if let ModalState::SendContactList { relays } = self {
+                        if let Some(relay_row) = relays.iter_mut().find(|r| r.url == relay_url) {
+                            relay_row.loading();
+                        }
+                    }
+                }
+            },
             Message::SubmitContact {
                 petname,
                 pubkey,
@@ -451,35 +464,30 @@ impl ModalState {
             ModalState::SendContactList { relays } => Modal::new(true, underlay, move || {
                 let title = title("Send Contact List");
                 let send_to_all_btn = button("Send All").on_press(Message::SendContactListToAll);
-                let header = container(
-                    row![title, Space::with_width(Length::Fill), send_to_all_btn].spacing(5),
-                )
-                .width(Length::Fill)
-                .style(style::Container::Default)
-                .center_y();
+                let header = container(title)
+                    .width(Length::Fill)
+                    .style(style::Container::Default)
+                    .center_y();
 
                 let relay_list: Element<_> = relays
                     .iter()
-                    .fold(column![].spacing(5), |col, url| {
-                        let relay_row = container(row![
-                            text(&url),
-                            Space::with_width(Length::Fill),
-                            button("Send").on_press(Message::SendContactListToRelay(url.clone()))
-                        ])
-                        .center_y();
-                        col.push(relay_row)
-                    })
+                    .fold(
+                        column![row![Space::with_width(Length::Fill), send_to_all_btn]].spacing(5),
+                        |col, relay_row| col.push(relay_row.view().map(Message::RelayRowMessage)),
+                    )
                     .into();
 
-                let modal_body = container(relay_list).style(style::Container::Bordered);
+                let modal_body = container(scrollable(relay_list))
+                    .width(Length::Fill)
+                    .style(style::Container::Default);
 
                 Card::new(header, modal_body)
                     .foot(
-                        row![
-                            button(text("Cancel").horizontal_alignment(Horizontal::Center),)
-                                .width(Length::Fill)
-                                .on_press(Message::CloseSendContactsModal),
-                        ]
+                        row![button(
+                            text("Cancel").horizontal_alignment(alignment::Horizontal::Center),
+                        )
+                        .width(Length::Fill)
+                        .on_press(Message::CloseSendContactsModal),]
                         .spacing(10)
                         .padding(5)
                         .width(Length::Fill),
@@ -532,10 +540,12 @@ impl ModalState {
                 Card::new(title, modal_body)
                     .foot(
                         row![
-                            button(text("Cancel").horizontal_alignment(Horizontal::Center),)
-                                .width(Length::Fill)
-                                .on_press(Message::CloseAddContactModal),
-                            button(text("Ok").horizontal_alignment(Horizontal::Center),)
+                            button(
+                                text("Cancel").horizontal_alignment(alignment::Horizontal::Center),
+                            )
+                            .width(Length::Fill)
+                            .on_press(Message::CloseAddContactModal),
+                            button(text("Ok").horizontal_alignment(alignment::Horizontal::Center),)
                                 .width(Length::Fill)
                                 .on_press(Message::SubmitContact {
                                     petname: modal_petname_input.clone(),
@@ -569,10 +579,10 @@ impl ModalState {
                 let card_header = text("Import Contacts");
                 let card_body = column![importer_cp, stats_row].spacing(4);
                 let card_footer = row![
-                    button(text("Cancel").horizontal_alignment(Horizontal::Center),)
+                    button(text("Cancel").horizontal_alignment(alignment::Horizontal::Center),)
                         .width(Length::Fill)
                         .on_press(Message::CloseImportContactModal),
-                    button(text("Ok").horizontal_alignment(Horizontal::Center),)
+                    button(text("Ok").horizontal_alignment(alignment::Horizontal::Center),)
                         .width(Length::Fill)
                         .on_press(Message::SaveImportedContacts(imported_contacts.clone()))
                 ]
@@ -597,6 +607,27 @@ impl ModalState {
 
         view
     }
+}
+
+fn create_menu_button<'a>(
+    label: &'a str,
+    current_menu_state: &MenuState,
+    target_menu_type: u8,
+    msg: Message,
+) -> Button<'a, Message> {
+    let is_active = current_menu_state.is_same_type(target_menu_type);
+
+    let style = if is_active {
+        style::Button::ActiveMenuBtn
+    } else {
+        style::Button::InactiveMenuBtn
+    };
+
+    button(label)
+        .style(style)
+        .width(Length::Fill)
+        .padding(10)
+        .on_press(msg)
 }
 
 fn handle_file_importer_message(
@@ -632,3 +663,63 @@ fn update_imported_contacts(tags: &[Tag], imported_contacts: &mut Vec<DbContact>
 
 const ADD_CONTACT_MODAL_WIDTH: f32 = 400.0;
 const IMPORT_MODAL_WIDTH: f32 = 400.0;
+
+mod relay_row_modal {
+    use crate::{style, widget::Element};
+    use iced::{
+        widget::{button, container, row, text, Space},
+        Length,
+    };
+    use nostr_sdk::Url;
+
+    #[derive(Debug, Clone)]
+    pub enum Message {
+        SendContactListToRelay(Url),
+    }
+
+    #[derive(Debug, Clone)]
+    pub enum RelayRowState {
+        Idle,
+        Loading,
+        Success,
+        Error(String),
+    }
+    #[derive(Debug, Clone)]
+    pub struct RelayRowModal {
+        pub state: RelayRowState,
+        pub url: Url,
+    }
+    impl RelayRowModal {
+        pub fn new(url: &Url) -> Self {
+            Self {
+                state: RelayRowState::Idle,
+                url: url.to_owned(),
+            }
+        }
+        pub fn loading(&mut self) {
+            self.state = RelayRowState::Loading;
+        }
+        pub fn success(&mut self) {
+            self.state = RelayRowState::Success;
+        }
+        pub fn view(&self) -> Element<Message> {
+            let button_or_checkmark: Element<_> = match self.state {
+                RelayRowState::Idle => button("Send")
+                    .style(style::Button::Primary)
+                    .on_press(Message::SendContactListToRelay(self.url.clone()))
+                    .into(),
+                RelayRowState::Loading => button("...").style(style::Button::Primary).into(),
+                RelayRowState::Success => text("Sent!").into(),
+                RelayRowState::Error(_) => text("Error").into(),
+            };
+
+            container(row![
+                text(&self.url),
+                Space::with_width(Length::Fill),
+                button_or_checkmark
+            ])
+            .center_y()
+            .into()
+        }
+    }
+}

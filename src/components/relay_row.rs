@@ -1,10 +1,12 @@
 use std::ops::Not;
 
 use crate::error::Error;
+use crate::icon::{circle_icon, delete_icon, server_icon};
 use crate::net::{self, BackEndConnection};
+use crate::style;
 use crate::widget::Element;
 use iced::widget::{button, checkbox, container, row, text};
-use iced::{Command, Length, Subscription};
+use iced::{alignment, Command, Length, Subscription};
 use iced_native::futures::channel::mpsc;
 use nostr_sdk::{Relay, RelayStatus, Url};
 
@@ -160,43 +162,76 @@ impl RelayRow {
         now - self.last_connected_at
     }
     pub fn view<'a>(&'a self) -> Element<'a, Message> {
-        row![
-            text(&self.status).width(Length::Fill),
-            container(text(&self.url)).width(Length::Fill),
-            container(text(format!("{}s", self.seconds_since_last_conn()))).width(Length::Fill),
-            container(checkbox("", self.is_read, |_| Message::ToggleRead((
-                self.relay.url(),
-                self.relay.opts().read().not()
-            ))))
-            .width(Length::Fill),
-            container(checkbox("", self.is_write, |_| Message::ToggleWrite((
-                self.relay.url(),
-                self.relay.opts().write().not()
-            ))))
-            .width(Length::Fill),
-            // container(checkbox("", self.is_advertise, |_| {
-            //     Message::ToggleAdvertise
-            // }))
-            // .width(Length::Fill),
-            button("Connect")
-                .on_press(Message::ConnectToRelay(self.url.clone()))
-                .width(Length::Fill),
-            button("Remove")
-                .on_press(Message::DeleteRelay(self.url.clone()))
-                .width(Length::Fill),
-        ]
+        let status_icon = match self.status {
+            RelayStatus::Initialized => circle_icon()
+                .size(16)
+                .style(style::Text::RelayStatusInitialized),
+            RelayStatus::Connected => circle_icon()
+                .size(16)
+                .style(style::Text::RelayStatusConnected),
+            RelayStatus::Connecting => circle_icon()
+                .size(16)
+                .style(style::Text::RelayStatusConnecting),
+            RelayStatus::Disconnected => circle_icon()
+                .size(16)
+                .style(style::Text::RelayStatusDisconnected),
+            RelayStatus::Terminated => circle_icon()
+                .size(16)
+                .style(style::Text::RelayStatusTerminated),
+        };
+        let activity_time = format!("{}s", self.seconds_since_last_conn());
+
+        container(
+            row![
+                status_icon.width(Length::Fixed(RELAY_STATUS_ICON_WIDTH)),
+                container(text(&self.url)).center_x().width(Length::Fill),
+                container(text(&activity_time))
+                    .center_x()
+                    .width(Length::Fixed(ACTIVITY_CELL_WIDTH)),
+                container(checkbox("", self.is_read, |_| Message::ToggleRead((
+                    self.relay.url(),
+                    self.relay.opts().read().not()
+                ))))
+                .center_x()
+                .width(Length::Fixed(CHECKBOX_CELL_WIDTH)),
+                container(checkbox("", self.is_write, |_| Message::ToggleWrite((
+                    self.relay.url(),
+                    self.relay.opts().write().not()
+                ))))
+                .center_x()
+                .width(Length::Fixed(CHECKBOX_CELL_WIDTH)),
+                button(server_icon().size(16))
+                    .on_press(Message::ConnectToRelay(self.url.clone()))
+                    .width(Length::Fixed(ACTION_ICON_WIDTH)),
+                button(delete_icon().size(16))
+                    .on_press(Message::DeleteRelay(self.url.clone()))
+                    .width(Length::Fixed(ACTION_ICON_WIDTH)),
+            ]
+            .align_items(alignment::Alignment::Center),
+        )
+        // queria um hover para cada linha da tabela
+        // .style(style::Container::TableRow)
         .into()
     }
     pub fn view_header() -> Element<'static, Message> {
         row![
-            text("Status").width(Length::Fill),
-            text("Address").width(Length::Fill),
-            text("Last Active").width(Length::Fill),
-            text("Read").width(Length::Fill),
-            text("Write").width(Length::Fill),
-            // text("Advertise").width(Length::Fill),
-            text("").width(Length::Fill),
-            text("").width(Length::Fill)
+            container(text("")).width(Length::Fixed(RELAY_STATUS_ICON_WIDTH)),
+            container(text("Address")).center_x().width(Length::Fill),
+            container(text("Activity"))
+                .center_x()
+                .width(Length::Fixed(ACTIVITY_CELL_WIDTH)),
+            container(text("Read"))
+                .center_x()
+                .width(Length::Fixed(CHECKBOX_CELL_WIDTH)),
+            container(text("Write"))
+                .center_x()
+                .width(Length::Fixed(CHECKBOX_CELL_WIDTH)),
+            container(text(""))
+                .center_x()
+                .width(Length::Fixed(ACTION_ICON_WIDTH)),
+            container(text(""))
+                .center_x()
+                .width(Length::Fixed(ACTION_ICON_WIDTH))
         ]
         .into()
     }
@@ -213,3 +248,7 @@ impl RelayRow {
 //         }
 //     }
 // }
+const RELAY_STATUS_ICON_WIDTH: f32 = 30.0;
+const ACTION_ICON_WIDTH: f32 = 30.0;
+const CHECKBOX_CELL_WIDTH: f32 = 50.0;
+const ACTIVITY_CELL_WIDTH: f32 = 100.0;

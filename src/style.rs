@@ -113,6 +113,12 @@ pub enum Text {
     ChatMessageStatus,
     ChatMessageDate,
     Placeholder,
+
+    RelayStatusInitialized,
+    RelayStatusConnected,
+    RelayStatusConnecting,
+    RelayStatusDisconnected,
+    RelayStatusTerminated,
 }
 
 impl text::StyleSheet for Theme {
@@ -137,6 +143,21 @@ impl text::StyleSheet for Theme {
             },
             Text::Placeholder => text::Appearance {
                 color: self.pallete().placeholder.into(),
+            },
+            Text::RelayStatusInitialized => text::Appearance {
+                color: Color::from_rgb8(76, 175, 80).into(),
+            },
+            Text::RelayStatusConnected => text::Appearance {
+                color: Color::from_rgb8(27, 94, 32).into(),
+            },
+            Text::RelayStatusConnecting => text::Appearance {
+                color: Color::from_rgb8(255, 235, 59).into(),
+            },
+            Text::RelayStatusDisconnected => text::Appearance {
+                color: Color::from_rgb8(255, 152, 0).into(),
+            },
+            Text::RelayStatusTerminated => text::Appearance {
+                color: Color::from_rgb8(229, 57, 53).into(),
             },
         }
     }
@@ -362,8 +383,8 @@ impl button::StyleSheet for Theme {
                 ..primary
             },
             Button::ActiveMenuBtn => button::Appearance {
-                background: self.pallete().text_color.into(),
-                text_color: self.pallete().background,
+                background: self.pallete().contact_selected.into(),
+                text_color: self.pallete().text_color,
                 border_radius: 5.0,
                 ..primary
             },
@@ -386,9 +407,11 @@ impl button::StyleSheet for Theme {
                 ..self.active(style)
             },
             Button::ActiveContactCard => self.active(style),
-            Button::ActiveMenuBtn => self.active(style),
+            Button::ActiveMenuBtn => button::Appearance {
+                ..self.active(style)
+            },
             Button::InactiveMenuBtn => button::Appearance {
-                background: self.pallete().background.into(),
+                background: self.pallete().contact_hover.into(),
                 text_color: self.pallete().text_color,
                 ..self.active(style)
             },
@@ -476,17 +499,17 @@ impl iced_aw::card::StyleSheet for Theme {
     type Style = Card;
     fn active(&self, _style: Self::Style) -> iced_aw::card::Appearance {
         iced_aw::card::Appearance {
-            background: self.pallete().background.into(),
+            background: Color::from_rgba8(0, 0, 0, 0.5).into(),
             border_radius: 4.0,
             border_width: 1.0,
-            border_color: self.pallete().background,
-            head_background: self.pallete().background.into(),
-            head_text_color: self.pallete().link_1.into(),
+            border_color: Color::TRANSPARENT,
+            head_background: self.pallete().chat_search_input_bg.into(),
+            head_text_color: self.pallete().text_color.into(),
             body_background: self.pallete().background.into(),
             body_text_color: self.pallete().text_color,
             foot_background: self.pallete().background.into(),
             foot_text_color: self.pallete().text_color,
-            close_color: self.pallete().background,
+            close_color: self.pallete().text_color,
         }
     }
 }

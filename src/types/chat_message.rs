@@ -5,6 +5,7 @@ use nostr_sdk::{secp256k1::XOnlyPublicKey, EventId};
 use serde::{Deserialize, Serialize};
 
 use crate::db::MessageStatus;
+use crate::icon::{check_icon, circle_check_icon, double_check_icon, xmark_icon};
 use crate::widget::Element;
 use crate::{
     db::{DbContact, DbEvent, DbMessage},
@@ -106,9 +107,9 @@ impl ChatMessage {
         let status = {
             let mut status = if self.is_from_user {
                 match self.status {
-                    MessageStatus::Offline => text("x"),
-                    MessageStatus::Delivered => text("c"),
-                    MessageStatus::Seen => text("c"),
+                    MessageStatus::Offline => xmark_icon().size(14),
+                    MessageStatus::Delivered => check_icon().size(14),
+                    MessageStatus::Seen => double_check_icon().size(14),
                 }
             } else {
                 text("")

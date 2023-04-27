@@ -1,7 +1,7 @@
 use crate::db::{Database, DbChat, DbContact, DbEvent, DbMessage, DbRelayResponse, MessageStatus};
 use crate::error::Error;
 use crate::net::contact::{insert_batch_of_contacts, insert_contact};
-use crate::net::event::{received_event, send_dm};
+use crate::net::event::{received_event, send_contact_list_to, send_dm};
 use crate::net::relay::{
     add_relay, connect_relay, connect_relays, fetch_relays, fetch_relays_urls,
     toggle_read_for_relay, toggle_write_for_relay, update_relay_db_and_client,
@@ -15,7 +15,7 @@ use iced::futures::{channel::mpsc, StreamExt};
 use iced::{subscription, Subscription};
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 use nostr_sdk::{
-    Client, Contact, EventId, Keys, Metadata, Relay, RelayMessage, RelayPoolNotification, Url,
+    Client, Contact, EventId, Keys, Kind, Metadata, Relay, RelayMessage, RelayPoolNotification, Url,
 };
 use sqlx::SqlitePool;
 use std::pin::Pin;
@@ -133,7 +133,6 @@ pub enum Message {
     ConnectToRelay(Url),
     SendDMTo((DbContact, String)),
     ShowPublicKey,
-    // ListOwnEvents,
     FetchRelays,
     FetchRelaysUrls,
     AddRelay(Url),
@@ -141,6 +140,7 @@ pub enum Message {
     DeleteRelay(Url),
     ToggleRelayRead((Url, bool)),
     ToggleRelayWrite((Url, bool)),
+    SendContactListToRelay(Url),
 
     // DATABASE MESSAGES
     FetchRelayResponses(i64),
@@ -150,8 +150,6 @@ pub enum Message {
     FetchContacts,
     UpdateContact(DbContact),
     DeleteContact(DbContact),
-    // InsertEvent(nostr_sdk::Event),
-    // UpdateUnseenCount(DbContact),
     AddToUnseenCount(DbContact),
     CreateChannel,
 }
@@ -173,7 +171,6 @@ pub enum SuccessKind {
         db_event: DbEvent,
         db_message: Option<DbMessage>,
     },
-    // SentDM((EventId, DbContact, ChatMessage)),
 }
 
 pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
@@ -239,6 +236,12 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                     let event = futures::select! {
                         message = receiver.select_next_some() => {
                             let event = match message {
+                                Message::SendContactListToRelay(url)=>{
+                                    process_async_fn(
+                                        send_contact_list_to(&database.pool,&keys, &nostr_client, url),
+                                        |event| event
+                                    ).await
+                                }
                                 Message::CreateChannel => {
                                     process_async_fn(
                                         create_channel(&nostr_client),
@@ -495,17 +498,21 @@ async fn on_relay_message(
                 .await?
                 .ok_or(Error::EventNotInDatabase(event_hash.to_owned()))?;
             let mut db_message = None;
+
             if !db_event.confirmed {
                 db_event = DbEvent::confirm_event(pool, db_event).await?;
 
-                db_message = if let Some(db_message) =
-                    DbMessage::fetch_one(pool, db_event.event_id()?).await?
-                {
-                    let confirmed_db_message = DbMessage::confirm_message(pool, db_message).await?;
-                    Some(confirmed_db_message)
-                } else {
-                    None
-                };
+                if let Kind::EncryptedDirectMessage = db_event.kind {
+                    db_message = if let Some(db_message) =
+                        DbMessage::fetch_one(pool, db_event.event_id()?).await?
+                    {
+                        let confirmed_db_message =
+                            DbMessage::confirm_message(pool, db_message).await?;
+                        Some(confirmed_db_message)
+                    } else {
+                        None
+                    };
+                }
             }
 
             let mut relay_response = DbRelayResponse::from_response(

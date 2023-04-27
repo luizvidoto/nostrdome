@@ -213,7 +213,7 @@ impl Application for App {
 #[tokio::main]
 async fn main() {
     if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "warn");
+        std::env::set_var("RUST_LOG", "info");
     }
 
     let env_filter = EnvFilter::from_default_env();
@@ -234,9 +234,8 @@ async fn main() {
     App::run(Settings {
         id: Some(String::from("nostrdome")),
         window: window::Settings {
-            // (width, height)
-            size: (1000, 800),
-            min_size: Some((600, 400)),
+            size: (APP_WIDTH, APP_HEIGHT),
+            min_size: Some((APP_MIN_WIDTH, APP_MIN_HEIGHT)),
             position: window::Position::Centered,
             ..window::Settings::default()
         },
@@ -244,3 +243,8 @@ async fn main() {
     })
     .expect("Failed to run app");
 }
+
+const APP_WIDTH: u32 = 600;
+const APP_HEIGHT: u32 = 400;
+const APP_MIN_WIDTH: u32 = 600;
+const APP_MIN_HEIGHT: u32 = 400;
