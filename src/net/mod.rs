@@ -3,8 +3,8 @@ use crate::error::Error;
 use crate::net::contact::{insert_batch_of_contacts, insert_contact};
 use crate::net::event::{received_event, send_dm};
 use crate::net::relay::{
-    add_relay, connect_relay, connect_relays, fetch_relays, toggle_read_for_relay,
-    toggle_write_for_relay, update_relay_db_and_client,
+    add_relay, connect_relay, connect_relays, fetch_relays, fetch_relays_urls,
+    toggle_read_for_relay, toggle_write_for_relay, update_relay_db_and_client,
 };
 use crate::types::ChatMessage;
 use async_stream::stream;
@@ -14,9 +14,12 @@ use iced::futures::stream::Fuse;
 use iced::futures::{channel::mpsc, StreamExt};
 use iced::{subscription, Subscription};
 use nostr_sdk::secp256k1::XOnlyPublicKey;
-use nostr_sdk::{Client, Contact, EventId, Keys, Relay, RelayMessage, RelayPoolNotification, Url};
+use nostr_sdk::{
+    Client, Contact, EventId, Keys, Metadata, Relay, RelayMessage, RelayPoolNotification, Url,
+};
 use sqlx::SqlitePool;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::time::Duration;
 
 mod contact;
@@ -71,6 +74,8 @@ pub enum Event {
     /// Event triggered when a list of relays is received
     GotRelays(Vec<Relay>),
 
+    GotRelaysUrls(Vec<nostr_sdk::Url>),
+
     /// Event triggered when a list of own events is received
     GotOwnEvents(Vec<nostr_sdk::Event>),
 
@@ -115,6 +120,8 @@ pub enum Event {
 
     RequestedEvents,
 
+    ChannelCreated(EventId),
+
     /// Event triggered when no event is to be processed
     None,
 }
@@ -128,6 +135,7 @@ pub enum Message {
     ShowPublicKey,
     // ListOwnEvents,
     FetchRelays,
+    FetchRelaysUrls,
     AddRelay(Url),
     UpdateRelay(Url),
     DeleteRelay(Url),
@@ -145,6 +153,7 @@ pub enum Message {
     // InsertEvent(nostr_sdk::Event),
     // UpdateUnseenCount(DbContact),
     AddToUnseenCount(DbContact),
+    CreateChannel,
 }
 
 #[derive(Debug, Clone)]
@@ -230,6 +239,12 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                     let event = futures::select! {
                         message = receiver.select_next_some() => {
                             let event = match message {
+                                Message::CreateChannel => {
+                                    process_async_fn(
+                                        create_channel(&nostr_client),
+                                        |event| event
+                                    ).await
+                                }
                                 Message::FetchRelayResponses(event_id) => {
                                     process_async_fn(
                                         fetch_relays_responses(&database.pool, event_id),
@@ -306,6 +321,13 @@ pub fn backend_connect(keys: &Keys) -> Subscription<Event> {
                                     process_async_fn(
                                         fetch_relays(&nostr_client),
                                         |relays| Event::GotRelays(relays),
+                                    )
+                                    .await
+                                }
+                                Message::FetchRelaysUrls => {
+                                    process_async_fn(
+                                        fetch_relays_urls(&nostr_client),
+                                        |relays| Event::GotRelaysUrls(relays),
                                     )
                                     .await
                                 }
@@ -514,6 +536,26 @@ async fn fetch_relays_responses(
     let responses = DbRelayResponse::fetch_by_event(pool, event_id).await?;
 
     Ok(responses)
+}
+
+async fn _send_contact_list(client: &Client, list: &[DbContact]) -> Result<Event, Error> {
+    let c_list: Vec<_> = list.iter().map(|c| c.into()).collect();
+    let _event_id = client.set_contact_list(c_list).await?;
+
+    Ok(Event::None)
+}
+
+async fn create_channel(client: &Client) -> Result<Event, Error> {
+    let metadata = Metadata::new()
+        .about("Channel about cars")
+        .display_name("Best Cars")
+        .name("Best Cars")
+        .banner(Url::from_str("https://picsum.photos/seed/picsum/800/300")?)
+        .picture(Url::from_str("https://picsum.photos/seed/picsum/200/300")?)
+        .website(Url::from_str("https://picsum.photos/seed/picsum/200/300")?);
+
+    let event_id = client.new_channel(metadata).await?;
+    Ok(Event::ChannelCreated(event_id))
 }
 
 const IN_MEMORY: bool = false;

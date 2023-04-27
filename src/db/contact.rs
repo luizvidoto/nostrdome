@@ -2,14 +2,14 @@ use std::result::Result as StdResult;
 use std::str::FromStr;
 
 use chrono::{NaiveDateTime, Utc};
-use nostr_sdk::{secp256k1::XOnlyPublicKey, Tag};
+use nostr_sdk::{prelude::UncheckedUrl, secp256k1::XOnlyPublicKey, Tag};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
 use crate::{
     error::{Error, Result},
     types::ChatMessage,
-    utils::millis_to_naive_or_err,
+    utils::{millis_to_naive_or_err, unchecked_url_or_err},
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -30,7 +30,7 @@ impl From<u8> for ContactStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbContact {
     pubkey: XOnlyPublicKey,
-    relay_url: Option<String>,
+    relay_url: Option<UncheckedUrl>,
     petname: Option<String>,
     profile_image: Option<String>,
     created_at: NaiveDateTime,
@@ -39,6 +39,16 @@ pub struct DbContact {
     unseen_messages: u8,
     last_message_content: Option<String>,
     last_message_date: Option<NaiveDateTime>,
+}
+
+impl From<&DbContact> for nostr_sdk::Contact {
+    fn from(c: &DbContact) -> Self {
+        Self {
+            pk: c.pubkey.to_owned(),
+            relay_url: c.relay_url.to_owned(),
+            alias: c.petname.to_owned(),
+        }
+    }
 }
 
 impl PartialEq for DbContact {
@@ -68,15 +78,28 @@ impl DbContact {
     pub fn from_tag(tag: &Tag) -> Result<Self> {
         match tag {
             Tag::PubKey(pk, relay_url) => {
-                Ok(Self::new(pk).with_relay_url(relay_url.to_owned().map(|url| url.to_string())))
+                let mut contact = Self::new(pk);
+                if let Some(relay_url) = relay_url {
+                    contact = contact.with_unchekd_relay_url(relay_url);
+                }
+                Ok(contact)
             }
             Tag::ContactList {
                 pk,
                 relay_url,
                 alias,
-            } => Ok(Self::new(pk)
-                .with_relay_url(relay_url.to_owned().map(|url| url.to_string()))
-                .with_petname(alias)),
+            } => {
+                let mut contact = Self::new(pk);
+                if let Some(relay_url) = relay_url {
+                    contact = contact.with_unchekd_relay_url(relay_url);
+                }
+
+                if let Some(petname) = alias {
+                    contact = contact.with_petname(&petname);
+                }
+
+                Ok(contact)
+            }
             _ => Err(Error::TagToContactError),
         }
     }
@@ -88,10 +111,16 @@ impl DbContact {
         let pubkey = XOnlyPublicKey::from_str(pubkey)?;
         Ok(Self::new(&pubkey))
     }
+    pub fn from_submit(pubkey: &str, petname: &str, relay_url: &str) -> Result<Self> {
+        let mut contact = Self::from_str(pubkey)?;
+        contact = contact.with_petname(petname);
+        contact = contact.with_relay_url(relay_url)?;
+        Ok(contact)
+    }
     pub fn get_petname(&self) -> Option<String> {
         self.petname.clone()
     }
-    pub fn get_relay_url(&self) -> Option<String> {
+    pub fn get_relay_url(&self) -> Option<UncheckedUrl> {
         self.relay_url.clone()
     }
     pub fn get_profile_image(&self) -> Option<String> {
@@ -190,35 +219,22 @@ impl DbContact {
         Ok(db_contact_updated)
     }
 
-    fn with_relay_url(mut self, relay_url: Option<String>) -> Self {
-        self.relay_url = relay_url;
+    pub fn with_unchekd_relay_url(mut self, relay_url: &UncheckedUrl) -> Self {
+        self.relay_url = Some(relay_url.to_owned());
         self
     }
 
-    fn with_petname(mut self, petname: &Option<String>) -> Self {
-        self.petname = petname.clone();
+    pub fn with_relay_url(mut self, relay_url: &str) -> Result<Self> {
+        self.relay_url =
+            Some(UncheckedUrl::from_str(relay_url).map_err(|_e| Error::Url(relay_url.to_owned()))?);
+        Ok(self)
+    }
+
+    pub fn with_petname(mut self, petname: &str) -> Self {
+        self.petname = Some(petname.to_owned());
         self
     }
-    pub fn relay_url(self, relay: &str) -> Self {
-        if relay.is_empty() {
-            self
-        } else {
-            Self {
-                relay_url: Some(relay.to_owned()),
-                ..self
-            }
-        }
-    }
-    pub fn petname(self, petname: &str) -> Self {
-        if petname.is_empty() {
-            self
-        } else {
-            Self {
-                petname: Some(petname.to_owned()),
-                ..self
-            }
-        }
-    }
+
     pub fn profile_image(self, image: &str) -> Self {
         if image.is_empty() {
             self
@@ -263,7 +279,7 @@ impl DbContact {
 
         sqlx::query(sql)
             .bind(&contact.pubkey.to_string())
-            .bind(&contact.relay_url)
+            .bind(&contact.relay_url.as_ref().map(|url| url.to_string()))
             .bind(&contact.petname)
             .bind(&contact.profile_image)
             .bind(contact.status as u8)
@@ -326,7 +342,7 @@ impl DbContact {
         "#;
 
         sqlx::query(sql)
-            .bind(&contact.relay_url)
+            .bind(&contact.relay_url.as_ref().map(|url| url.to_string()))
             .bind(&contact.petname)
             .bind(&contact.profile_image)
             .bind(contact.status as u8)
@@ -370,6 +386,11 @@ impl sqlx::FromRow<'_, SqliteRow> for DbContact {
             "db_contact updated_at",
         )?;
 
+        let relay_url = row
+            .get::<Option<String>, &str>("relay_url")
+            .map(|url| unchecked_url_or_err(&url, "relay_url"))
+            .transpose()?;
+
         Ok(DbContact {
             pubkey: XOnlyPublicKey::from_str(&pubkey).map_err(|e| sqlx::Error::ColumnDecode {
                 index: "pubkey".into(),
@@ -378,7 +399,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbContact {
             created_at,
             updated_at,
             petname: row.try_get::<Option<String>, &str>("petname")?,
-            relay_url: row.try_get::<Option<String>, &str>("relay_url")?,
+            relay_url,
             profile_image: row.try_get::<Option<String>, &str>("profile_image")?,
             status: row.get::<u8, &str>("status").into(),
             unseen_messages: row.try_get::<i64, &str>("unseen_messages")? as u8,

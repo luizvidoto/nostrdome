@@ -1,9 +1,9 @@
-use iced::alignment::{Horizontal, Vertical};
-use iced::widget::{button, column, container, row, scrollable, text, text_input};
+use iced::widget::{button, column, container, row, scrollable, text_input, Space};
 use iced::Length;
 
 use crate::components::{contact_row, ContactRow};
 use crate::net::BackEndConnection;
+use crate::style;
 use crate::utils::contact_matches_search;
 use crate::widget::Element;
 use crate::{components::text::title, db::DbContact, net};
@@ -17,6 +17,7 @@ pub enum Message {
     OpenEditContactModal(DbContact),
     OpenImportContactModal,
     SearchContactInputChange(String),
+    OpenSendContactModal,
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +40,7 @@ impl State {
         back_conn: &mut BackEndConnection,
     ) -> Option<Message> {
         match message {
+            Message::OpenSendContactModal => (),
             Message::OpenEditContactModal(_) => (),
             Message::OpenAddContactModal => (),
             Message::OpenImportContactModal => (),
@@ -71,6 +73,7 @@ impl State {
                 _ => (),
             },
         }
+
         None
     }
 
@@ -79,17 +82,21 @@ impl State {
 
         let search_contact = text_input("Search", &self.search_contact_input)
             .on_input(Message::SearchContactInputChange)
+            .style(style::TextInput::ChatSearch)
             .width(SEARCH_CONTACT_WIDTH);
-        let add_contact_btn = button("Add")
-            .on_press(Message::OpenAddContactModal)
-            .width(ADD_CONTACT_WIDTH);
-        let import_btn = button("Import")
-            .on_press(Message::OpenImportContactModal)
-            .width(IMPORT_CONTACT_WIDTH);
-        let empty = container(text("")).width(Length::Fill);
-        let utils_row = row![search_contact, empty, add_contact_btn, import_btn]
-            .spacing(5)
-            .width(Length::Fill);
+        let add_contact_btn = button("Add").on_press(Message::OpenAddContactModal);
+        let import_btn = button("Import").on_press(Message::OpenImportContactModal);
+        let send_btn = button("Send").on_press(Message::OpenSendContactModal);
+
+        let utils_row = row![
+            search_contact,
+            Space::with_width(Length::Fill),
+            add_contact_btn,
+            import_btn,
+            send_btn
+        ]
+        .spacing(5)
+        .width(Length::Fill);
         let contact_list: Element<_> = self
             .contacts
             .iter()
@@ -105,15 +112,8 @@ impl State {
             .height(Length::Fill)
             .into();
 
-        container(content)
-            .center_x()
-            .center_y()
-            .align_x(Horizontal::Center)
-            .align_y(Vertical::Center)
-            .into()
+        container(content).center_x().center_y().into()
     }
 }
 
 const SEARCH_CONTACT_WIDTH: f32 = 200.0;
-const ADD_CONTACT_WIDTH: f32 = 50.0;
-const IMPORT_CONTACT_WIDTH: f32 = 50.0;

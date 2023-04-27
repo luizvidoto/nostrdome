@@ -1,9 +1,15 @@
 use crate::db::get_last_event_received;
 use crate::error::Error;
 use nostr_sdk::secp256k1::XOnlyPublicKey;
-use nostr_sdk::{Client, Filter, Keys, Kind, Relay, Timestamp, Url};
+use nostr_sdk::{Client, Filter, Keys, Relay, Timestamp, Url};
 use sqlx::SqlitePool;
 use std::time::Duration;
+
+pub async fn fetch_relays_urls(nostr_client: &Client) -> Result<Vec<Url>, Error> {
+    tracing::info!("Fetching relays urls");
+    let relays = nostr_client.relays().await;
+    Ok(relays.keys().map(|url| url.to_owned()).collect())
+}
 
 pub async fn fetch_relays(nostr_client: &Client) -> Result<Vec<Relay>, Error> {
     tracing::info!("Fetching relays");
@@ -116,12 +122,12 @@ pub async fn request_events(
     tracing::info!("Requesting events");
     let sent_msgs_sub_past = Filter::new()
         .author(own_pubkey.to_string())
-        .kind(Kind::EncryptedDirectMessage)
+        // .kind(Kind::EncryptedDirectMessage)
         .since(Timestamp::from(last_timestamp))
         .until(Timestamp::now());
     let recv_msgs_sub_past = Filter::new()
         .pubkey(pubkey.to_owned())
-        .kind(Kind::EncryptedDirectMessage)
+        // .kind(Kind::EncryptedDirectMessage)
         .since(Timestamp::from(last_timestamp))
         .until(Timestamp::now());
 
@@ -132,11 +138,11 @@ pub async fn request_events(
 
     let sent_msgs_sub_future = Filter::new()
         .author(own_pubkey.to_string())
-        .kind(Kind::EncryptedDirectMessage)
+        // .kind(Kind::EncryptedDirectMessage)
         .since(Timestamp::now());
     let recv_msgs_sub_future = Filter::new()
         .pubkey(pubkey.to_owned())
-        .kind(Kind::EncryptedDirectMessage)
+        // .kind(Kind::EncryptedDirectMessage)
         .since(Timestamp::now());
 
     nostr_client

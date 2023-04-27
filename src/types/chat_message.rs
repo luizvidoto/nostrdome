@@ -61,7 +61,7 @@ impl ChatMessage {
         contact: &DbContact,
         content: &str,
     ) -> Result<Self, Error> {
-        let msg_id = db_message.msg_id()?;
+        let msg_id = db_message.id()?;
         let event_id = db_message.event_id()?;
         let event_hash = db_message.event_hash()?;
         Ok(Self {

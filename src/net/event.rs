@@ -135,15 +135,42 @@ async fn insert_specific_kind(
                 received_encrypted_dm(pool, keys, db_event.clone(), relay_url).await?;
             Some(Event::DBSuccessEvent(database_success_event_kind))
         }
-        Kind::RecommendRelay => None,
-        Kind::ContactList => None,
-        _ => None,
+        Kind::RecommendRelay => {
+            println!("--- RecommendRelay ---");
+            dbg!(db_event);
+            None
+        }
+        Kind::ContactList => {
+            println!("--- ContactList ---");
+            dbg!(db_event);
+            None
+        }
+        Kind::ChannelCreation => {
+            // println!("--- ChannelCreation ---");
+            // dbg!(db_event);
+            None
+        }
+        Kind::ChannelMetadata => {
+            // println!("--- ChannelMetadata ---");
+            // dbg!(db_event);
+            None
+        }
+        Kind::ChannelMessage => {
+            // println!("--- ChannelMessage ---");
+            // dbg!(db_event);
+            None
+        }
+        Kind::ChannelHideMessage => {
+            // println!("--- ChannelHideMessage ---");
+            // dbg!(db_event);
+            None
+        }
+        Kind::ChannelMuteUser => {
+            // println!("--- ChannelMuteUser ---");
+            // dbg!(db_event);
+            None
+        }
         // Kind::EventDeletion => todo!(),
-        // Kind::ChannelCreation => todo!(),
-        // Kind::ChannelMetadata => todo!(),
-        // Kind::ChannelMessage => todo!(),
-        // Kind::ChannelHideMessage => todo!(),
-        // Kind::ChannelMuteUser => todo!(),
         // Kind::PublicChatReserved45 => todo!(),
         // Kind::PublicChatReserved46 => todo!(),
         // Kind::PublicChatReserved47 => todo!(),
@@ -155,6 +182,7 @@ async fn insert_specific_kind(
         // Kind::PinList => todo!(),
         // Kind::RelayList => todo!(),
         // Kind::Authentication => todo!(),
+        _ => None,
     };
 
     Ok(event)

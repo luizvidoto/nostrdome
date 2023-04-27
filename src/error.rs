@@ -9,8 +9,11 @@ pub enum Error {
     #[error("Unable to update contact: message ID is required but not provided.")]
     MissingMessageIdForContactUpdate,
 
-    #[error("Can't update message without msg_id")]
+    #[error("Can't update message without id")]
     MessageNotInDatabase,
+
+    #[error("Can't update channel without id")]
+    ChannelNotInDatabase,
 
     #[error("{0}")]
     FromDbEventError(#[from] FromDbEventError),

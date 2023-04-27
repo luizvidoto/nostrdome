@@ -18,6 +18,7 @@ static CHAT_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::uniq
 #[derive(Debug, Clone)]
 pub enum Message {
     OnVerResize(u16),
+    GoToChannelsPress,
     NavSettingsPress,
     ContactCardMessage(contact_card::Message),
     DMNMessageChange(String),
@@ -133,14 +134,24 @@ impl State {
             .height(CHAT_INPUT_HEIGHT)
             .padding([10, 5]);
 
+        let goto_channels_btn = button("Channels")
+            .padding(5)
+            .on_press(Message::GoToChannelsPress);
         let settings_btn = button("Settings")
-            .padding(10)
+            .padding(5)
             .on_press(Message::NavSettingsPress);
-        let chat_navbar =
-            container(row![Space::with_width(Length::Fill), settings_btn].width(Length::Fill))
-                .padding(10)
-                .height(NAVBAR_HEIGHT)
-                .style(style::Container::Default);
+        let chat_navbar = container(
+            row![
+                Space::with_width(Length::Fill),
+                goto_channels_btn,
+                settings_btn
+            ]
+            .spacing(5)
+            .width(Length::Fill),
+        )
+        .padding(10)
+        .height(NAVBAR_HEIGHT)
+        .style(style::Container::Default);
 
         let second: Element<_> = if self.active_contact.is_some() {
             container(column![chat_navbar, chat_messages, msg_input_row])
@@ -210,7 +221,7 @@ impl State {
 
                     net::SuccessKind::UpdateWithRelayResponse { db_message, .. } => {
                         if let Some(msg) = &db_message {
-                            if let Ok(msg_id) = msg.msg_id() {
+                            if let Ok(msg_id) = msg.id() {
                                 self.messages
                                     .iter_mut()
                                     .find(|m| m.msg_id == msg_id)
@@ -273,6 +284,7 @@ impl State {
 
     pub fn update(&mut self, message: Message, back_conn: &mut BackEndConnection) {
         match message {
+            Message::GoToChannelsPress => (),
             Message::Scrolled(offset) => {
                 self.current_scroll_offset = offset;
             }

@@ -6,13 +6,14 @@ use crate::{
     widget::Element,
 };
 
+mod channels;
 mod chat;
 pub mod login;
 pub mod settings;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    ChangeView,
+    ChannelsMsg(channels::Message),
     ChatMsg(chat::Message),
     SettingsMsg(settings::Message),
 }
@@ -53,6 +54,9 @@ impl Router {
     ) -> Command<Message> {
         match event {
             event => match &mut self.state {
+                ViewState::Channels { state } => state
+                    .backend_event(event, back_conn)
+                    .map(Message::ChannelsMsg),
                 ViewState::Chat { state } => {
                     state.backend_event(event, back_conn).map(Message::ChatMsg)
                 }
@@ -70,17 +74,27 @@ impl Router {
         selected_theme: Option<style::Theme>,
     ) -> Command<Message> {
         match message {
-            Message::ChangeView => (),
+            Message::ChannelsMsg(msg) => {
+                if let ViewState::Channels { state } = &mut self.state {
+                    match msg {
+                        channels::Message::GoToChat => self.next_state(ViewState::chat(back_conn)),
+                        msg => state.update(msg, back_conn),
+                    }
+                }
+            }
             Message::ChatMsg(msg) => {
                 if let ViewState::Chat { state } = &mut self.state {
                     match msg {
                         chat::Message::AddContactPress => {
                             self.next_state(ViewState::settings_contacts(back_conn))
                         }
+                        chat::Message::GoToChannelsPress => {
+                            self.next_state(ViewState::channels(back_conn))
+                        }
                         chat::Message::NavSettingsPress => {
                             self.next_state(ViewState::settings(back_conn))
                         }
-                        _ => state.update(msg.clone(), back_conn),
+                        msg => state.update(msg, back_conn),
                     }
                 }
             }
@@ -90,9 +104,9 @@ impl Router {
                         settings::Message::NavEscPress => {
                             self.next_state(ViewState::chat(back_conn))
                         }
-                        _ => {
+                        msg => {
                             return state
-                                .update(msg.clone(), back_conn, selected_theme)
+                                .update(msg, back_conn, selected_theme)
                                 .map(Message::SettingsMsg);
                         }
                     }
@@ -105,6 +119,7 @@ impl Router {
 
 #[derive(Debug)]
 pub enum ViewState {
+    Channels { state: channels::State },
     Chat { state: chat::State },
     Settings { state: settings::Settings },
 }
@@ -114,6 +129,11 @@ impl ViewState {
         match self {
             ViewState::Settings { state } => state.subscription().map(Message::SettingsMsg),
             _ => Subscription::none(),
+        }
+    }
+    pub fn channels(_back_conn: &mut BackEndConnection) -> Self {
+        Self::Channels {
+            state: channels::State::new(),
         }
     }
     pub fn chat(back_conn: &mut BackEndConnection) -> Self {
@@ -133,6 +153,7 @@ impl ViewState {
     }
     pub fn view(&self) -> Element<Message> {
         match self {
+            Self::Channels { state } => state.view().map(Message::ChannelsMsg),
             Self::Chat { state } => state.view().map(Message::ChatMsg),
             Self::Settings { state } => state.view().map(Message::SettingsMsg),
         }

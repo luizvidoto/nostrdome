@@ -15,7 +15,7 @@ use super::DbEvent;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbMessage {
-    msg_id: Option<i64>,
+    id: Option<i64>,
     encrypted_content: String,
     from_pubkey: XOnlyPublicKey,
     to_pubkey: XOnlyPublicKey,
@@ -45,8 +45,8 @@ impl DbMessage {
         self.from_pubkey.to_owned()
     }
 
-    pub fn msg_id(&self) -> Result<i64, Error> {
-        Ok(self.msg_id.ok_or(Error::MessageNotInDatabase)?)
+    pub fn id(&self) -> Result<i64, Error> {
+        Ok(self.id.ok_or(Error::MessageNotInDatabase)?)
     }
     pub fn event_id(&self) -> Result<i64, Error> {
         Ok(self.event_id.ok_or(Error::MessageNotInDatabase)?)
@@ -66,7 +66,7 @@ impl DbMessage {
     }
 
     pub fn with_id(mut self, id: i64) -> Self {
-        self.msg_id = Some(id);
+        self.id = Some(id);
         self
     }
     pub fn with_event(mut self, event_id: i64) -> Self {
@@ -77,7 +77,7 @@ impl DbMessage {
     pub fn from_db_event(db_event: DbEvent, relay_url: Option<&Url>) -> Result<Self, Error> {
         let (to_pub, event_id, event_hash) = Self::info_from_tags(&db_event)?;
         Ok(Self {
-            msg_id: None,
+            id: None,
             encrypted_content: db_event.content.to_owned(),
             from_pubkey: db_event.pubkey.clone(),
             to_pubkey: to_pub,
@@ -164,7 +164,7 @@ impl DbMessage {
             WHERE msg_id = ?
         "#;
 
-        let msg_id = db_message.msg_id()?;
+        let msg_id = db_message.id()?;
         db_message.status = MessageStatus::Delivered;
         db_message.updated_at = Utc::now().naive_utc();
 
@@ -188,7 +188,7 @@ impl DbMessage {
             WHERE msg_id = ?2
             "#;
 
-        let msg_id = db_message.msg_id()?;
+        let msg_id = db_message.id()?;
 
         sqlx::query(sql)
             .bind(&db_message.status.to_i32())
@@ -214,7 +214,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbMessage {
         let event_hash = event_hash_or_err(&event_hash, "event_hash")?;
 
         Ok(DbMessage {
-            msg_id: row.get::<Option<i64>, &str>("msg_id"),
+            id: row.get::<Option<i64>, &str>("msg_id"),
             event_id: Some(row.try_get::<i64, &str>("event_id")?),
             encrypted_content: row.try_get::<String, &str>("content")?,
             from_pubkey,

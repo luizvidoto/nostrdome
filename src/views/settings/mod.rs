@@ -1,13 +1,14 @@
-use iced::alignment::Horizontal;
-use iced::widget::{button, column, container, row, text};
+use iced::alignment::{self, Horizontal};
+use iced::widget::{button, column, container, row, text, Space};
 use iced::{Command, Length, Subscription};
 use iced_aw::{Card, Modal};
 use nostr_sdk::{Metadata, Tag};
 
+use crate::components::text::title;
 use crate::components::text_input_group::text_input_group;
 use crate::components::{file_importer, FileImporter};
 use crate::db::DbContact;
-use crate::net::{self, BackEndConnection};
+use crate::net::{self, BackEndConnection, Event};
 use crate::style;
 use crate::types::UncheckedEvent;
 use crate::utils::json_reader;
@@ -47,6 +48,9 @@ pub enum Message {
     FileImporterMessage(file_importer::Message),
     CloseImportContactModal,
     CloseAddContactModal,
+    CloseSendContactsModal,
+    SendContactListToRelay(nostr_sdk::Url),
+    SendContactListToAll,
 }
 
 #[derive(Debug)]
@@ -134,6 +138,8 @@ impl Settings {
         event: net::Event,
         back_conn: &mut BackEndConnection,
     ) -> Command<Message> {
+        self.modal_state.backend_event(event.clone(), back_conn);
+
         match &mut self.menu_state {
             MenuState::Account { state } => state.update(account::Message::BackEndEvent(event)),
             MenuState::Appearance { state } => {
@@ -146,18 +152,10 @@ impl Settings {
             }
             MenuState::Backup { state } => state.update(backup::Message::BackEndEvent(event)),
             MenuState::Contacts { state } => {
-                if let Some(received_msg) =
-                    state.update(contacts::Message::BackEndEvent(event), back_conn)
-                {
-                    match received_msg {
-                        contacts::Message::OpenEditContactModal(contact) => {
-                            self.modal_state = ModalState::add_contact(Some(contact))
-                        }
-                        _ => (),
-                    }
-                }
+                let _ = state.update(contacts::Message::BackEndEvent(event), back_conn);
             }
         }
+
         Command::none()
     }
     pub fn update(
@@ -195,6 +193,9 @@ impl Settings {
                         }
                         contacts::Message::OpenImportContactModal => {
                             self.modal_state = ModalState::import_contacts();
+                        }
+                        contacts::Message::OpenSendContactModal => {
+                            self.modal_state = ModalState::load_send_contacts(back_conn);
                         }
                         other => {
                             if let Some(received_msg) = state.update(other, back_conn) {
@@ -288,11 +289,14 @@ impl Settings {
             ]
             .spacing(3),
         )
+        .height(Length::Fill)
         .width(Length::FillPortion(1))
         .padding([10, 5]);
 
         let view_ct = container(self.menu_state.view())
-            .padding([10, 5])
+            .style(style::Container::ChatContainer)
+            .padding(20)
+            .height(Length::Fill)
             .width(Length::FillPortion(3));
 
         let content: Element<_> = container(
@@ -300,6 +304,7 @@ impl Settings {
                 .width(Length::Fill)
                 .height(Length::Fill),
         )
+        .style(style::Container::Default)
         .width(Length::Fill)
         .height(Length::Fill)
         .into();
@@ -320,16 +325,35 @@ enum ModalState {
         imported_contacts: Vec<DbContact>,
         file_importer: FileImporter,
     },
+    SendContactList {
+        relays: Vec<nostr_sdk::Url>,
+    },
     Off,
 }
 
 impl ModalState {
+    pub fn backend_event(&mut self, event: Event, _back_conn: &mut BackEndConnection) {
+        if let ModalState::SendContactList { relays } = self {
+            if let Event::GotRelaysUrls(new_relays) = event {
+                *relays = new_relays;
+            }
+        }
+    }
+    pub fn _send_contacts(relays: Vec<nostr_sdk::Url>) -> Self {
+        Self::SendContactList { relays }
+    }
+    pub fn load_send_contacts(back_conn: &mut BackEndConnection) -> Self {
+        back_conn.send(net::Message::FetchRelaysUrls);
+        Self::SendContactList { relays: vec![] }
+    }
     pub fn add_contact(contact: Option<DbContact>) -> Self {
         let (petname, pubkey, rec_relay, is_edit) = match contact {
             Some(c) => (
                 c.get_petname().unwrap_or_else(|| "".into()),
                 c.pubkey().to_string(),
-                c.get_relay_url().unwrap_or_else(|| "".into()),
+                c.get_relay_url()
+                    .map(|url| url.to_string())
+                    .unwrap_or("".into()),
                 true,
             ),
             None => ("".into(), "".into(), "".into(), false),
@@ -355,6 +379,7 @@ impl ModalState {
         back_conn: &mut BackEndConnection,
     ) -> Command<Message> {
         match message {
+            Message::CloseSendContactsModal => *self = Self::Off,
             Message::CloseAddContactModal => *self = Self::Off,
             Message::CloseImportContactModal => *self = Self::Off,
             Message::SubmitContact {
@@ -362,9 +387,8 @@ impl ModalState {
                 pubkey,
                 rec_relay,
                 is_edit,
-            } => match DbContact::from_str(&pubkey) {
-                Ok(mut db_contact) => {
-                    db_contact = db_contact.petname(&petname).relay_url(&rec_relay);
+            } => match DbContact::from_submit(&pubkey, &petname, &rec_relay) {
+                Ok(db_contact) => {
                     back_conn.send(match is_edit {
                         true => net::Message::UpdateContact(db_contact),
                         false => net::Message::AddContact(db_contact),
@@ -372,7 +396,8 @@ impl ModalState {
                     *self = ModalState::Off;
                 }
                 Err(_e) => {
-                    tracing::error!("Every contact must have a valid pubkey.");
+                    // TODO redo here
+                    tracing::error!("Every contact must have a valid pubkey and valid url.");
                 }
             },
             Message::SaveImportedContacts(imported_contacts) => {
@@ -422,7 +447,50 @@ impl ModalState {
         Command::none()
     }
     pub fn view<'a>(&'a self, underlay: Element<'a, Message>) -> Element<'a, Message> {
-        let view: Element<_> = match &self {
+        let view: Element<_> = match self {
+            ModalState::SendContactList { relays } => Modal::new(true, underlay, move || {
+                let title = title("Send Contact List");
+                let send_to_all_btn = button("Send All").on_press(Message::SendContactListToAll);
+                let header = container(
+                    row![title, Space::with_width(Length::Fill), send_to_all_btn].spacing(5),
+                )
+                .width(Length::Fill)
+                .style(style::Container::Default)
+                .center_y();
+
+                let relay_list: Element<_> = relays
+                    .iter()
+                    .fold(column![].spacing(5), |col, url| {
+                        let relay_row = container(row![
+                            text(&url),
+                            Space::with_width(Length::Fill),
+                            button("Send").on_press(Message::SendContactListToRelay(url.clone()))
+                        ])
+                        .center_y();
+                        col.push(relay_row)
+                    })
+                    .into();
+
+                let modal_body = container(relay_list).style(style::Container::Bordered);
+
+                Card::new(header, modal_body)
+                    .foot(
+                        row![
+                            button(text("Cancel").horizontal_alignment(Horizontal::Center),)
+                                .width(Length::Fill)
+                                .on_press(Message::CloseSendContactsModal),
+                        ]
+                        .spacing(10)
+                        .padding(5)
+                        .width(Length::Fill),
+                    )
+                    .max_width(ADD_CONTACT_MODAL_WIDTH)
+                    .on_close(Message::CloseSendContactsModal)
+                    .into()
+            })
+            .backdrop(Message::CloseSendContactsModal)
+            .on_esc(Message::CloseSendContactsModal)
+            .into(),
             ModalState::ContactDetails {
                 modal_petname_input,
                 modal_pubkey_input,
