@@ -89,6 +89,10 @@ pub enum Error {
     #[error("Not a valid nostr relay url: {0}")]
     Url(String),
 
+    /// Trying to send message to a channel
+    #[error("Failed to send message to a channel: {0}")]
+    TrySendError(String),
+
     /// UTF-8 error
     #[error("UTF-8 Error: {0}")]
     Utf8Error(#[from] std::str::Utf8Error),

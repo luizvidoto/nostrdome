@@ -5,7 +5,7 @@ use iced::{alignment, Command, Length};
 use crate::components::contact_card;
 use crate::db::DbContact;
 use crate::icon::{menu_bars_icon, send_icon};
-use crate::net::{self, DBConnection};
+use crate::net::{self, BackEndConnection, Connection};
 use crate::style;
 use crate::types::{chat_message, ChatMessage};
 use crate::utils::contact_matches_search;
@@ -41,7 +41,7 @@ pub struct State {
     current_scroll_offset: scrollable::RelativeOffset,
 }
 impl State {
-    pub fn new(db_conn: &mut DBConnection) -> Self {
+    pub fn new(db_conn: &mut BackEndConnection<net::Message>) -> Self {
         db_conn.send(net::Message::FetchContacts);
         Self {
             contacts: vec![],
@@ -149,7 +149,7 @@ impl State {
     pub fn backend_event(
         &mut self,
         event: net::Event,
-        db_conn: &mut DBConnection,
+        db_conn: &mut BackEndConnection<net::Message>,
     ) -> Command<Message> {
         let command = match event {
             net::Event::DBSuccessEvent(kind) => {
@@ -248,7 +248,7 @@ impl State {
         }
     }
 
-    pub fn update(&mut self, message: Message, db_conn: &mut DBConnection) {
+    pub fn update(&mut self, message: Message, db_conn: &mut BackEndConnection<net::Message>) {
         match message {
             Message::GoToChannelsPress => (),
             Message::Scrolled(offset) => {
@@ -331,7 +331,7 @@ fn chat_day_divider<Message: 'static>(date: NaiveDateTime) -> Element<'static, M
 
 fn create_chat_content<'a>(messages: &[ChatMessage]) -> Element<'a, Message> {
     let chat_content: Element<_> = if messages.is_empty() {
-        text("No messages").size(24).into()
+        text("No messages").into()
     } else {
         let (chat_content, _): (Column<_>, Option<NaiveDateTime>) = messages.iter().fold(
             (column![], None),

@@ -8,7 +8,6 @@ use crate::net::relay::{
 };
 use crate::types::ChatMessage;
 use async_stream::stream;
-use futures::channel::mpsc::TrySendError;
 use futures::Future;
 use iced::futures::stream::Fuse;
 use iced::futures::{channel::mpsc, StreamExt};
@@ -22,50 +21,27 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::time::Duration;
 
+mod back_channel;
 mod contact;
 mod event;
 mod relay;
 
-pub trait Connection {
-    fn sender(&self) -> &mpsc::UnboundedSender<Message>;
-
-    fn send(&mut self, message: Message) {
-        if let Err(e) = self
-            .sender()
-            .unbounded_send(message)
-            .map_err(|e| e.to_string())
-        {
-            tracing::error!("{}", e);
-        }
-    }
-
-    fn try_send(&mut self, message: Message) -> Result<(), TrySendError<Message>> {
-        self.sender().unbounded_send(message)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct DBConnection(mpsc::UnboundedSender<Message>);
-impl Connection for DBConnection {
-    fn sender(&self) -> &mpsc::UnboundedSender<Message> {
-        &self.0
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct NostrConnection(mpsc::UnboundedSender<Message>);
-impl Connection for NostrConnection {
-    fn sender(&self) -> &mpsc::UnboundedSender<Message> {
-        &self.0
-    }
-}
+pub(crate) use self::back_channel::{BackEndConnection, Connection};
 
 pub enum DatabaseState {
     Disconnected {
         keys: Keys,
         in_memory: bool,
+        db_conn: BackEndConnection<Message>,
     },
     Connected {
+        db_conn: BackEndConnection<Message>,
+        receiver: mpsc::UnboundedReceiver<Message>,
+        database: Database,
+        keys: Keys,
+    },
+    Processing {
+        db_conn: BackEndConnection<Message>,
         receiver: mpsc::UnboundedReceiver<Message>,
         database: Database,
         keys: Keys,
@@ -75,8 +51,10 @@ pub enum DatabaseState {
 pub enum NostrClientState {
     Disconnected {
         keys: Keys,
+        ns_conn: BackEndConnection<Message>,
     },
     Connected {
+        ns_conn: BackEndConnection<Message>,
         receiver: mpsc::UnboundedReceiver<Message>,
         nostr_client: Client,
         keys: Keys,
@@ -85,27 +63,38 @@ pub enum NostrClientState {
     },
 }
 
-pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
-    let database_sub = database_connect(keys);
-    let nostr_client_sub = nostr_client_connect(keys);
+pub fn backend_connect(
+    keys: &Keys,
+    db_conn: &BackEndConnection<Message>,
+    ns_conn: &BackEndConnection<Message>,
+) -> Vec<Subscription<Event>> {
+    let database_sub = database_connect(keys, db_conn);
+    let nostr_client_sub = nostr_client_connect(keys, ns_conn);
 
     vec![database_sub, nostr_client_sub]
 }
 
-pub fn database_connect(keys: &Keys) -> Subscription<Event> {
+pub fn database_connect(keys: &Keys, db_conn: &BackEndConnection<Message>) -> Subscription<Event> {
     struct Backend;
-    let id = std::any::TypeId::of::<Database>();
+    let id = std::any::TypeId::of::<Backend>();
 
     subscription::unfold(
         id,
         DatabaseState::Disconnected {
             keys: keys.clone(),
             in_memory: IN_MEMORY,
+            db_conn: db_conn.clone(),
         },
         |state| async move {
             match state {
-                DatabaseState::Disconnected { keys, in_memory } => {
+                DatabaseState::Disconnected {
+                    keys,
+                    in_memory,
+                    mut db_conn,
+                } => {
                     let (sender, receiver) = mpsc::unbounded();
+
+                    db_conn.with_channel(sender);
 
                     let database =
                         match Database::new(in_memory, &keys.public_key().to_string()).await {
@@ -116,18 +105,43 @@ pub fn database_connect(keys: &Keys) -> Subscription<Event> {
                                 tracing::warn!("Trying again in 2 secs");
                                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                                 return (
-                                    Event::Disconnected,
-                                    DatabaseState::Disconnected { keys, in_memory },
+                                    Event::DbDisconnected,
+                                    DatabaseState::Disconnected {
+                                        keys,
+                                        in_memory,
+                                        db_conn,
+                                    },
                                 );
                             }
                         };
 
                     (
-                        Event::DbConnected(DBConnection(sender)),
+                        Event::DbConnected,
+                        DatabaseState::Processing {
+                            database,
+                            receiver,
+                            keys,
+                            db_conn,
+                        },
+                    )
+                }
+                DatabaseState::Processing {
+                    db_conn,
+                    receiver,
+                    database,
+                    keys,
+                } => {
+                    db_conn.process_message_queue();
+                    // Aguarde o intervalo
+                    tokio::time::sleep(Duration::from_millis(APP_TICK_INTERVAL_MILLIS)).await;
+
+                    (
+                        Event::DatabaseFinishedProcessing,
                         DatabaseState::Connected {
                             database,
                             receiver,
                             keys,
+                            db_conn,
                         },
                     )
                 }
@@ -135,10 +149,19 @@ pub fn database_connect(keys: &Keys) -> Subscription<Event> {
                     database,
                     mut receiver,
                     keys,
+                    db_conn,
                 } => {
                     let event = futures::select! {
                         message = receiver.select_next_some() => {
                             let event = match message {
+                                Message::ProcessDatabaseMessages => {
+                                    return (Event::DatabaseProcessing, DatabaseState::Processing {
+                                        database,
+                                        receiver,
+                                        keys,
+                                        db_conn,
+                                    });
+                                }
                                 Message::FetchRelayResponses(event_id) => {
                                     process_async_fn(
                                         fetch_relays_responses(&database.pool, event_id),
@@ -207,6 +230,7 @@ pub fn database_connect(keys: &Keys) -> Subscription<Event> {
                             database,
                             receiver,
                             keys,
+                            db_conn,
                         },
                     )
                 }
@@ -215,16 +239,22 @@ pub fn database_connect(keys: &Keys) -> Subscription<Event> {
     )
 }
 
-pub fn nostr_client_connect(keys: &Keys) -> Subscription<Event> {
+pub fn nostr_client_connect(
+    keys: &Keys,
+    ns_conn: &BackEndConnection<Message>,
+) -> Subscription<Event> {
     struct NostrClient;
     let id = std::any::TypeId::of::<NostrClient>();
 
     subscription::unfold(
         id,
-        NostrClientState::Disconnected { keys: keys.clone() },
+        NostrClientState::Disconnected {
+            keys: keys.clone(),
+            ns_conn: ns_conn.clone(),
+        },
         |state| async move {
             match state {
-                NostrClientState::Disconnected { keys } => {
+                NostrClientState::Disconnected { keys, mut ns_conn } => {
                     // Create new client
                     tracing::info!("Creating Nostr Client");
                     let nostr_client = Client::new(&keys);
@@ -240,9 +270,12 @@ pub fn nostr_client_connect(keys: &Keys) -> Subscription<Event> {
 
                     let (sender, receiver) = mpsc::unbounded();
 
+                    ns_conn.with_channel(sender);
+
                     (
-                        Event::NostrConnected(NostrConnection(sender)),
+                        Event::NostrConnected,
                         NostrClientState::Connected {
+                            ns_conn,
                             receiver,
                             nostr_client,
                             keys,
@@ -255,6 +288,7 @@ pub fn nostr_client_connect(keys: &Keys) -> Subscription<Event> {
                     nostr_client,
                     keys,
                     mut notifications_stream,
+                    ns_conn,
                 } => {
                     // tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
                     let event = futures::select! {
@@ -377,6 +411,7 @@ pub fn nostr_client_connect(keys: &Keys) -> Subscription<Event> {
                             nostr_client,
                             keys,
                             notifications_stream,
+                            ns_conn,
                         },
                     )
                 }
@@ -527,17 +562,20 @@ async fn create_channel(client: &Client) -> Result<Event, Error> {
 
 #[derive(Debug, Clone)]
 pub enum Event {
+    DatabaseProcessing,
+    DatabaseFinishedProcessing,
     LocalPendingEvent(DbEvent),
     InsertPendingEvent(nostr_sdk::Event),
     ReceivedEvent((Url, nostr_sdk::Event)),
     ReceivedRelayMessage((Url, nostr_sdk::RelayMessage)),
 
     /// Event triggered when a connection to the back-end is established
-    DbConnected(DBConnection),
-    NostrConnected(NostrConnection),
+    DbConnected,
+    NostrConnected,
 
     /// Event triggered when the connection to the back-end is lost
-    Disconnected,
+    DbDisconnected,
+    NostrDisconnected,
 
     /// Event triggered when an error occurs
     Error(String),
@@ -618,6 +656,7 @@ pub enum Message {
     SendContactListToRelay(Url),
 
     // DATABASE MESSAGES
+    ProcessDatabaseMessages,
     FetchRelayResponses(i64),
     FetchMessages(DbContact),
     AddContact(DbContact),
@@ -649,3 +688,4 @@ pub enum SuccessKind {
 }
 
 const IN_MEMORY: bool = false;
+const APP_TICK_INTERVAL_MILLIS: u64 = 50;

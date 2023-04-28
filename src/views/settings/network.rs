@@ -8,7 +8,7 @@ use crate::components::text::title;
 use crate::components::text_input_group::text_input_group;
 use crate::components::{relay_row, RelayRow};
 use crate::icon::plus_icon;
-use crate::net::{self, DBConnection};
+use crate::net::{self, BackEndConnection, Connection};
 use crate::widget::Element;
 
 #[derive(Debug, Clone)]
@@ -37,7 +37,7 @@ impl State {
             .collect();
         iced::Subscription::batch(relay_subs)
     }
-    pub fn new(db_conn: &mut DBConnection) -> Self {
+    pub fn new(db_conn: &mut BackEndConnection<net::Message>) -> Self {
         db_conn.send(net::Message::FetchRelays);
         Self {
             relays: vec![],
@@ -46,7 +46,11 @@ impl State {
         }
     }
 
-    pub fn update(&mut self, message: Message, db_conn: &mut DBConnection) -> Command<Message> {
+    pub fn update(
+        &mut self,
+        message: Message,
+        db_conn: &mut BackEndConnection<net::Message>,
+    ) -> Command<Message> {
         match message {
             Message::AddRelayInputChange(relay_addrs) => self.add_relay_input = relay_addrs,
             Message::CloseModal | Message::CancelButtonPressed => {

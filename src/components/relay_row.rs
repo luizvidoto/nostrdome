@@ -2,7 +2,7 @@ use std::ops::Not;
 
 use crate::error::Error;
 use crate::icon::{circle_icon, delete_icon, server_icon};
-use crate::net::{self, DBConnection};
+use crate::net::{self, BackEndConnection, Connection};
 use crate::style;
 use crate::widget::Element;
 use iced::widget::{button, checkbox, container, row, text};
@@ -69,7 +69,6 @@ impl RelayRow {
             |state| async move {
                 match state {
                     State::Idle { relay, url } => {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                         let (sender, receiver) = mpsc::unbounded();
                         (
                             Message::Ready(RelayRowConnection(sender)),
@@ -87,7 +86,7 @@ impl RelayRow {
                     } => {
                         use iced_native::futures::StreamExt;
 
-                        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
                         let input = receiver.select_next_some().await;
 
@@ -109,7 +108,11 @@ impl RelayRow {
         )
     }
 
-    pub fn update(&mut self, message: Message, db_conn: &mut DBConnection) -> Command<Message> {
+    pub fn update(
+        &mut self,
+        message: Message,
+        db_conn: &mut BackEndConnection<net::Message>,
+    ) -> Command<Message> {
         match message {
             Message::None => (),
             Message::ConnectToRelay(url) => {

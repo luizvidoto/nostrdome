@@ -8,7 +8,7 @@ use crate::components::text::title;
 use crate::components::text_input_group::text_input_group;
 use crate::components::{file_importer, FileImporter};
 use crate::db::DbContact;
-use crate::net::{self, DBConnection, Event};
+use crate::net::{self, BackEndConnection, Connection, Event};
 use crate::style;
 use crate::types::UncheckedEvent;
 use crate::utils::json_reader;
@@ -75,7 +75,7 @@ impl MenuState {
             _ => false,
         }
     }
-    fn account(_db_conn: &mut DBConnection) -> Self {
+    fn account(_db_conn: &mut BackEndConnection<net::Message>) -> Self {
         let profile = Metadata::new();
         // conn.send(message)
         Self::Account {
@@ -87,12 +87,12 @@ impl MenuState {
             state: appearance::State::new(selected_theme),
         }
     }
-    fn network(db_conn: &mut DBConnection) -> Self {
+    fn network(db_conn: &mut BackEndConnection<net::Message>) -> Self {
         Self::Network {
             state: network::State::new(db_conn),
         }
     }
-    pub fn contacts(db_conn: &mut DBConnection) -> Self {
+    pub fn contacts(db_conn: &mut BackEndConnection<net::Message>) -> Self {
         Self::Contacts {
             state: contacts::State::new(db_conn),
         }
@@ -102,7 +102,7 @@ impl MenuState {
             state: backup::State::default(),
         }
     }
-    pub fn new(db_conn: &mut DBConnection) -> Self {
+    pub fn new(db_conn: &mut BackEndConnection<net::Message>) -> Self {
         Self::account(db_conn)
     }
     pub fn view(&self) -> Element<Message> {
@@ -132,13 +132,13 @@ impl Settings {
             _ => Subscription::none(),
         }
     }
-    pub fn new(db_conn: &mut DBConnection) -> Self {
+    pub fn new(db_conn: &mut BackEndConnection<net::Message>) -> Self {
         Self {
             menu_state: MenuState::new(db_conn),
             modal_state: ModalState::Off,
         }
     }
-    pub fn contacts(db_conn: &mut DBConnection) -> Self {
+    pub fn contacts(db_conn: &mut BackEndConnection<net::Message>) -> Self {
         Self {
             menu_state: MenuState::contacts(db_conn),
             modal_state: ModalState::Off,
@@ -148,7 +148,7 @@ impl Settings {
     pub fn back_end_event(
         &mut self,
         event: net::Event,
-        db_conn: &mut DBConnection,
+        db_conn: &mut BackEndConnection<net::Message>,
     ) -> Command<Message> {
         self.modal_state.backend_event(event.clone(), db_conn);
 
@@ -173,7 +173,7 @@ impl Settings {
     pub fn update(
         &mut self,
         message: Message,
-        db_conn: &mut DBConnection,
+        db_conn: &mut BackEndConnection<net::Message>,
         selected_theme: Option<style::Theme>,
     ) -> Command<Message> {
         match message {
@@ -318,7 +318,7 @@ enum ModalState {
 }
 
 impl ModalState {
-    pub fn backend_event(&mut self, event: Event, _db_conn: &mut DBConnection) {
+    pub fn backend_event(&mut self, event: Event, _db_conn: &mut BackEndConnection<net::Message>) {
         if let ModalState::SendContactList { relays } = self {
             match event {
                 Event::GotRelaysUrls(new_relays) => {
@@ -342,7 +342,7 @@ impl ModalState {
             }
         }
     }
-    pub fn load_send_contacts(db_conn: &mut DBConnection) -> Self {
+    pub fn load_send_contacts(db_conn: &mut BackEndConnection<net::Message>) -> Self {
         db_conn.send(net::Message::FetchRelaysUrls);
         Self::SendContactList { relays: vec![] }
     }
@@ -373,7 +373,11 @@ impl ModalState {
                 .file_filter("JSON File", &["json"]),
         }
     }
-    pub fn update(&mut self, message: Message, db_conn: &mut DBConnection) -> Command<Message> {
+    pub fn update(
+        &mut self,
+        message: Message,
+        db_conn: &mut BackEndConnection<net::Message>,
+    ) -> Command<Message> {
         match message {
             Message::CloseSendContactsModal => *self = Self::Off,
             Message::CloseAddContactModal => *self = Self::Off,

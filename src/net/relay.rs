@@ -1,8 +1,6 @@
-use crate::db::get_last_event_received;
 use crate::error::Error;
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 use nostr_sdk::{Client, Filter, Keys, Relay, Timestamp, Url};
-use sqlx::SqlitePool;
 use std::time::Duration;
 
 pub async fn fetch_relays_urls(nostr_client: &Client) -> Result<Vec<Url>, Error> {
