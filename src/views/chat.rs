@@ -264,7 +264,7 @@ impl State {
                 self.dm_msg = text;
             }
             Message::DMSentPress => {
-                if let Some(contact) = &self.active_contact {
+                if let Some(_contact) = &self.active_contact {
                     // match db_conn.try_send(database::Message::SendDMTo((
                     //     contact.to_owned(),
                     //     self.dm_msg.clone(),

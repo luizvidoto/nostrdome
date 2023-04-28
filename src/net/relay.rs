@@ -1,19 +1,8 @@
 use crate::error::Error;
 use nostr_sdk::secp256k1::XOnlyPublicKey;
-use nostr_sdk::{Client, Filter, Keys, Relay, Timestamp, Url};
+use nostr_sdk::{Client, Filter, Keys, Timestamp, Url};
 use std::time::Duration;
 
-pub async fn fetch_relays_urls(nostr_client: &Client) -> Result<Vec<Url>, Error> {
-    tracing::info!("Fetching relays urls");
-    let relays = nostr_client.relays().await;
-    Ok(relays.keys().map(|url| url.to_owned()).collect())
-}
-
-pub async fn fetch_relays(nostr_client: &Client) -> Result<Vec<Relay>, Error> {
-    tracing::info!("Fetching relays");
-    let relays = nostr_client.relays().await;
-    Ok(relays.into_iter().map(|(_url, r)| r).collect())
-}
 pub async fn add_relay(nostr_client: &Client, url: &Url) -> Result<(), Error> {
     tracing::info!("Add relay to client: {}", url);
     nostr_client.add_relay(url.as_str(), None).await?;
@@ -41,6 +30,7 @@ pub async fn connect_relay(nostr_client: &Client, relay_url: &Url) -> Result<(),
         nostr_client.connect_relay(relay_url.as_str()).await?;
     } else {
         tracing::warn!("Relay not found on client: {}", relay_url);
+        add_relay(nostr_client, relay_url).await?;
     }
 
     Ok(())
@@ -48,29 +38,29 @@ pub async fn connect_relay(nostr_client: &Client, relay_url: &Url) -> Result<(),
 
 pub async fn connect_relays(
     nostr_client: &Client,
-    keys: &Keys,
+    _keys: &Keys,
     _last_timestamp: u64,
 ) -> Result<(), Error> {
     // let last_timestamp = get_last_event_received(pool).await?;
 
-    tracing::info!("Adding relays to client");
+    // tracing::info!("Adding relays to client");
     // Add relays to client
-    for r in vec![
-        // "wss://eden.nostr.land",
-        // "wss://relay.snort.social",
-        // "wss://relay.nostr.band",
-        // "wss://nostr.fmt.wiz.biz",
-        // "wss://relay.damus.io",
-        // "wss://nostr.anchel.nl/",
-        // "ws://192.168.15.119:8080"
-        // "ws://192.168.15.151:8080",
-        "ws://0.0.0.0:8080",
-    ] {
-        match nostr_client.add_relay(r, None).await {
-            Ok(_) => tracing::info!("Nostr Client Added Relay: {}", r),
-            Err(e) => tracing::error!("{}", e),
-        }
-    }
+    // for r in vec![
+    //     // "wss://eden.nostr.land",
+    //     // "wss://relay.snort.social",
+    //     // "wss://relay.nostr.band",
+    //     // "wss://nostr.fmt.wiz.biz",
+    //     // "wss://relay.damus.io",
+    //     // "wss://nostr.anchel.nl/",
+    //     // "ws://192.168.15.119:8080"
+    //     // "ws://192.168.15.151:8080",
+    //     "ws://0.0.0.0:8080",
+    // ] {
+    //     match nostr_client.add_relay(r, None).await {
+    //         Ok(_) => tracing::info!("Nostr Client Added Relay: {}", r),
+    //         Err(e) => tracing::error!("{}", e),
+    //     }
+    // }
 
     tracing::info!("Connecting to relays");
     nostr_client.connect().await;

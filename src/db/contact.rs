@@ -377,14 +377,10 @@ impl DbContact {
 impl sqlx::FromRow<'_, SqliteRow> for DbContact {
     fn from_row(row: &'_ SqliteRow) -> StdResult<Self, sqlx::Error> {
         let pubkey = row.try_get::<String, &str>("pubkey")?;
-        let created_at = millis_to_naive_or_err(
-            row.try_get::<i64, &str>("created_at")?,
-            "db_contact created_at",
-        )?;
-        let updated_at = millis_to_naive_or_err(
-            row.try_get::<i64, &str>("updated_at")?,
-            "db_contact updated_at",
-        )?;
+        let created_at =
+            millis_to_naive_or_err(row.try_get::<i64, &str>("created_at")?, "created_at")?;
+        let updated_at =
+            millis_to_naive_or_err(row.try_get::<i64, &str>("updated_at")?, "updated_at")?;
 
         let relay_url = row
             .get::<Option<String>, &str>("relay_url")
@@ -406,7 +402,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbContact {
             last_message_content: row.get::<Option<String>, &str>("last_message_content"),
             last_message_date: row
                 .get::<Option<i64>, &str>("last_message_date")
-                .map(|n| millis_to_naive_or_err(n, "db_contact created_at"))
+                .map(|n| millis_to_naive_or_err(n, "last_message_date"))
                 .transpose()?,
         })
     }

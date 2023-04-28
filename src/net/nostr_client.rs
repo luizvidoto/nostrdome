@@ -1,10 +1,10 @@
 use crate::db::DbContact;
 use crate::error::Error;
 use crate::net::relay::{
-    add_relay, connect_relay, connect_relays, fetch_relays, fetch_relays_urls,
-    toggle_read_for_relay, toggle_write_for_relay, update_relay_db_and_client,
+    add_relay, connect_relay, connect_relays, toggle_read_for_relay, toggle_write_for_relay,
+    update_relay_db_and_client,
 };
-use crate::net::Connection;
+use crate::net::{Connection, APP_TICK_INTERVAL_MILLIS};
 use async_stream::stream;
 use futures::Future;
 use iced::futures::stream::Fuse;
@@ -15,8 +15,10 @@ use nostr_sdk::{
     Client, Contact, EventBuilder, EventId, Keys, Metadata, Relay, RelayMessage,
     RelayPoolNotification, Url,
 };
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::str::FromStr;
+use std::time::Duration;
 
 use super::BackEndConnection;
 
@@ -24,6 +26,14 @@ pub enum State {
     Disconnected {
         keys: Keys,
         ns_conn: BackEndConnection<Message>,
+    },
+    Processing {
+        ns_conn: BackEndConnection<Message>,
+        receiver: mpsc::UnboundedReceiver<Message>,
+        nostr_client: Client,
+        keys: Keys,
+        notifications_stream:
+            Fuse<Pin<Box<dyn futures::Stream<Item = RelayPoolNotification> + Send>>>,
     },
     Connected {
         ns_conn: BackEndConnection<Message>,
@@ -70,6 +80,27 @@ pub fn nostr_client_connect(
 
                     (
                         Event::NostrConnected,
+                        State::Processing {
+                            ns_conn,
+                            receiver,
+                            nostr_client,
+                            keys,
+                            notifications_stream,
+                        },
+                    )
+                }
+                State::Processing {
+                    receiver,
+                    nostr_client,
+                    keys,
+                    notifications_stream,
+                    ns_conn,
+                } => {
+                    ns_conn.process_message_queue();
+                    // Aguarde o intervalo
+                    tokio::time::sleep(Duration::from_millis(APP_TICK_INTERVAL_MILLIS)).await;
+                    (
+                        Event::FinishedProcessing,
                         State::Connected {
                             ns_conn,
                             receiver,
@@ -90,6 +121,15 @@ pub fn nostr_client_connect(
                     let event = futures::select! {
                         message = receiver.select_next_some() => {
                             let event = match message {
+                                Message::ProcessMessages => {
+                                    return (Event::IsProcessing, State::Processing {
+                                        ns_conn,
+                                        receiver,
+                                        nostr_client,
+                                        keys,
+                                        notifications_stream,
+                                    });
+                                }
                                 Message::SendContactListToRelay((relay_url, list)) => {
                                     process_async_fn(
                                         send_contact_list_to(&keys, &nostr_client, relay_url, &list),
@@ -113,20 +153,14 @@ pub fn nostr_client_connect(
                                     let pb_key = keys.public_key();
                                     Event::GotPublicKey(pb_key)
                                 }
-                                Message::FetchRelays => {
+                                Message::FetchRelay(relay_url) => {
                                     process_async_fn(
-                                        fetch_relays(&nostr_client),
-                                        |relays| Event::GotRelays(relays),
+                                        fetch_relay(&nostr_client, relay_url),
+                                        |relay| Event::GotRelay(relay),
                                     )
                                     .await
                                 }
-                                Message::FetchRelaysUrls => {
-                                    process_async_fn(
-                                        fetch_relays_urls(&nostr_client),
-                                        |relays| Event::GotRelaysUrls(relays),
-                                    )
-                                    .await
-                                }
+
                                 Message::ConnectToRelay(relay_url) => {
                                     process_async_fn(
                                         connect_relay(&nostr_client, &relay_url),
@@ -221,6 +255,13 @@ pub fn nostr_client_connect(
     )
 }
 
+pub async fn fetch_relay(nostr_client: &Client, relay_url: Url) -> Result<Option<Relay>, Error> {
+    tracing::info!("Fetching relay from nostr client");
+    let relays: HashMap<Url, Relay> = nostr_client.relays().await;
+    tracing::info!("Relays: {}", relays.len());
+    Ok(relays.get(&relay_url).cloned())
+}
+
 async fn process_async_fn<T, E>(
     operation: impl Future<Output = Result<T, E>>,
     success_event_fn: impl Fn(T) -> Event,
@@ -298,6 +339,8 @@ pub async fn send_dm(
 
 #[derive(Debug, Clone)]
 pub enum Event {
+    FinishedProcessing,
+    IsProcessing,
     InsertPendingEvent(nostr_sdk::Event),
     ReceivedEvent((Url, nostr_sdk::Event)),
     ReceivedRelayMessage((Url, nostr_sdk::RelayMessage)),
@@ -311,9 +354,9 @@ pub enum Event {
 
     /// Event triggered when relays are connected
     RelaysConnected,
-    /// Event triggered when a list of relays is received
-    GotRelays(Vec<Relay>),
-    GotRelaysUrls(Vec<nostr_sdk::Url>),
+
+    GotRelay(Option<Relay>),
+
     /// Event triggered when a list of own events is received
     GotOwnEvents(Vec<nostr_sdk::Event>),
     /// Event triggered when a public key is received
@@ -340,12 +383,12 @@ pub enum Event {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    FetchRelay(Url),
+    ProcessMessages,
     ConnectRelays,
     ConnectToRelay(Url),
     SendDMTo((DbContact, String)),
     ShowPublicKey,
-    FetchRelays,
-    FetchRelaysUrls,
     AddRelay(Url),
     UpdateRelay(Url),
     DeleteRelay(Url),

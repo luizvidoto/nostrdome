@@ -1,7 +1,7 @@
 use iced::{Command, Subscription};
 
 use crate::{
-    net::{self, database, BackEndConnection},
+    net::{self, database, nostr_client, BackEndConnection},
     style,
     widget::Element,
 };
@@ -51,6 +51,7 @@ impl Router {
         &mut self,
         event: net::Event,
         db_conn: &mut BackEndConnection<database::Message>,
+        ns_conn: &mut BackEndConnection<nostr_client::Message>,
     ) -> Command<Message> {
         match event {
             event => match &mut self.state {
@@ -61,7 +62,7 @@ impl Router {
                     state.backend_event(event, db_conn).map(Message::ChatMsg)
                 }
                 ViewState::Settings { state } => state
-                    .backend_event(event, db_conn)
+                    .backend_event(event, db_conn, ns_conn)
                     .map(Message::SettingsMsg),
             },
         }
@@ -71,6 +72,7 @@ impl Router {
         &mut self,
         message: Message,
         db_conn: &mut BackEndConnection<database::Message>,
+        ns_conn: &mut BackEndConnection<nostr_client::Message>,
         selected_theme: Option<style::Theme>,
     ) -> Command<Message> {
         match message {
@@ -104,7 +106,7 @@ impl Router {
                         settings::Message::NavEscPress => self.next_state(ViewState::chat(db_conn)),
                         msg => {
                             return state
-                                .update(msg, db_conn, selected_theme)
+                                .update(msg, db_conn, ns_conn, selected_theme)
                                 .map(Message::SettingsMsg);
                         }
                     }

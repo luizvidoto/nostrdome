@@ -8,11 +8,11 @@ use crate::components::text::title;
 use crate::components::text_input_group::text_input_group;
 use crate::components::{file_importer, FileImporter};
 use crate::db::DbContact;
-use crate::net::{self, database, BackEndConnection, Connection, Event};
+use crate::net::{self, database, nostr_client, BackEndConnection, Connection, Event};
 use crate::style;
 use crate::types::UncheckedEvent;
 use crate::utils::json_reader;
-use crate::views::settings::relay_row_modal::RelayRowModal;
+
 use crate::widget::{Button, Element};
 
 mod account;
@@ -149,6 +149,7 @@ impl Settings {
         &mut self,
         event: net::Event,
         db_conn: &mut BackEndConnection<database::Message>,
+        ns_conn: &mut BackEndConnection<nostr_client::Message>,
     ) -> Command<Message> {
         self.modal_state.backend_event(event.clone(), db_conn);
 
@@ -159,7 +160,7 @@ impl Settings {
             }
             MenuState::Network { state } => {
                 return state
-                    .update(network::Message::BackEndEvent(event), db_conn)
+                    .update(network::Message::BackEndEvent(event), db_conn, ns_conn)
                     .map(Message::NetworkMessage);
             }
             MenuState::Backup { state } => state.update(backup::Message::BackEndEvent(event)),
@@ -174,6 +175,7 @@ impl Settings {
         &mut self,
         message: Message,
         db_conn: &mut BackEndConnection<database::Message>,
+        ns_conn: &mut BackEndConnection<nostr_client::Message>,
         selected_theme: Option<style::Theme>,
     ) -> Command<Message> {
         match message {
@@ -189,7 +191,9 @@ impl Settings {
             }
             Message::NetworkMessage(msg) => {
                 if let MenuState::Network { state } = &mut self.menu_state {
-                    return state.update(msg, db_conn).map(Message::NetworkMessage);
+                    return state
+                        .update(msg, db_conn, ns_conn)
+                        .map(Message::NetworkMessage);
                 }
             }
             Message::BackupMessage(msg) => {
@@ -320,7 +324,7 @@ enum ModalState {
 impl ModalState {
     pub fn backend_event(
         &mut self,
-        event: Event,
+        _event: Event,
         _db_conn: &mut BackEndConnection<database::Message>,
     ) {
         // if let ModalState::SendContactList { relays } = self {
@@ -346,7 +350,7 @@ impl ModalState {
         //     }
         // }
     }
-    pub fn load_send_contacts(db_conn: &mut BackEndConnection<database::Message>) -> Self {
+    pub fn load_send_contacts(_db_conn: &mut BackEndConnection<database::Message>) -> Self {
         // db_conn.send(database::Message::FetchRelaysUrls);
         Self::SendContactList { relays: vec![] }
     }

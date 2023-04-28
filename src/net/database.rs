@@ -1,5 +1,5 @@
 use crate::db::{
-    store_last_event_timestamp, Database, DbContact, DbEvent, DbMessage, DbRelayResponse,
+    store_last_event_timestamp, Database, DbContact, DbEvent, DbMessage, DbRelay, DbRelayResponse,
 };
 use crate::error::Error;
 use crate::net::contact::{insert_batch_of_contacts, insert_contact};
@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use super::BackEndConnection;
 
-pub enum DatabaseState {
+pub enum State {
     Disconnected {
         keys: Keys,
         in_memory: bool,
@@ -43,14 +43,14 @@ pub fn database_connect(keys: &Keys, db_conn: &BackEndConnection<Message>) -> Su
 
     subscription::unfold(
         id,
-        DatabaseState::Disconnected {
+        State::Disconnected {
             keys: keys.clone(),
             in_memory: IN_MEMORY,
             db_conn: db_conn.clone(),
         },
         |state| async move {
             match state {
-                DatabaseState::Disconnected {
+                State::Disconnected {
                     keys,
                     in_memory,
                     mut db_conn,
@@ -69,7 +69,7 @@ pub fn database_connect(keys: &Keys, db_conn: &BackEndConnection<Message>) -> Su
                                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                                 return (
                                     Event::DbDisconnected,
-                                    DatabaseState::Disconnected {
+                                    State::Disconnected {
                                         keys,
                                         in_memory,
                                         db_conn,
@@ -80,7 +80,7 @@ pub fn database_connect(keys: &Keys, db_conn: &BackEndConnection<Message>) -> Su
 
                     (
                         Event::DbConnected,
-                        DatabaseState::Processing {
+                        State::Processing {
                             database,
                             receiver,
                             keys,
@@ -88,7 +88,7 @@ pub fn database_connect(keys: &Keys, db_conn: &BackEndConnection<Message>) -> Su
                         },
                     )
                 }
-                DatabaseState::Processing {
+                State::Processing {
                     db_conn,
                     receiver,
                     database,
@@ -99,8 +99,8 @@ pub fn database_connect(keys: &Keys, db_conn: &BackEndConnection<Message>) -> Su
                     tokio::time::sleep(Duration::from_millis(APP_TICK_INTERVAL_MILLIS)).await;
 
                     (
-                        Event::DatabaseFinishedProcessing,
-                        DatabaseState::Connected {
+                        Event::FinishedProcessing,
+                        State::Connected {
                             database,
                             receiver,
                             keys,
@@ -108,7 +108,7 @@ pub fn database_connect(keys: &Keys, db_conn: &BackEndConnection<Message>) -> Su
                         },
                     )
                 }
-                DatabaseState::Connected {
+                State::Connected {
                     database,
                     mut receiver,
                     keys,
@@ -117,8 +117,14 @@ pub fn database_connect(keys: &Keys, db_conn: &BackEndConnection<Message>) -> Su
                     let event = futures::select! {
                         message = receiver.select_next_some() => {
                             let event = match message {
-                                Message::ProcessDatabaseMessages => {
-                                    return (Event::DatabaseProcessing, DatabaseState::Processing {
+                                Message::ToggleRelayRead(db_relay) => {
+                                    Event::None
+                                }
+                                Message::ToggleRelayWrite(db_relay) => {
+                                    Event::None
+                                }
+                                Message::ProcessMessages => {
+                                    return (Event::IsProcessing, State::Processing {
                                         database,
                                         receiver,
                                         keys,
@@ -137,17 +143,17 @@ pub fn database_connect(keys: &Keys, db_conn: &BackEndConnection<Message>) -> Su
                                         |contact| Event::ContactUpdated(contact)
                                     ).await
                                 }
-                                Message::AddContact(db_contact) => {
-                                    process_async_fn(
-                                        insert_contact(&keys, &database.pool, &db_contact),
-                                        |_| Event::ContactCreated(db_contact.clone()),
-                                    )
-                                    .await
-                                }
                                 Message::ImportContacts(db_contacts) => {
                                     process_async_fn(
                                         insert_batch_of_contacts(&keys, &database.pool, &db_contacts),
                                         |_| Event::ContactsImported(db_contacts.clone()),
+                                    )
+                                    .await
+                                }
+                                Message::AddContact(db_contact) => {
+                                    process_async_fn(
+                                        insert_contact(&keys, &database.pool, &db_contact),
+                                        |_| Event::ContactCreated(db_contact.clone()),
                                     )
                                     .await
                                 }
@@ -172,6 +178,36 @@ pub fn database_connect(keys: &Keys, db_conn: &BackEndConnection<Message>) -> Su
                                     )
                                     .await
                                 }
+
+                                Message::AddRelay(db_relay) => {
+                                    process_async_fn(
+                                        DbRelay::insert(&database.pool, &db_relay),
+                                        |_| Event::RelayCreated(db_relay.clone()),
+                                    )
+                                    .await
+                                }
+                                Message::UpdateRelay(db_relay) => {
+                                    process_async_fn(
+                                        DbRelay::update(&database.pool, &db_relay),
+                                        |_| Event::RelayUpdated(db_relay.clone()),
+                                    )
+                                    .await
+                                }
+                                Message::DeleteRelay(db_relay) => {
+                                    process_async_fn(
+                                        DbRelay::delete(&database.pool, &db_relay),
+                                        |_| Event::RelayDeleted(db_relay.clone()),
+                                    )
+                                    .await
+                                }
+                                Message::FetchRelays => {
+                                    process_async_fn(
+                                        DbRelay::fetch(&database.pool, None),
+                                        |relays| Event::GotRelays(relays),
+                                    )
+                                    .await
+                                }
+
                                 Message::FetchMessages (contact) => {
                                     process_async_fn(
                                         fetch_and_decrypt_chat(&keys, &database.pool, contact),
@@ -186,7 +222,7 @@ pub fn database_connect(keys: &Keys, db_conn: &BackEndConnection<Message>) -> Su
                     };
                     (
                         event,
-                        DatabaseState::Connected {
+                        State::Connected {
                             database,
                             receiver,
                             keys,
@@ -420,8 +456,8 @@ async fn insert_event(
 
 #[derive(Debug, Clone)]
 pub enum Event {
-    DatabaseProcessing,
-    DatabaseFinishedProcessing,
+    IsProcessing,
+    FinishedProcessing,
     LocalPendingEvent(DbEvent),
     /// Event triggered when a connection to the back-end is established
     DbConnected,
@@ -435,9 +471,10 @@ pub enum Event {
     GotRelayResponses(Vec<DbRelayResponse>),
     /// Event triggered when a list of contacts is received
     GotContacts(Vec<DbContact>),
-    RelayCreated,
-    RelayUpdated,
-    RelayDeleted,
+    RelayCreated(DbRelay),
+    RelayUpdated(DbRelay),
+    RelayDeleted(DbRelay),
+    GotRelays(Vec<DbRelay>),
     ContactCreated(DbContact),
     ContactUpdated(DbContact),
     ContactDeleted(DbContact),
@@ -455,15 +492,23 @@ pub enum Event {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    ProcessDatabaseMessages,
+    ProcessMessages,
     FetchRelayResponses(i64),
     FetchMessages(DbContact),
-    AddContact(DbContact),
-    ImportContacts(Vec<DbContact>),
+    // Contacts
     FetchContacts,
+    AddContact(DbContact),
     UpdateContact(DbContact),
     DeleteContact(DbContact),
+    ImportContacts(Vec<DbContact>),
     AddToUnseenCount(DbContact),
+    // Relays
+    FetchRelays,
+    AddRelay(DbRelay),
+    UpdateRelay(DbRelay),
+    DeleteRelay(DbRelay),
+    ToggleRelayRead(DbRelay),
+    ToggleRelayWrite(DbRelay),
 }
 
 const IN_MEMORY: bool = false;

@@ -4,16 +4,18 @@ use iced::{Command, Length, Subscription};
 use iced_aw::{Card, Modal};
 use nostr_sdk::Url;
 
+use crate::components::relay_row::MessageWrapper;
 use crate::components::text::title;
 use crate::components::text_input_group::text_input_group;
 use crate::components::{relay_row, RelayRow};
+use crate::db::DbRelay;
 use crate::icon::plus_icon;
-use crate::net::{self, database, BackEndConnection, Connection};
+use crate::net::{self, database, nostr_client, BackEndConnection, Connection};
 use crate::widget::Element;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    RelayMessage(relay_row::Message),
+    RelayMessage(relay_row::MessageWrapper),
     BackEndEvent(net::Event),
     OpenAddRelayModal,
     CancelButtonPressed,
@@ -38,7 +40,7 @@ impl State {
         iced::Subscription::batch(relay_subs)
     }
     pub fn new(db_conn: &mut BackEndConnection<database::Message>) -> Self {
-        // db_conn.send(database::Message::FetchRelays);
+        db_conn.send(database::Message::FetchRelays);
         Self {
             relays: vec![],
             show_modal: false,
@@ -50,6 +52,7 @@ impl State {
         &mut self,
         message: Message,
         db_conn: &mut BackEndConnection<database::Message>,
+        ns_conn: &mut BackEndConnection<nostr_client::Message>,
     ) -> Command<Message> {
         match message {
             Message::AddRelayInputChange(relay_addrs) => self.add_relay_input = relay_addrs,
@@ -60,7 +63,11 @@ impl State {
             Message::OkButtonPressed => {
                 match Url::try_from(self.add_relay_input.as_str()) {
                     Ok(url) => {
-                        // db_conn.send(database::Message::AddRelay(url));
+                        let db_relay = DbRelay::new(url);
+                        ns_conn.send(nostr_client::Message::AddRelay(db_relay.url.clone()));
+                        db_conn.send(database::Message::AddRelay(db_relay));
+                        // ou eu adiciono nos dois canais
+                        // ou eu faço um terceiro canal? que mandaria primeiro ao cliente e depois ao DB se confirmasse
                     }
                     Err(e) => {
                         // SOME VALIDATION TO THE USER
@@ -73,27 +80,68 @@ impl State {
             Message::OpenAddRelayModal => self.show_modal = true,
 
             Message::RelayMessage(msg) => {
-                // self.relays.iter_mut().for_each(|r| {
-                //     let _ = r.update(msg.clone(), db_conn);
-                // });
+                if let Some(row) = self.relays.iter_mut().find(|r| r.id == msg.from) {
+                    let _ = row.update(msg, db_conn, ns_conn);
+                }
             }
 
             Message::BackEndEvent(ev) => match ev {
-                // net::Event::DbEvent(db_event) => match db_event {
-                //     database::Event::RelayCreated
-                //     | database::Event::RelayUpdated
-                //     | database::Event::RelayDeleted => {
-                //         db_conn.send(database::Message::FetchRelays);
-                //     }
-                //     _ => (),
-                // },
-                // net::Event::GotRelays(mut rls) => {
-                //     rls.sort_by(|a, b| a.url().cmp(&b.url()));
-                //     self.relays = rls
-                //         .into_iter()
-                //         .filter_map(|r| RelayRow::new(r).ok())
-                //         .collect();
-                // }
+                net::Event::DbEvent(db_event) => match db_event {
+                    database::Event::RelayCreated(db_relay) => {
+                        self.relays
+                            .push(RelayRow::new(self.relays.len() as i32, db_relay, ns_conn))
+                    }
+                    database::Event::RelayUpdated(db_relay) => {
+                        if let Some(row) = self
+                            .relays
+                            .iter_mut()
+                            .find(|r| r.db_relay.url != db_relay.url)
+                        {
+                            return row
+                                .update(
+                                    MessageWrapper::new(
+                                        row.id,
+                                        relay_row::Message::RelayUpdated(db_relay),
+                                    ),
+                                    db_conn,
+                                    ns_conn,
+                                )
+                                .map(Message::RelayMessage);
+                        }
+                    }
+                    database::Event::RelayDeleted(db_relay) => {
+                        self.relays.retain(|r| r.db_relay.url != db_relay.url);
+                    }
+                    database::Event::GotRelays(mut db_relays) => {
+                        db_relays.sort_by(|a, b| a.url.cmp(&b.url));
+                        self.relays = db_relays
+                            .into_iter()
+                            .enumerate()
+                            .map(|(idx, db_relay)| RelayRow::new(idx as i32, db_relay, ns_conn))
+                            .collect();
+                    }
+                    _ => (),
+                },
+                net::Event::NostrClientEvent(ns_event) => {
+                    if let nostr_client::Event::GotRelay(relay) = ns_event {
+                        if let Some(relay) = relay {
+                            if let Some(row) = self
+                                .relays
+                                .iter_mut()
+                                .find(|r| r.db_relay.url == relay.url())
+                            {
+                                let _ = row.update(
+                                    MessageWrapper {
+                                        from: row.id,
+                                        message: relay_row::Message::GotRelay(relay),
+                                    },
+                                    db_conn,
+                                    ns_conn,
+                                );
+                            }
+                        }
+                    }
+                }
                 _ => (),
             },
         }
@@ -102,7 +150,10 @@ impl State {
 
     pub fn view(&self) -> Element<Message> {
         let title = title("Network");
-        let header = column![RelayRow::view_header().map(Message::RelayMessage)];
+        let header = column![RelayRow::view_header().map(|mut message| {
+            message.from = -1;
+            Message::RelayMessage(message)
+        })];
         let relays = self.relays.iter().fold(header, |col, relay| {
             col.push(relay.view().map(Message::RelayMessage))
         });

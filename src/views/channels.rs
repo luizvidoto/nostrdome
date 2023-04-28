@@ -35,7 +35,7 @@ impl State {
         }
         Command::none()
     }
-    pub fn update(&mut self, message: Message, db_conn: &mut BackEndConnection<database::Message>) {
+    pub fn update(&mut self, message: Message, _db_conn: &mut BackEndConnection<database::Message>) {
         match message {
             Message::GoToChat => (),
             Message::CreateChannel => {
