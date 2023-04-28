@@ -159,7 +159,7 @@ impl RelayRow {
         )
     }
 
-    fn handle_update_status(&mut self, url: Url, status: RelayStatus, last_connected_at: i64) {
+    fn handle_update_status(&mut self, url: Url, _status: RelayStatus, _last_connected_at: i64) {
         println!("Relay Row UpdateStatus");
         println!("{url}");
     }

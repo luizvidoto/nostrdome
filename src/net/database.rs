@@ -117,10 +117,10 @@ pub fn database_connect(keys: &Keys, db_conn: &BackEndConnection<Message>) -> Su
                     let event = futures::select! {
                         message = receiver.select_next_some() => {
                             let event = match message {
-                                Message::ToggleRelayRead(db_relay) => {
+                                Message::ToggleRelayRead(_db_relay) => {
                                     Event::None
                                 }
-                                Message::ToggleRelayWrite(db_relay) => {
+                                Message::ToggleRelayWrite(_db_relay) => {
                                     Event::None
                                 }
                                 Message::ProcessMessages => {
