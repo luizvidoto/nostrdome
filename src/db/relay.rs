@@ -58,6 +58,15 @@ impl DbRelay {
     const FETCH_QUERY: &'static str =
         "SELECT url, last_connected_at, read, write, advertise, status, created_at, updated_at FROM relay";
 
+    pub fn with_status(mut self, status: RelayStatus) -> Self {
+        self.status = DbRelayStatus(status);
+        self
+    }
+    pub fn with_last_connected_at(mut self, last_connected_at: NaiveDateTime) -> Self {
+        self.last_connected_at = Some(last_connected_at);
+        self
+    }
+
     pub fn new(url: Url) -> DbRelay {
         DbRelay {
             url,

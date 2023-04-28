@@ -2,8 +2,9 @@ use crate::db::DbRelay;
 use crate::icon::{circle_icon, delete_icon, server_icon};
 use crate::net::{database, nostr_client, BackEndConnection, Connection};
 use crate::style;
+use crate::utils::event_tt_to_naive;
 use crate::widget::Element;
-use chrono::Utc;
+use chrono::{NaiveDateTime, Utc};
 use iced::widget::{button, checkbox, container, row, text};
 use iced::{alignment, Command, Length, Subscription};
 use iced_native::futures::channel::mpsc;
@@ -24,7 +25,7 @@ pub enum Message {
     None,
     RelayUpdated(DbRelay),
     ConnectToRelay(DbRelay),
-    UpdateStatus((Url, RelayStatus, i64)),
+    UpdateStatus((Url, RelayStatus, NaiveDateTime)),
     DeleteRelay(DbRelay),
     ToggleRead(DbRelay),
     ToggleWrite(DbRelay),
@@ -141,7 +142,9 @@ impl RelayRow {
                         receiver,
                     } => {
                         let relay_status = channel_relay.status().await;
-                        let last_connected_at = channel_relay.stats().connected_at().as_i64();
+                        let last_connected_at =
+                            event_tt_to_naive(channel_relay.stats().connected_at())
+                                .unwrap_or(Utc::now().naive_utc());
                         (
                             MessageWrapper::new(
                                 id,
@@ -157,11 +160,6 @@ impl RelayRow {
                 }
             },
         )
-    }
-
-    fn handle_update_status(&mut self, url: Url, _status: RelayStatus, _last_connected_at: i64) {
-        println!("Relay Row UpdateStatus");
-        println!("{url}");
     }
 
     pub fn update(
@@ -181,8 +179,16 @@ impl RelayRow {
             Message::ConnectToRelay(db_relay) => {
                 ns_conn.send(nostr_client::Message::ConnectToRelay(db_relay.url.clone()));
             }
-            Message::UpdateStatus((url, status, last_connected_at)) => {
-                self.handle_update_status(url, status, last_connected_at)
+            Message::UpdateStatus((_url, status, last_connected_at)) => {
+                let db_relay = self
+                    .db_relay
+                    .clone()
+                    .with_last_connected_at(last_connected_at)
+                    .with_status(status);
+                db_conn.send(database::Message::UpdateRelay(db_relay));
+                if let (Some(ch), Some(relay)) = (&mut self.sub_channel, &self.client_relay) {
+                    ch.send(Input::GetStatus(relay.clone()));
+                }
             }
             Message::DeleteRelay(db_relay) => {
                 db_conn.send(database::Message::DeleteRelay(db_relay));
