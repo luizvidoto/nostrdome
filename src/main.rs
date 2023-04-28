@@ -16,7 +16,7 @@ use iced::{
     widget::{button, column, container, text},
     window, Application, Command, Length, Settings,
 };
-use net::{backend_connect, BackEndConnection, Connection};
+use net::{backend_connect, database, nostr_client, BackEndConnection, Connection};
 use nostr_sdk::{prelude::FromSkStr, Keys};
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::EnvFilter;
@@ -43,8 +43,8 @@ pub enum State {
     },
     App {
         keys: Keys,
-        db_conn: BackEndConnection<net::Message>,
-        ns_conn: BackEndConnection<net::Message>,
+        db_conn: BackEndConnection<database::Message>,
+        ns_conn: BackEndConnection<nostr_client::Message>,
         router: Router,
     },
     OutsideError {
@@ -149,18 +149,15 @@ impl Application for App {
             .into()
     }
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
-        let command = match message {
+        match message {
             Message::DatabaseStarted => {
                 println!("--- DATABASE STARTED PROCESSING MESSAGES ---");
-                Command::none()
             }
             Message::NostrClientStarted => {
                 println!("--- NOSTR CLIENT STARTED PROCESSING MESSAGES ---");
-                Command::none()
             }
             Message::ToLogin => {
                 self.state = State::login();
-                Command::none()
             }
             Message::LoginMessage(login_msg) => {
                 if let State::Login { state } = &mut self.state {
@@ -170,7 +167,6 @@ impl Application for App {
                         state.update(login_msg);
                     }
                 }
-                Command::none()
             }
             Message::RouterMessage(msg) => {
                 if let State::App {
@@ -185,70 +181,77 @@ impl Application for App {
                         }
                     }
 
-                    router
+                    return router
                         .update(msg, db_conn, self.color_theme)
-                        .map(Message::RouterMessage)
-                } else {
-                    Command::none()
+                        .map(Message::RouterMessage);
                 }
             }
             Message::BackEndEvent(event) => match event {
-                net::Event::DatabaseProcessing => {
-                    // tracing::warn!("Database is processing messages");
-                    Command::none()
-                }
-                net::Event::DatabaseFinishedProcessing => {
-                    // tracing::warn!("Database finished");
-                    if let State::App { db_conn, .. } = &mut self.state {
-                        db_conn.send(net::Message::ProcessDatabaseMessages);
+                net::Event::None => (),
+                net::Event::DbEvent(db_event) => match db_event {
+                    database::Event::DatabaseProcessing => {
+                        // tracing::warn!("Database is processing messages");
                     }
-                    Command::none()
-                }
-                net::Event::NostrConnected => {
-                    tracing::warn!("Received Nostr Client Connected Event");
-                    // if let State::Loaded { keys, ns_conn, .. } = &mut self.state {
-                    //     // db_conn.send(net::Message::ConnectRelays);
-                    //     *ns_conn = Some(client);
-                    // } else {
-                    //     println!("stil loading");
-                    // }
-                    Command::none()
-                }
-                net::Event::DbConnected => {
-                    tracing::warn!("Received Database Connected Event");
-                    // if let State::Loading { keys } = &mut self.state {
-                    //     // db_conn.send(net::Message::ConnectRelays);
-                    //     self.state = State::app(keys.clone(), db_conn);
-                    // }
-                    Command::none()
-                }
-                net::Event::DbDisconnected => {
-                    // self.state = State::login();
-                    tracing::warn!("Database Disconnected");
-                    Command::none()
-                }
-                net::Event::NostrDisconnected => {
-                    tracing::warn!("Nostr Client Disconnected");
-                    Command::none()
-                }
+                    database::Event::DatabaseFinishedProcessing => {
+                        // tracing::warn!("Database finished");
+                        if let State::App { db_conn, .. } = &mut self.state {
+                            db_conn.send(database::Message::ProcessDatabaseMessages);
+                        }
+                    }
+                    database::Event::DbConnected => {
+                        tracing::warn!("Received Database Connected Event");
+                        // if let State::Loading { keys } = &mut self.state {
+                        //     // db_conn.send(net::Message::ConnectRelays);
+                        //     self.state = State::app(keys.clone(), db_conn);
+                        // }
+                    }
+                    database::Event::DbDisconnected => {
+                        // self.state = State::login();
+                        tracing::warn!("Database Disconnected");
+                    }
+                    other => {
+                        if let State::App {
+                            router, db_conn, ..
+                        } = &mut self.state
+                        {
+                            return router
+                                .backend_event(net::Event::DbEvent(other), db_conn)
+                                .map(Message::RouterMessage);
+                        }
+                    }
+                },
+                net::Event::NostrClientEvent(ns_event) => match ns_event {
+                    nostr_client::Event::NostrConnected => {
+                        tracing::warn!("Received Nostr Client Connected Event");
+                        // if let State::Loaded { keys, ns_conn, .. } = &mut self.state {
+                        //     // db_conn.send(net::Message::ConnectRelays);
+                        //     *ns_conn = Some(client);
+                        // } else {
+                        //     println!("stil loading");
+                        // }
+                    }
+                    nostr_client::Event::NostrDisconnected => {
+                        tracing::warn!("Nostr Client Disconnected");
+                    }
+                    other => {
+                        if let State::App {
+                            router, db_conn, ..
+                        } = &mut self.state
+                        {
+                            return router
+                                .backend_event(net::Event::NostrClientEvent(other), db_conn)
+                                .map(Message::RouterMessage);
+                        }
+                    }
+                },
+
                 net::Event::Error(e) => {
                     tracing::error!("{}", e);
-                    Command::none()
-                }
-                ev => {
-                    if let State::App {
-                        router, db_conn, ..
-                    } = &mut self.state
-                    {
-                        router.db_event(ev, db_conn).map(Message::RouterMessage)
-                    } else {
-                        Command::none()
-                    }
                 }
             },
         };
 
-        command
+        Command::none()
     }
 }
 

@@ -8,7 +8,7 @@ use crate::components::text::title;
 use crate::components::text_input_group::text_input_group;
 use crate::components::{relay_row, RelayRow};
 use crate::icon::plus_icon;
-use crate::net::{self, BackEndConnection, Connection};
+use crate::net::{self, database, BackEndConnection, Connection};
 use crate::widget::Element;
 
 #[derive(Debug, Clone)]
@@ -37,8 +37,8 @@ impl State {
             .collect();
         iced::Subscription::batch(relay_subs)
     }
-    pub fn new(db_conn: &mut BackEndConnection<net::Message>) -> Self {
-        db_conn.send(net::Message::FetchRelays);
+    pub fn new(db_conn: &mut BackEndConnection<database::Message>) -> Self {
+        // db_conn.send(database::Message::FetchRelays);
         Self {
             relays: vec![],
             show_modal: false,
@@ -49,7 +49,7 @@ impl State {
     pub fn update(
         &mut self,
         message: Message,
-        db_conn: &mut BackEndConnection<net::Message>,
+        db_conn: &mut BackEndConnection<database::Message>,
     ) -> Command<Message> {
         match message {
             Message::AddRelayInputChange(relay_addrs) => self.add_relay_input = relay_addrs,
@@ -60,7 +60,7 @@ impl State {
             Message::OkButtonPressed => {
                 match Url::try_from(self.add_relay_input.as_str()) {
                     Ok(url) => {
-                        db_conn.send(net::Message::AddRelay(url));
+                        // db_conn.send(database::Message::AddRelay(url));
                     }
                     Err(e) => {
                         // SOME VALIDATION TO THE USER
@@ -71,29 +71,31 @@ impl State {
                 self.show_modal = false;
             }
             Message::OpenAddRelayModal => self.show_modal = true,
+
+            Message::RelayMessage(msg) => {
+                // self.relays.iter_mut().for_each(|r| {
+                //     let _ = r.update(msg.clone(), db_conn);
+                // });
+            }
+
             Message::BackEndEvent(ev) => match ev {
-                net::Event::GotRelays(mut rls) => {
-                    rls.sort_by(|a, b| a.url().cmp(&b.url()));
-                    self.relays = rls
-                        .into_iter()
-                        .filter_map(|r| RelayRow::new(r).ok())
-                        .collect();
-                }
-                net::Event::DBSuccessEvent(kind) => match kind {
-                    net::SuccessKind::RelayCreated
-                    | net::SuccessKind::RelayDeleted
-                    | net::SuccessKind::RelayUpdated => {
-                        db_conn.send(net::Message::FetchRelays);
-                    }
-                    _ => (),
-                },
+                // net::Event::DbEvent(db_event) => match db_event {
+                //     database::Event::RelayCreated
+                //     | database::Event::RelayUpdated
+                //     | database::Event::RelayDeleted => {
+                //         db_conn.send(database::Message::FetchRelays);
+                //     }
+                //     _ => (),
+                // },
+                // net::Event::GotRelays(mut rls) => {
+                //     rls.sort_by(|a, b| a.url().cmp(&b.url()));
+                //     self.relays = rls
+                //         .into_iter()
+                //         .filter_map(|r| RelayRow::new(r).ok())
+                //         .collect();
+                // }
                 _ => (),
             },
-            Message::RelayMessage(msg) => {
-                self.relays.iter_mut().for_each(|r| {
-                    let _ = r.update(msg.clone(), db_conn);
-                });
-            }
         }
         Command::none()
     }

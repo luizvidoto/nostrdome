@@ -3,7 +3,7 @@ use iced::{alignment, Length};
 
 use crate::components::{contact_row, ContactRow};
 use crate::icon::{import_icon, plus_icon, to_cloud_icon};
-use crate::net::{BackEndConnection, Connection};
+use crate::net::{database, BackEndConnection, Connection};
 use crate::style;
 use crate::utils::contact_matches_search;
 use crate::widget::Element;
@@ -27,8 +27,8 @@ pub struct State {
     search_contact_input: String,
 }
 impl State {
-    pub fn new(db_conn: &mut BackEndConnection<net::Message>) -> Self {
-        db_conn.send(net::Message::FetchContacts);
+    pub fn new(db_conn: &mut BackEndConnection<database::Message>) -> Self {
+        db_conn.send(database::Message::FetchContacts);
         Self {
             contacts: vec![],
             search_contact_input: "".into(),
@@ -38,7 +38,7 @@ impl State {
     pub fn update(
         &mut self,
         message: Message,
-        db_conn: &mut BackEndConnection<net::Message>,
+        db_conn: &mut BackEndConnection<database::Message>,
     ) -> Option<Message> {
         match message {
             Message::OpenSendContactModal => (),
@@ -48,7 +48,7 @@ impl State {
             Message::SearchContactInputChange(text) => self.search_contact_input = text,
             Message::ContactRowMessage(ct_msg) => match ct_msg {
                 contact_row::Message::DeleteContact(contact) => {
-                    db_conn.send(net::Message::DeleteContact(contact))
+                    db_conn.send(database::Message::DeleteContact(contact))
                 }
                 contact_row::Message::EditContact(contact) => {
                     // self.modal_state = ModalState::add_contact(Some(contact));
@@ -56,18 +56,18 @@ impl State {
                 }
             },
             Message::DeleteContact(contact) => {
-                db_conn.send(net::Message::DeleteContact(contact));
+                db_conn.send(database::Message::DeleteContact(contact));
             }
-            Message::BackEndEvent(db_ev) => match db_ev {
-                net::Event::GotContacts(db_contacts) => {
-                    self.contacts = db_contacts;
-                }
-                net::Event::DBSuccessEvent(kind) => match kind {
-                    net::SuccessKind::ContactCreated(_)
-                    | net::SuccessKind::ContactDeleted(_)
-                    | net::SuccessKind::ContactUpdated(_)
-                    | net::SuccessKind::ContactsImported(_) => {
-                        db_conn.send(net::Message::FetchContacts);
+            Message::BackEndEvent(event) => match event {
+                net::Event::DbEvent(db_event) => match db_event {
+                    database::Event::ContactsImported(db_contacts)
+                    | database::Event::GotContacts(db_contacts) => {
+                        self.contacts = db_contacts;
+                    }
+                    database::Event::ContactCreated(_)
+                    | database::Event::ContactUpdated(_)
+                    | database::Event::ContactDeleted(_) => {
+                        db_conn.send(database::Message::FetchContacts);
                     }
                     _ => (),
                 },

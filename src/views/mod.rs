@@ -1,7 +1,7 @@
 use iced::{Command, Subscription};
 
 use crate::{
-    net::{self, BackEndConnection},
+    net::{self, database, BackEndConnection},
     style,
     widget::Element,
 };
@@ -23,7 +23,7 @@ pub struct Router {
     state: ViewState,
 }
 impl Router {
-    pub fn new(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn new(db_conn: &mut BackEndConnection<database::Message>) -> Self {
         Self {
             previous_state: None,
             state: ViewState::chat(db_conn),
@@ -47,10 +47,10 @@ impl Router {
     pub fn view(&self) -> Element<Message> {
         self.state.view()
     }
-    pub fn db_event(
+    pub fn backend_event(
         &mut self,
         event: net::Event,
-        db_conn: &mut BackEndConnection<net::Message>,
+        db_conn: &mut BackEndConnection<database::Message>,
     ) -> Command<Message> {
         match event {
             event => match &mut self.state {
@@ -61,7 +61,7 @@ impl Router {
                     state.backend_event(event, db_conn).map(Message::ChatMsg)
                 }
                 ViewState::Settings { state } => state
-                    .back_end_event(event, db_conn)
+                    .backend_event(event, db_conn)
                     .map(Message::SettingsMsg),
             },
         }
@@ -70,7 +70,7 @@ impl Router {
     pub fn update(
         &mut self,
         message: Message,
-        db_conn: &mut BackEndConnection<net::Message>,
+        db_conn: &mut BackEndConnection<database::Message>,
         selected_theme: Option<style::Theme>,
     ) -> Command<Message> {
         match message {
@@ -129,22 +129,22 @@ impl ViewState {
             _ => Subscription::none(),
         }
     }
-    pub fn channels(_db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn channels(_db_conn: &mut BackEndConnection<database::Message>) -> Self {
         Self::Channels {
             state: channels::State::new(),
         }
     }
-    pub fn chat(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn chat(db_conn: &mut BackEndConnection<database::Message>) -> Self {
         Self::Chat {
             state: chat::State::new(db_conn),
         }
     }
-    pub fn settings(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn settings(db_conn: &mut BackEndConnection<database::Message>) -> Self {
         Self::Settings {
             state: settings::Settings::new(db_conn),
         }
     }
-    pub fn settings_contacts(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn settings_contacts(db_conn: &mut BackEndConnection<database::Message>) -> Self {
         Self::Settings {
             state: settings::Settings::contacts(db_conn),
         }

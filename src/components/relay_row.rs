@@ -2,7 +2,7 @@ use std::ops::Not;
 
 use crate::error::Error;
 use crate::icon::{circle_icon, delete_icon, server_icon};
-use crate::net::{self, BackEndConnection, Connection};
+use crate::net::{self, database, BackEndConnection, Connection};
 use crate::style;
 use crate::widget::Element;
 use iced::widget::{button, checkbox, container, row, text};
@@ -111,33 +111,33 @@ impl RelayRow {
     pub fn update(
         &mut self,
         message: Message,
-        db_conn: &mut BackEndConnection<net::Message>,
+        db_conn: &mut BackEndConnection<database::Message>,
     ) -> Command<Message> {
         match message {
             Message::None => (),
             Message::ConnectToRelay(url) => {
-                db_conn.send(net::Message::ConnectToRelay(url));
+                // db_conn.send(database::Message::ConnectToRelay(url));
             }
             Message::UpdateStatus((url, status, last_connected_at)) => {
                 if self.url == url {
                     self.status = status;
                     self.last_connected_at = last_connected_at;
                     // self.last_connected_at = Some(last_connected_at);
-                    // db_conn.send(net::Message::UpdateRelay(self.into_db_relay()));
+                    // db_conn.send(database::Message::UpdateRelay(self.into_db_relay()));
                 }
             }
             Message::DeleteRelay(relay_url) => {
-                db_conn.send(net::Message::DeleteRelay(relay_url));
+                // db_conn.send(database::Message::DeleteRelay(relay_url));
             }
             Message::ToggleRead((url, read)) => {
-                db_conn.send(net::Message::ToggleRelayRead((url, read)));
+                // db_conn.send(database::Message::ToggleRelayRead((url, read)));
             }
             Message::ToggleWrite((url, write)) => {
-                db_conn.send(net::Message::ToggleRelayWrite((url, write)));
+                // db_conn.send(database::Message::ToggleRelayWrite((url, write)));
             }
             // Message::ToggleAdvertise(mut db_relay) => {
             //     // db_relay.advertise = !db_relay.advertise;
-            //     db_conn.send(net::Message::UpdateRelay(db_relay));
+            //     db_conn.send(database::Message::UpdateRelay(db_relay));
             // }
             Message::Ready(mut conn) => {
                 conn.send(Input::GetStatus);

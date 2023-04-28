@@ -1,6 +1,6 @@
 use crate::{
     components::text::title,
-    net::{self, BackEndConnection, Connection},
+    net::{self, database, nostr_client, BackEndConnection, Connection},
     style,
     widget::Element,
 };
@@ -25,22 +25,22 @@ impl State {
     pub fn backend_event(
         &mut self,
         event: net::Event,
-        _db_conn: &mut BackEndConnection<net::Message>,
+        _db_conn: &mut BackEndConnection<database::Message>,
     ) -> Command<Message> {
-        match event {
-            net::Event::ChannelCreated(event_id) => {
+        if let net::Event::NostrClientEvent(ns_event) = event {
+            if let nostr_client::Event::ChannelCreated(event_id) = ns_event {
                 println!("*** CHANNEL CREATED ***");
                 println!("{event_id}");
             }
-            _ => (),
         }
         Command::none()
     }
-    pub fn update(&mut self, message: Message, db_conn: &mut BackEndConnection<net::Message>) {
+    pub fn update(&mut self, message: Message, db_conn: &mut BackEndConnection<database::Message>) {
         match message {
             Message::GoToChat => (),
             Message::CreateChannel => {
-                db_conn.send(net::Message::CreateChannel);
+                println!("Creating channel");
+                // db_conn.send(database::Message::CreateChannel);
             }
         }
     }
