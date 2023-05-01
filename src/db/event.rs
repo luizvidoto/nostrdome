@@ -93,6 +93,14 @@ impl DbEvent {
             .await?)
     }
 
+    //fetch last event from db
+    pub async fn fetch_last(pool: &SqlitePool) -> Result<Option<DbEvent>, Error> {
+        let sql = format!("{} ORDER BY event_id DESC LIMIT 1", Self::FETCH_QUERY);
+        Ok(sqlx::query_as::<_, DbEvent>(&sql)
+            .fetch_optional(pool)
+            .await?)
+    }
+
     pub async fn insert(pool: &SqlitePool, db_event: &DbEvent) -> Result<(i64, u8), Error> {
         let sql =
             "INSERT OR IGNORE INTO event (event_hash, pubkey, created_at, kind, content, sig, tags, created_at_from_relay, confirmed, confirmed_at) \

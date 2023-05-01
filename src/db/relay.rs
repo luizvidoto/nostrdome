@@ -45,21 +45,21 @@ impl std::fmt::Display for DbRelayStatus {
 #[derive(Debug, Clone)]
 pub struct DbRelay {
     pub url: Url,
-    pub last_connected_at: Option<NaiveDateTime>,
     pub updated_at: NaiveDateTime,
     pub created_at: NaiveDateTime,
     pub read: bool,
     pub write: bool,
     pub advertise: bool,
-    pub status: DbRelayStatus,
+    pub last_connected_at: Option<NaiveDateTime>,
+    pub status: Option<DbRelayStatus>,
 }
 
 impl DbRelay {
     const FETCH_QUERY: &'static str =
-        "SELECT url, last_connected_at, read, write, advertise, status, created_at, updated_at FROM relay";
+        "SELECT url, read, write, advertise, created_at, updated_at FROM relay";
 
     pub fn with_status(mut self, status: RelayStatus) -> Self {
-        self.status = DbRelayStatus(status);
+        self.status = Some(DbRelayStatus(status));
         self
     }
     pub fn with_last_connected_at(mut self, last_connected_at: NaiveDateTime) -> Self {
@@ -70,13 +70,13 @@ impl DbRelay {
     pub fn new(url: Url) -> DbRelay {
         DbRelay {
             url,
-            last_connected_at: None,
             read: true,
             write: true,
             advertise: false,
-            status: DbRelayStatus(RelayStatus::Disconnected),
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
+            last_connected_at: None,
+            status: None,
         }
     }
 
@@ -100,22 +100,14 @@ impl DbRelay {
     }
 
     pub async fn insert(pool: &SqlitePool, db_relay: &DbRelay) -> Result<(), Error> {
-        let sql = "INSERT INTO relay (url, last_connected_at, \
-                   read, write, advertise, status) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
+        let sql = "INSERT INTO relay (url, read, write, advertise) \
+             VALUES (?1, ?2, ?3, ?4)";
 
         sqlx::query(sql)
             .bind(&db_relay.url.to_string())
-            .bind(
-                &db_relay
-                    .last_connected_at
-                    .as_ref()
-                    .map(|date| date.timestamp_millis()),
-            )
             .bind(&db_relay.read)
             .bind(&db_relay.write)
             .bind(&db_relay.advertise)
-            .bind(&db_relay.status.as_u8())
             .execute(pool)
             .await?;
 
@@ -123,19 +115,12 @@ impl DbRelay {
     }
 
     pub async fn update(pool: &SqlitePool, relay: &DbRelay) -> Result<(), Error> {
-        let sql = "UPDATE relay SET last_connected_at=?, read=?, write=?, advertise=?, status=?, updated_at=? WHERE url=?";
+        let sql = "UPDATE relay SET read=?, write=?, advertise=?, updated_at=? WHERE url=?";
 
         sqlx::query(sql)
-            .bind(
-                &relay
-                    .last_connected_at
-                    .as_ref()
-                    .map(|date| date.timestamp_millis()),
-            )
             .bind(&relay.read)
             .bind(&relay.write)
             .bind(&relay.advertise)
-            .bind(&relay.status.as_u8())
             .bind(Utc::now().naive_utc().timestamp_millis())
             .bind(&relay.url.to_string())
             .execute(pool)
@@ -166,16 +151,13 @@ impl sqlx::FromRow<'_, SqliteRow> for DbRelay {
         let url = url_or_err(&url, "url")?;
         Ok(DbRelay {
             url,
-            last_connected_at: row
-                .get::<Option<i64>, &str>("last_connected_at")
-                .map(|n| millis_to_naive_or_err(n, "last_connected_at"))
-                .transpose()?,
             created_at,
             updated_at,
             read: row.try_get::<bool, &str>("read")?,
             write: row.try_get::<bool, &str>("write")?,
             advertise: row.try_get::<bool, &str>("advertise")?,
-            status: row.try_get::<u8, &str>("status")?.into(),
+            last_connected_at: None,
+            status: None,
         })
     }
 }

@@ -1,3 +1,4 @@
+use crate::db::{DbEvent, DbRelay};
 use crate::error::Error;
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 use nostr_sdk::{Client, Filter, Keys, Timestamp, Url};
@@ -36,42 +37,48 @@ pub async fn connect_relay(nostr_client: &Client, relay_url: &Url) -> Result<(),
     Ok(())
 }
 
-pub async fn connect_relays(
-    nostr_client: &Client,
-    _keys: &Keys,
-    _last_timestamp: u64,
-) -> Result<(), Error> {
-    // let last_timestamp = get_last_event_received(pool).await?;
+// Add relays to client
+// for r in vec![
+//     // "wss://eden.nostr.land",
+//     // "wss://relay.snort.social",
+//     // "wss://relay.nostr.band",
+//     // "wss://nostr.fmt.wiz.biz",
+//     // "wss://relay.damus.io",
+//     // "wss://nostr.anchel.nl/",
+//     // "ws://192.168.15.119:8080"
+//     // "ws://192.168.15.151:8080",
+//     "ws://0.0.0.0:8080",
+// ] {
+//     match nostr_client.add_relay(r, None).await {
+//         Ok(_) => tracing::info!("Nostr Client Added Relay: {}", r),
+//         Err(e) => tracing::error!("{}", e),
+//     }
+// }
 
-    // tracing::info!("Adding relays to client");
-    // Add relays to client
-    // for r in vec![
-    //     // "wss://eden.nostr.land",
-    //     // "wss://relay.snort.social",
-    //     // "wss://relay.nostr.band",
-    //     // "wss://nostr.fmt.wiz.biz",
-    //     // "wss://relay.damus.io",
-    //     // "wss://nostr.anchel.nl/",
-    //     // "ws://192.168.15.119:8080"
-    //     // "ws://192.168.15.151:8080",
-    //     "ws://0.0.0.0:8080",
-    // ] {
-    //     match nostr_client.add_relay(r, None).await {
-    //         Ok(_) => tracing::info!("Nostr Client Added Relay: {}", r),
-    //         Err(e) => tracing::error!("{}", e),
-    //     }
-    // }
+pub async fn add_relays_and_connect(
+    nostr_client: &Client,
+    relays: &[DbRelay],
+    keys: &Keys,
+    last_event: Option<DbEvent>,
+) -> Result<(), Error> {
+    tracing::info!("Adding relays to client");
+    for r in relays {
+        match nostr_client.add_relay(&r.url.to_string(), None).await {
+            Ok(_) => tracing::info!("Nostr Client Added Relay: {}", &r.url),
+            Err(e) => tracing::error!("{}", e),
+        }
+    }
 
     tracing::info!("Connecting to relays");
     nostr_client.connect().await;
 
-    // request_events(
-    //     &nostr_client,
-    //     &keys.public_key(),
-    //     &keys.public_key(),
-    //     last_timestamp,
-    // )
-    // .await?;
+    request_events(
+        &nostr_client,
+        &keys.public_key(),
+        &keys.public_key(),
+        last_event,
+    )
+    .await?;
 
     Ok(())
 }
@@ -102,9 +109,16 @@ pub async fn request_events(
     nostr_client: &Client,
     own_pubkey: &XOnlyPublicKey,
     pubkey: &XOnlyPublicKey,
-    last_timestamp: u64,
+    last_event: Option<DbEvent>,
 ) -> Result<(), Error> {
     tracing::info!("Requesting events");
+
+    // if has last_event, request events since last_event.timestamp
+    // else request events since 0
+    let last_timestamp: u64 = last_event
+        .map(|e| e.created_at.timestamp_millis() as u64)
+        .unwrap_or(0);
+
     let sent_msgs_sub_past = Filter::new()
         .author(own_pubkey.to_string())
         // .kind(Kind::EncryptedDirectMessage)

@@ -4,11 +4,11 @@ use crate::net::{database, nostr_client, BackEndConnection, Connection};
 use crate::style;
 use crate::utils::event_tt_to_naive;
 use crate::widget::Element;
-use chrono::{NaiveDateTime, Utc};
-use iced::widget::{button, checkbox, container, row, text};
+use chrono::Utc;
+use iced::widget::{button, checkbox, container, row, text, tooltip};
 use iced::{alignment, Command, Length, Subscription};
 use iced_native::futures::channel::mpsc;
-use nostr_sdk::{Relay, RelayStatus, Url};
+use nostr_sdk::{Relay, RelayStatus, Timestamp, Url};
 
 #[derive(Debug, Clone)]
 pub struct RelayRowConnection(mpsc::UnboundedSender<Input>);
@@ -25,7 +25,7 @@ pub enum Message {
     None,
     RelayUpdated(DbRelay),
     ConnectToRelay(DbRelay),
-    UpdateStatus((Url, RelayStatus, NaiveDateTime)),
+    UpdateStatus((Url, RelayStatus, Timestamp)),
     DeleteRelay(DbRelay),
     ToggleRead(DbRelay),
     ToggleWrite(DbRelay),
@@ -142,16 +142,13 @@ impl RelayRow {
                         receiver,
                     } => {
                         let relay_status = channel_relay.status().await;
-                        let last_connected_at =
-                            event_tt_to_naive(channel_relay.stats().connected_at())
-                                .unwrap_or(Utc::now().naive_utc());
                         (
                             MessageWrapper::new(
                                 id,
                                 Message::UpdateStatus((
                                     url.clone(),
                                     relay_status,
-                                    last_connected_at,
+                                    channel_relay.stats().connected_at(),
                                 )),
                             ),
                             State::Idle { url, receiver, id },
@@ -180,12 +177,18 @@ impl RelayRow {
                 ns_conn.send(nostr_client::Message::ConnectToRelay(db_relay.url.clone()));
             }
             Message::UpdateStatus((_url, status, last_connected_at)) => {
-                let db_relay = self
-                    .db_relay
-                    .clone()
-                    .with_last_connected_at(last_connected_at)
-                    .with_status(status);
-                db_conn.send(database::Message::UpdateRelay(db_relay));
+                self.db_relay = self.db_relay.clone().with_status(status);
+                if last_connected_at.as_i64() != 0 {
+                    if let Ok(last_connected_at) = event_tt_to_naive(last_connected_at) {
+                        self.db_relay = self
+                            .db_relay
+                            .clone()
+                            .with_last_connected_at(last_connected_at);
+                    }
+                } else {
+                    self.db_relay.last_connected_at = None;
+                }
+                db_conn.send(database::Message::UpdateRelay(self.db_relay.clone()));
                 if let (Some(ch), Some(relay)) = (&mut self.sub_channel, &self.client_relay) {
                     ch.send(Input::GetStatus(relay.clone()));
                 }
@@ -204,24 +207,26 @@ impl RelayRow {
             }
             Message::Waited => {
                 tracing::info!("Message::Waited");
-                self.send_action_to_channel();
+                self.send_action_to_channel(ns_conn);
             }
             Message::Ready(channel) => {
                 tracing::info!("Message::Ready(channel)");
                 self.sub_channel = Some(channel);
-                self.send_action_to_channel();
+                self.send_action_to_channel(ns_conn);
             }
         }
         Command::none()
     }
 
-    fn send_action_to_channel(&mut self) {
+    fn send_action_to_channel(&mut self, ns_conn: &mut BackEndConnection<nostr_client::Message>) {
         if let Some(ch) = &mut self.sub_channel {
             match &self.client_relay {
                 Some(relay) => {
                     ch.send(Input::GetStatus(relay.clone()));
                 }
                 None => {
+                    // fetch relays again?
+                    ns_conn.send(nostr_client::Message::FetchRelay(self.db_relay.url.clone()));
                     ch.send(Input::Wait);
                 }
             }
@@ -230,6 +235,7 @@ impl RelayRow {
 
     fn seconds_since_last_conn(&self) -> Element<'static, MessageWrapper> {
         if let Some(last_connected_at) = self.db_relay.last_connected_at {
+            // tracing::warn!("last_connected_at: {:?}", last_connected_at);
             let now = Utc::now().naive_utc();
             let dif_secs = (now - last_connected_at).num_seconds();
             text(format!("{}s", &dif_secs)).into()
@@ -238,27 +244,43 @@ impl RelayRow {
         }
     }
     pub fn view<'a>(&'a self) -> Element<'a, MessageWrapper> {
-        let status_icon = match self.db_relay.status.0 {
-            RelayStatus::Initialized => circle_icon()
-                .size(16)
-                .style(style::Text::RelayStatusInitialized),
-            RelayStatus::Connected => circle_icon()
-                .size(16)
-                .style(style::Text::RelayStatusConnected),
-            RelayStatus::Connecting => circle_icon()
-                .size(16)
-                .style(style::Text::RelayStatusConnecting),
-            RelayStatus::Disconnected => circle_icon()
-                .size(16)
-                .style(style::Text::RelayStatusDisconnected),
-            RelayStatus::Terminated => circle_icon()
-                .size(16)
-                .style(style::Text::RelayStatusTerminated),
+        let (status_icon, status_text) = match &self.db_relay.status {
+            Some(last_active) => {
+                let status_icon = match last_active.0 {
+                    RelayStatus::Initialized => circle_icon()
+                        .size(16)
+                        .style(style::Text::RelayStatusInitialized),
+                    RelayStatus::Connected => circle_icon()
+                        .size(16)
+                        .style(style::Text::RelayStatusConnected),
+                    RelayStatus::Connecting => circle_icon()
+                        .size(16)
+                        .style(style::Text::RelayStatusConnecting),
+                    RelayStatus::Disconnected => circle_icon()
+                        .size(16)
+                        .style(style::Text::RelayStatusDisconnected),
+                    RelayStatus::Terminated => circle_icon()
+                        .size(16)
+                        .style(style::Text::RelayStatusTerminated),
+                };
+                let status_text = last_active.0.to_string();
+                (status_icon, status_text)
+            }
+            None => (
+                circle_icon()
+                    .size(16)
+                    .style(style::Text::RelayStatusDisconnected),
+                "Disconnected".into(),
+            ),
         };
 
         container(
             row![
-                status_icon.width(Length::Fixed(RELAY_STATUS_ICON_WIDTH)),
+                tooltip(
+                    status_icon.width(Length::Fixed(RELAY_STATUS_ICON_WIDTH)),
+                    status_text,
+                    tooltip::Position::Top
+                ),
                 container(text(&self.db_relay.url))
                     .center_x()
                     .width(Length::Fill),

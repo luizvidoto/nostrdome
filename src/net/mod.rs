@@ -1,10 +1,10 @@
-use crate::db::{DbChat, DbContact, DbEvent, DbMessage, DbRelayResponse, MessageStatus};
+use crate::db::{DbChat, DbContact, DbMessage, DbRelayResponse, MessageStatus};
 use crate::error::Error;
 use crate::net::database::database_connect;
 use crate::net::nostr_client::nostr_client_connect;
 use crate::types::ChatMessage;
 use iced::Subscription;
-use nostr_sdk::{Client, Contact, Keys, Kind, RelayMessage, Url};
+use nostr_sdk::{Client, Contact, Keys};
 use sqlx::SqlitePool;
 use std::time::Duration;
 
@@ -85,59 +85,6 @@ async fn fetch_and_decrypt_chat(
     db_contact = DbContact::update_unseen_count(pool, &mut db_contact, 0).await?;
 
     Ok((db_contact, chat_messages))
-}
-
-async fn on_relay_message(
-    pool: &SqlitePool,
-    relay_url: &Url,
-    relay_message: &RelayMessage,
-) -> Result<Event, Error> {
-    let event = match relay_message {
-        RelayMessage::Ok {
-            event_id: event_hash,
-            status,
-            message,
-        } => {
-            let mut db_event = DbEvent::fetch_one(pool, event_hash)
-                .await?
-                .ok_or(Error::EventNotInDatabase(event_hash.to_owned()))?;
-            let mut db_message = None;
-
-            if !db_event.confirmed {
-                db_event = DbEvent::confirm_event(pool, db_event).await?;
-
-                if let Kind::EncryptedDirectMessage = db_event.kind {
-                    db_message = if let Some(db_message) =
-                        DbMessage::fetch_one(pool, db_event.event_id()?).await?
-                    {
-                        let confirmed_db_message =
-                            DbMessage::confirm_message(pool, db_message).await?;
-                        Some(confirmed_db_message)
-                    } else {
-                        None
-                    };
-                }
-            }
-
-            let mut relay_response = DbRelayResponse::from_response(
-                *status,
-                db_event.event_id()?,
-                event_hash,
-                relay_url,
-                message,
-            );
-            let id = DbRelayResponse::insert(pool, &relay_response).await?;
-            relay_response = relay_response.with_id(id);
-            Event::DbEvent(database::Event::UpdateWithRelayResponse {
-                relay_response,
-                db_event,
-                db_message,
-            })
-        }
-        _ => Event::None,
-    };
-
-    Ok(event)
 }
 
 async fn fetch_relays_responses(

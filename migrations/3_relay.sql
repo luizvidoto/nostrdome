@@ -1,11 +1,11 @@
 CREATE TABLE relay (
     url TEXT PRIMARY KEY NOT NULL,
     -- Milliseconds unix timestamp
-    last_connected_at INTEGER DEFAULT NULL,
+    -- last_connected_at INTEGER DEFAULT NULL,
     created_at INTEGER DEFAULT NULL,
     updated_at INTEGER DEFAULT NULL,
     read INTEGER NOT NULL DEFAULT 1,
     write INTEGER NOT NULL DEFAULT 1,
     advertise INTEGER NOT NULL DEFAULT 0,
-    status INTEGER NOT NULL DEFAULT 0
+    -- status INTEGER NOT NULL DEFAULT 0
 );

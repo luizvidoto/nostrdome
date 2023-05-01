@@ -1,8 +1,8 @@
-use crate::db::DbContact;
+use crate::db::{DbContact, DbEvent, DbRelay};
 use crate::error::Error;
 use crate::net::relay::{
-    add_relay, connect_relay, connect_relays, toggle_read_for_relay, toggle_write_for_relay,
-    update_relay_db_and_client,
+    add_relay, add_relays_and_connect, connect_relay, toggle_read_for_relay,
+    toggle_write_for_relay, update_relay_db_and_client,
 };
 use crate::net::{Connection, APP_TICK_INTERVAL_MILLIS};
 use async_stream::stream;
@@ -121,6 +121,12 @@ pub fn nostr_client_connect(
                     let event = futures::select! {
                         message = receiver.select_next_some() => {
                             let event = match message {
+                                Message::PrepareClient((relays, db_event)) => {
+                                    process_async_fn(
+                                        add_relays_and_connect(&nostr_client, &relays, &keys, db_event),
+                                        |_| Event::FinishedPreparing
+                                    ).await
+                                }
                                 Message::ProcessMessages => {
                                     return (Event::IsProcessing, State::Processing {
                                         ns_conn,
@@ -190,13 +196,6 @@ pub fn nostr_client_connect(
                                     )
                                     .await
                                 }
-                                Message::ConnectRelays => {
-                                    process_async_fn(
-                                        connect_relays(&nostr_client, &keys, 0), //TODO: fetch from db
-                                        |_| Event::RelaysConnected,
-                                    )
-                                    .await
-                                }
                                 Message::ToggleRelayRead((url, read)) => {
                                     process_async_fn(
                                         toggle_read_for_relay(&nostr_client, &url, read),
@@ -218,17 +217,9 @@ pub fn nostr_client_connect(
                                 RelayPoolNotification::Event(relay_url, event) => {
                                     // println!("*** NOTIFICATION ***");
                                     // dbg!(&event);
-                                    // process_async_fn(
-                                    //     received_event(&database.pool, &keys, event, &relay_url),
-                                    //     |event| event
-                                    // ).await
                                     Event::ReceivedEvent((relay_url, event))
                                 },
                                 RelayPoolNotification::Message(relay_url, msg) => {
-                                    // process_async_fn(
-                                    //     on_relay_message(&database.pool, &relay_url, &msg),
-                                    //     |event| event
-                                    // ).await
                                     Event::ReceivedRelayMessage((relay_url, msg))
                                 }
                                 RelayPoolNotification::Shutdown => {
@@ -379,13 +370,15 @@ pub enum Event {
     RelayCreated,
     RelayUpdated,
     RelayDeleted,
+
+    FinishedPreparing,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    PrepareClient((Vec<DbRelay>, Option<DbEvent>)),
     FetchRelay(Url),
     ProcessMessages,
-    ConnectRelays,
     ConnectToRelay(Url),
     SendDMTo((DbContact, String)),
     ShowPublicKey,

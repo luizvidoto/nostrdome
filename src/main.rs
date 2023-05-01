@@ -201,6 +201,12 @@ impl Application for App {
                             db_conn.send(database::Message::ProcessMessages);
                         }
                     }
+                    database::Event::GotClientConfig(config) => {
+                        tracing::warn!("Got config for client");
+                        if let State::App { ns_conn, .. } = &mut self.state {
+                            ns_conn.send(nostr_client::Message::PrepareClient(config));
+                        }
+                    }
                     database::Event::DbConnected => {
                         tracing::warn!("Received Database Connected Event");
                         // send relays from db to the client?
@@ -227,6 +233,19 @@ impl Application for App {
                     }
                 },
                 net::Event::NostrClientEvent(ns_event) => match ns_event {
+                    nostr_client::Event::ReceivedEvent((url, event)) => {
+                        // tracing::warn!("Received Nostr Event: {:?}", event);
+                        if let State::App { db_conn, .. } = &mut self.state {
+                            db_conn.send(database::Message::ReceivedEvent((url, event)));
+                        }
+                    }
+                    nostr_client::Event::ReceivedRelayMessage((url, msg)) => {
+                        // tracing::warn!("Received Nostr Event: {:?}", event);
+                        if let State::App { db_conn, .. } = &mut self.state {
+                            db_conn.send(database::Message::ReceivedRelayMessage((url, msg)));
+                        }
+                    }
+
                     nostr_client::Event::IsProcessing => {
                         // tracing::warn!("Database is processing messages");
                     }
@@ -236,8 +255,14 @@ impl Application for App {
                             ns_conn.send(nostr_client::Message::ProcessMessages);
                         }
                     }
+                    nostr_client::Event::FinishedPreparing => {
+                        tracing::warn!("Finished preparing client");
+                    }
                     nostr_client::Event::NostrConnected => {
                         tracing::warn!("Received Nostr Client Connected Event");
+                        if let State::App { db_conn, .. } = &mut self.state {
+                            db_conn.send(database::Message::PrepareClient);
+                        }
                     }
                     nostr_client::Event::NostrDisconnected => {
                         tracing::warn!("Nostr Client Disconnected");
