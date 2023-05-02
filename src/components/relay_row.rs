@@ -8,7 +8,7 @@ use chrono::Utc;
 use iced::widget::{button, checkbox, container, row, text, tooltip};
 use iced::{alignment, Command, Length, Subscription};
 use iced_native::futures::channel::mpsc;
-use nostr_sdk::{Relay, RelayStatus, Timestamp, Url};
+use nostr_sdk::{Relay, RelayStatus, Timestamp};
 
 #[derive(Debug, Clone)]
 pub struct RelayRowConnection(mpsc::UnboundedSender<Input>);
@@ -25,7 +25,7 @@ pub enum Message {
     None,
     RelayUpdated(DbRelay),
     ConnectToRelay(DbRelay),
-    UpdateStatus((Url, RelayStatus, Timestamp)),
+    UpdateStatus((RelayStatus, Timestamp)),
     DeleteRelay(DbRelay),
     ToggleRead(DbRelay),
     ToggleWrite(DbRelay),
@@ -51,16 +51,13 @@ pub enum Input {
 }
 pub enum State {
     Initial {
-        url: Url,
         id: i32,
     },
     Idle {
-        url: Url,
         id: i32,
         receiver: mpsc::UnboundedReceiver<Input>,
     },
     Querying {
-        url: Url,
         id: i32,
         receiver: mpsc::UnboundedReceiver<Input>,
         channel_relay: Relay,
@@ -92,27 +89,20 @@ impl RelayRow {
     pub fn subscription(&self) -> Subscription<MessageWrapper> {
         iced::subscription::unfold(
             self.db_relay.url.clone(),
-            State::Initial {
-                url: self.db_relay.url.clone(),
-                id: self.id,
-            },
+            State::Initial { id: self.id },
             |state| async move {
                 match state {
-                    State::Initial { url, id } => {
+                    State::Initial { id } => {
                         let (sender, receiver) = mpsc::unbounded();
                         (
                             MessageWrapper::new(id, Message::Ready(RelayRowConnection(sender))),
-                            State::Idle { url, receiver, id },
+                            State::Idle { receiver, id },
                         )
                     }
-                    State::Idle {
-                        url,
-                        mut receiver,
-                        id,
-                    } => {
+                    State::Idle { mut receiver, id } => {
                         use iced_native::futures::StreamExt;
 
-                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
                         let input = receiver.select_next_some().await;
 
@@ -121,7 +111,6 @@ impl RelayRow {
                                 MessageWrapper::new(id, Message::Performing),
                                 State::Querying {
                                     id,
-                                    url,
                                     receiver,
                                     channel_relay,
                                 },
@@ -130,14 +119,13 @@ impl RelayRow {
                                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                                 (
                                     MessageWrapper::new(id, Message::Waited),
-                                    State::Idle { url, receiver, id },
+                                    State::Idle { receiver, id },
                                 )
                             }
                         }
                     }
                     State::Querying {
                         id,
-                        url,
                         channel_relay,
                         receiver,
                     } => {
@@ -146,12 +134,11 @@ impl RelayRow {
                             MessageWrapper::new(
                                 id,
                                 Message::UpdateStatus((
-                                    url.clone(),
                                     relay_status,
                                     channel_relay.stats().connected_at(),
                                 )),
                             ),
-                            State::Idle { url, receiver, id },
+                            State::Idle { receiver, id },
                         )
                     }
                 }
@@ -167,6 +154,7 @@ impl RelayRow {
     ) -> Command<MessageWrapper> {
         match wrapper.message {
             Message::RelayUpdated(db_relay) => {
+                tracing::warn!("Relay updated: {:?}", db_relay);
                 self.db_relay = db_relay;
             }
             Message::None => (),
@@ -174,9 +162,9 @@ impl RelayRow {
                 self.client_relay = Some(relay);
             }
             Message::ConnectToRelay(db_relay) => {
-                ns_conn.send(nostr_client::Message::ConnectToRelay(db_relay.url.clone()));
+                ns_conn.send(nostr_client::Message::ConnectToRelay(db_relay));
             }
-            Message::UpdateStatus((_url, status, last_connected_at)) => {
+            Message::UpdateStatus((status, last_connected_at)) => {
                 self.db_relay = self.db_relay.clone().with_status(status);
                 if last_connected_at.as_i64() != 0 {
                     if let Ok(last_connected_at) = event_tt_to_naive(last_connected_at) {
@@ -188,19 +176,30 @@ impl RelayRow {
                 } else {
                     self.db_relay.last_connected_at = None;
                 }
-                db_conn.send(database::Message::UpdateRelay(self.db_relay.clone()));
+
                 if let (Some(ch), Some(relay)) = (&mut self.sub_channel, &self.client_relay) {
                     ch.send(Input::GetStatus(relay.clone()));
                 }
             }
             Message::DeleteRelay(db_relay) => {
+                ns_conn.send(nostr_client::Message::DeleteRelay(db_relay.clone()));
                 db_conn.send(database::Message::DeleteRelay(db_relay));
             }
             Message::ToggleRead(db_relay) => {
-                db_conn.send(database::Message::ToggleRelayRead(db_relay));
+                let read = !db_relay.read;
+                ns_conn.send(nostr_client::Message::ToggleRelayRead((
+                    db_relay.clone(),
+                    read,
+                )));
+                db_conn.send(database::Message::ToggleRelayRead((db_relay, read)));
             }
             Message::ToggleWrite(db_relay) => {
-                db_conn.send(database::Message::ToggleRelayWrite(db_relay));
+                let write = !db_relay.write;
+                ns_conn.send(nostr_client::Message::ToggleRelayWrite((
+                    db_relay.clone(),
+                    write,
+                )));
+                db_conn.send(database::Message::ToggleRelayWrite((db_relay, write)));
             }
             Message::Performing => {
                 tracing::info!("Relay Row performing");

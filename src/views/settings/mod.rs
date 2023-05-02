@@ -7,13 +7,15 @@ use nostr_sdk::{Metadata, Tag};
 use crate::components::text::title;
 use crate::components::text_input_group::text_input_group;
 use crate::components::{file_importer, FileImporter};
-use crate::db::DbContact;
+use crate::db::{DbContact, DbRelay};
 use crate::net::{self, database, nostr_client, BackEndConnection, Connection, Event};
 use crate::style;
 use crate::types::UncheckedEvent;
 use crate::utils::json_reader;
 
 use crate::widget::{Button, Element};
+
+use self::relay_row_modal::RelayRowModal;
 
 mod account;
 pub mod appearance;
@@ -151,7 +153,8 @@ impl Settings {
         db_conn: &mut BackEndConnection<database::Message>,
         ns_conn: &mut BackEndConnection<nostr_client::Message>,
     ) -> Command<Message> {
-        self.modal_state.backend_event(event.clone(), db_conn);
+        self.modal_state
+            .backend_event(event.clone(), db_conn, ns_conn);
 
         match &mut self.menu_state {
             MenuState::Account { state } => state.update(account::Message::BackEndEvent(event)),
@@ -317,6 +320,7 @@ enum ModalState {
     },
     SendContactList {
         relays: Vec<relay_row_modal::RelayRowModal>,
+        send_contacts_to_relay: Option<DbRelay>,
     },
     Off,
 }
@@ -324,35 +328,52 @@ enum ModalState {
 impl ModalState {
     pub fn backend_event(
         &mut self,
-        _event: Event,
+        event: Event,
         _db_conn: &mut BackEndConnection<database::Message>,
+        ns_conn: &mut BackEndConnection<nostr_client::Message>,
     ) {
-        // if let ModalState::SendContactList { relays } = self {
-        //     match event {
-        //         Event::GotRelaysUrls(new_relays) => {
-        //             *relays = new_relays
-        //                 .iter()
-        //                 .map(|url| RelayRowModal::new(url))
-        //                 .collect();
-        //         }
-        //         Event::DBSuccessEvent(kind) => match kind {
-        //             net::SuccessKind::UpdateWithRelayResponse { relay_response, .. } => {
-        //                 if let Some(relay_row) = relays
-        //                     .iter_mut()
-        //                     .find(|r| r.url == relay_response.relay_url)
-        //                 {
-        //                     relay_row.success();
-        //                 }
-        //             }
-        //             _ => (),
-        //         },
-        //         _ => (),
-        //     }
-        // }
+        if let ModalState::SendContactList {
+            relays,
+            send_contacts_to_relay,
+        } = self
+        {
+            match event {
+                Event::DbEvent(db_event) => match db_event {
+                    database::Event::GotContacts(contacts) => {
+                        if let Some(db_relay) = &send_contacts_to_relay {
+                            ns_conn.send(nostr_client::Message::SendContactListToRelay((
+                                db_relay.clone(),
+                                contacts,
+                            )));
+                        }
+                    }
+                    database::Event::GotRelays(db_relays) => {
+                        *relays = db_relays
+                            .iter()
+                            .map(|db_relay| RelayRowModal::new(db_relay))
+                            .collect();
+                    }
+                    database::Event::UpdateWithRelayResponse { relay_response, .. } => {
+                        if let Some(relay_row) = relays
+                            .iter_mut()
+                            .find(|row| row.db_relay.url == relay_response.relay_url)
+                        {
+                            relay_row.success();
+                            *send_contacts_to_relay = None;
+                        }
+                    }
+                    _ => (),
+                },
+                _ => (),
+            }
+        }
     }
-    pub fn load_send_contacts(_db_conn: &mut BackEndConnection<database::Message>) -> Self {
-        // db_conn.send(database::Message::FetchRelaysUrls);
-        Self::SendContactList { relays: vec![] }
+    pub fn load_send_contacts(db_conn: &mut BackEndConnection<database::Message>) -> Self {
+        db_conn.send(database::Message::FetchRelays);
+        Self::SendContactList {
+            relays: vec![],
+            send_contacts_to_relay: None,
+        }
     }
     pub fn add_contact(contact: Option<DbContact>) -> Self {
         let (petname, pubkey, rec_relay, is_edit) = match contact {
@@ -394,10 +415,18 @@ impl ModalState {
                 println!("Send contacts to all relays");
             }
             Message::RelayRowMessage(r_msg) => match r_msg {
-                relay_row_modal::Message::SendContactListToRelay(relay_url) => {
-                    // db_conn.send(database::Message::SendContactListToRelay(relay_url.clone()));
-                    if let ModalState::SendContactList { relays } = self {
-                        if let Some(relay_row) = relays.iter_mut().find(|r| r.url == relay_url) {
+                relay_row_modal::Message::SendContactListToRelay(db_relay) => {
+                    db_conn.send(database::Message::FetchContacts);
+                    if let ModalState::SendContactList {
+                        relays,
+                        send_contacts_to_relay,
+                    } = self
+                    {
+                        if let Some(relay_row) = relays
+                            .iter_mut()
+                            .find(|row| row.db_relay.url == db_relay.url)
+                        {
+                            *send_contacts_to_relay = Some(db_relay.clone());
                             relay_row.loading();
                         }
                     }
@@ -469,7 +498,7 @@ impl ModalState {
     }
     pub fn view<'a>(&'a self, underlay: Element<'a, Message>) -> Element<'a, Message> {
         let view: Element<_> = match self {
-            ModalState::SendContactList { relays } => Modal::new(true, underlay, move || {
+            ModalState::SendContactList { relays, .. } => Modal::new(true, underlay, move || {
                 let title = title("Send Contact List");
                 let send_to_all_btn = button("Send All").on_press(Message::SendContactListToAll);
                 let header = container(title)
@@ -673,16 +702,15 @@ const ADD_CONTACT_MODAL_WIDTH: f32 = 400.0;
 const IMPORT_MODAL_WIDTH: f32 = 400.0;
 
 mod relay_row_modal {
-    use crate::{style, widget::Element};
+    use crate::{db::DbRelay, style, widget::Element};
     use iced::{
         widget::{button, container, row, text, Space},
         Length,
     };
-    use nostr_sdk::Url;
 
     #[derive(Debug, Clone)]
     pub enum Message {
-        SendContactListToRelay(Url),
+        SendContactListToRelay(DbRelay),
     }
 
     #[derive(Debug, Clone)]
@@ -695,13 +723,13 @@ mod relay_row_modal {
     #[derive(Debug, Clone)]
     pub struct RelayRowModal {
         pub state: RelayRowState,
-        pub url: Url,
+        pub db_relay: DbRelay,
     }
     impl RelayRowModal {
-        pub fn new(url: &Url) -> Self {
+        pub fn new(db_relay: &DbRelay) -> Self {
             Self {
                 state: RelayRowState::Idle,
-                url: url.to_owned(),
+                db_relay: db_relay.to_owned(),
             }
         }
         pub fn loading(&mut self) {
@@ -714,7 +742,7 @@ mod relay_row_modal {
             let button_or_checkmark: Element<_> = match self.state {
                 RelayRowState::Idle => button("Send")
                     .style(style::Button::Primary)
-                    .on_press(Message::SendContactListToRelay(self.url.clone()))
+                    .on_press(Message::SendContactListToRelay(self.db_relay.clone()))
                     .into(),
                 RelayRowState::Loading => button("...").style(style::Button::Primary).into(),
                 RelayRowState::Success => text("Sent!").into(),
@@ -722,7 +750,7 @@ mod relay_row_modal {
             };
 
             container(row![
-                text(&self.url),
+                text(&self.db_relay.url),
                 Space::with_width(Length::Fill),
                 button_or_checkmark
             ])

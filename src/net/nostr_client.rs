@@ -136,9 +136,9 @@ pub fn nostr_client_connect(
                                         notifications_stream,
                                     });
                                 }
-                                Message::SendContactListToRelay((relay_url, list)) => {
+                                Message::SendContactListToRelay((db_relay, list)) => {
                                     process_async_fn(
-                                        send_contact_list_to(&keys, &nostr_client, relay_url, &list),
+                                        send_contact_list_to(&keys, &nostr_client, &db_relay.url, &list),
                                         |event| event
                                     ).await
                                 }
@@ -167,44 +167,44 @@ pub fn nostr_client_connect(
                                     .await
                                 }
 
-                                Message::ConnectToRelay(relay_url) => {
+                                Message::ConnectToRelay(db_relay) => {
                                     process_async_fn(
-                                        connect_relay(&nostr_client, &relay_url),
-                                        |_| Event::RelayConnected(relay_url.clone())
+                                        connect_relay(&nostr_client, &db_relay.url),
+                                        |_| Event::RelayConnected(db_relay.clone())
                                     ).await
                                 }
-                                Message::DeleteRelay(relay_url) => {
+                                Message::DeleteRelay(db_relay) => {
                                     process_async_fn(
                                         // DbRelay::delete(&database.pool, &relay_url),
-                                        nostr_client.remove_relay(relay_url.as_str()),
+                                        nostr_client.remove_relay(&db_relay.url.to_string()),
                                         |_| Event::RelayDeleted,
                                     )
                                     .await
                                 }
-                                Message::AddRelay(url) => {
+                                Message::AddRelay(db_relay) => {
                                     println!("Message::AddRelay");
                                     process_async_fn(
-                                        add_relay(&nostr_client, &url),
+                                        add_relay(&nostr_client, &db_relay.url),
                                         |_| Event::RelayCreated,
                                     )
                                     .await
                                 }
-                                Message::UpdateRelay(url) => {
+                                Message::UpdateRelay(db_relay) => {
                                     process_async_fn(
-                                        update_relay_db_and_client(&nostr_client, &url),
+                                        update_relay_db_and_client(&nostr_client, &db_relay.url),
                                         |_| Event::RelayUpdated,
                                     )
                                     .await
                                 }
-                                Message::ToggleRelayRead((url, read)) => {
+                                Message::ToggleRelayRead((db_relay, read)) => {
                                     process_async_fn(
-                                        toggle_read_for_relay(&nostr_client, &url, read),
+                                        toggle_read_for_relay(&nostr_client, &db_relay.url, read),
                                         |_| Event::RelayUpdated
                                     ).await
                                 }
-                                Message::ToggleRelayWrite((url, write)) => {
+                                Message::ToggleRelayWrite((db_relay, write)) => {
                                     process_async_fn(
-                                        toggle_write_for_relay(&nostr_client, &url, write),
+                                        toggle_write_for_relay(&nostr_client, &db_relay.url, write),
                                         |_| Event::RelayUpdated
                                     ).await
                                 },
@@ -283,7 +283,7 @@ pub async fn send_contact_list_to(
     // pool: &SqlitePool,
     keys: &Keys,
     client: &Client,
-    url: Url,
+    url: &Url,
     list: &[DbContact],
 ) -> Result<Event, Error> {
     // let list = DbContact::fetch(pool).await?;
@@ -292,7 +292,7 @@ pub async fn send_contact_list_to(
     let builder = EventBuilder::set_contact_list(c_list);
     let event = builder.to_event(keys)?;
 
-    let _event_id = client.send_event_to(url, event.clone()).await?;
+    let _event_id = client.send_event_to(url.to_owned(), event.clone()).await?;
 
     Ok(Event::InsertPendingEvent(event))
 }
@@ -361,7 +361,7 @@ pub enum Event {
     /// Event triggered when the system is shutting down
     Shutdown,
     /// Event triggered when a relay is connected
-    RelayConnected(Url),
+    RelayConnected(DbRelay),
     /// Event triggered when a relay is updated
     UpdatedRelay,
 
@@ -379,14 +379,14 @@ pub enum Message {
     PrepareClient((Vec<DbRelay>, Option<DbEvent>)),
     FetchRelay(Url),
     ProcessMessages,
-    ConnectToRelay(Url),
+    ConnectToRelay(DbRelay),
     SendDMTo((DbContact, String)),
     ShowPublicKey,
-    AddRelay(Url),
-    UpdateRelay(Url),
-    DeleteRelay(Url),
-    ToggleRelayRead((Url, bool)),
-    ToggleRelayWrite((Url, bool)),
-    SendContactListToRelay((Url, Vec<DbContact>)),
+    AddRelay(DbRelay),
+    UpdateRelay(DbRelay),
+    DeleteRelay(DbRelay),
+    ToggleRelayRead((DbRelay, bool)),
+    ToggleRelayWrite((DbRelay, bool)),
+    SendContactListToRelay((DbRelay, Vec<DbContact>)),
     CreateChannel,
 }

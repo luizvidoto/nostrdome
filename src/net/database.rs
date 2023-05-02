@@ -123,6 +123,13 @@ pub fn database_connect(keys: &Keys, db_conn: &BackEndConnection<Message>) -> Su
                                     )
                                     .await
                                 }
+                                Message::InsertPendingEvent(event) => {
+                                    process_async_fn(
+                                        insert_pending_event(&database.pool, &keys, event),
+                                        |event| event,
+                                    )
+                                    .await
+                                }
                                 Message::ReceivedEvent((url, event)) => {
                                     process_async_fn(
                                         received_event(&database.pool, &keys, event, &url),
@@ -137,11 +144,19 @@ pub fn database_connect(keys: &Keys, db_conn: &BackEndConnection<Message>) -> Su
                                     )
                                     .await
                                 }
-                                Message::ToggleRelayRead(_db_relay) => {
-                                    Event::None
+                                Message::ToggleRelayRead((mut db_relay, read)) => {
+                                    db_relay.read = read;
+                                    process_async_fn(
+                                        DbRelay::update(&database.pool, &db_relay),
+                                        |_| Event::RelayUpdated(db_relay.clone())
+                                    ).await
                                 }
-                                Message::ToggleRelayWrite(_db_relay) => {
-                                    Event::None
+                                Message::ToggleRelayWrite((mut db_relay, write)) => {
+                                    db_relay.write = write;
+                                    process_async_fn(
+                                        DbRelay::update(&database.pool, &db_relay),
+                                        |_| Event::RelayUpdated(db_relay.clone())
+                                    ).await
                                 }
                                 Message::ProcessMessages => {
                                     return (Event::IsProcessing, State::Processing {
@@ -579,11 +594,13 @@ pub enum Event {
 #[derive(Debug, Clone)]
 pub enum Message {
     PrepareClient,
+    InsertPendingEvent(nostr_sdk::Event),
     ReceivedEvent((Url, nostr_sdk::Event)),
     ReceivedRelayMessage((Url, nostr_sdk::RelayMessage)),
     ProcessMessages,
     FetchRelayResponses(i64),
     FetchMessages(DbContact),
+
     // Contacts
     FetchContacts,
     AddContact(DbContact),
@@ -591,13 +608,14 @@ pub enum Message {
     DeleteContact(DbContact),
     ImportContacts(Vec<DbContact>),
     AddToUnseenCount(DbContact),
+
     // Relays
     FetchRelays,
     AddRelay(DbRelay),
     UpdateRelay(DbRelay),
     DeleteRelay(DbRelay),
-    ToggleRelayRead(DbRelay),
-    ToggleRelayWrite(DbRelay),
+    ToggleRelayRead((DbRelay, bool)),
+    ToggleRelayWrite((DbRelay, bool)),
 }
 
 const IN_MEMORY: bool = false;

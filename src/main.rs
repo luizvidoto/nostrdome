@@ -82,10 +82,7 @@ pub struct App {
     state: State,
     color_theme: Option<style::Theme>,
 }
-pub enum NotificationState {
-    Starting,
-    Running,
-}
+
 impl Application for App {
     type Theme = crate::style::Theme;
     type Executor = executor::Default;
@@ -233,6 +230,11 @@ impl Application for App {
                     }
                 },
                 net::Event::NostrClientEvent(ns_event) => match ns_event {
+                    nostr_client::Event::InsertPendingEvent(pending) => {
+                        if let State::App { db_conn, .. } = &mut self.state {
+                            db_conn.send(database::Message::InsertPendingEvent(pending));
+                        }
+                    }
                     nostr_client::Event::ReceivedEvent((url, event)) => {
                         // tracing::warn!("Received Nostr Event: {:?}", event);
                         if let State::App { db_conn, .. } = &mut self.state {

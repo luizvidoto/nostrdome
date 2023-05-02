@@ -64,7 +64,7 @@ impl State {
                 match Url::try_from(self.add_relay_input.as_str()) {
                     Ok(url) => {
                         let db_relay = DbRelay::new(url);
-                        ns_conn.send(nostr_client::Message::AddRelay(db_relay.url.clone()));
+                        ns_conn.send(nostr_client::Message::AddRelay(db_relay.clone()));
                         db_conn.send(database::Message::AddRelay(db_relay));
                         // ou eu adiciono nos dois canais
                         // ou eu faço um terceiro canal? que mandaria primeiro ao cliente e depois ao DB se confirmasse
@@ -95,7 +95,7 @@ impl State {
                         if let Some(row) = self
                             .relays
                             .iter_mut()
-                            .find(|r| r.db_relay.url != db_relay.url)
+                            .find(|row| row.db_relay.url == db_relay.url)
                         {
                             return row
                                 .update(
