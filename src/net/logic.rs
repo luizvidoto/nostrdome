@@ -549,17 +549,21 @@ pub async fn request_events(
 
     // if has last_event, request events since last_event.timestamp
     // else request events since 0
-    let last_timestamp: u64 = last_event
-        .map(|e| e.created_at.timestamp_millis() as u64)
+    let last_timestamp_secs: u64 = last_event
+        .map(|e| {
+            // syncronization problems with different machines
+            let earlier_time = e.created_at - chrono::Duration::minutes(10);
+            (earlier_time.timestamp_millis() / 1000) as u64
+        })
         .unwrap_or(0);
 
     let sent_msgs_sub_past = Filter::new()
         .author(public_key.to_string())
-        .since(Timestamp::from(last_timestamp))
+        .since(Timestamp::from(last_timestamp_secs))
         .until(Timestamp::now());
     let recv_msgs_sub_past = Filter::new()
         .pubkey(public_key.to_owned())
-        .since(Timestamp::from(last_timestamp))
+        .since(Timestamp::from(last_timestamp_secs))
         .until(Timestamp::now());
 
     let timeout = Duration::from_secs(10);
