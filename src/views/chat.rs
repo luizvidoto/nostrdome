@@ -217,6 +217,8 @@ impl State {
                 if self.active_contact.as_ref() == Some(&db_contact) {
                     // estou na conversa
                     self.messages.push(msg.clone());
+                    self.messages
+                        .sort_by(|a, b| a.created_at.cmp(&b.created_at));
                     self.current_scroll_offset = scrollable::RelativeOffset::END;
 
                     //COMMAND

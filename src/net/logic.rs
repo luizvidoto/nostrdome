@@ -567,18 +567,16 @@ pub async fn request_events(
         .req_events_of(vec![sent_msgs_sub_past, recv_msgs_sub_past], Some(timeout))
         .await;
 
-    // let sent_msgs_sub_future = Filter::new()
-    //     .author(own_pubkey.to_string())
-    //     // .kind(Kind::EncryptedDirectMessage)
-    //     .since(Timestamp::now());
-    // let recv_msgs_sub_future = Filter::new()
-    //     .pubkey(pubkey.to_owned())
-    //     // .kind(Kind::EncryptedDirectMessage)
-    //     .since(Timestamp::now());
+    let sent_msgs_sub_future = Filter::new()
+        .author(public_key.to_string())
+        .since(Timestamp::now());
+    let recv_msgs_sub_future = Filter::new()
+        .pubkey(public_key.to_owned())
+        .since(Timestamp::now());
 
-    // nostr_client
-    //     .subscribe(vec![sent_msgs_sub_future, recv_msgs_sub_future])
-    //     .await;
+    nostr_client
+        .subscribe(vec![sent_msgs_sub_future, recv_msgs_sub_future])
+        .await;
 
     Ok(())
 }
