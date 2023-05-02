@@ -16,7 +16,7 @@ use iced::{
     widget::{button, column, container, text},
     window, Application, Command, Length, Settings,
 };
-use net::{backend_connect, database, nostr_client, BackEndConnection, Connection};
+use net::{backend_connect, events, BackEndConnection, Connection};
 use nostr_sdk::{prelude::FromSkStr, Keys};
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::EnvFilter;
@@ -27,24 +27,24 @@ use views::{
 };
 use widget::Element;
 
+use crate::db::DbRelay;
+
 #[derive(Debug, Clone)]
 pub enum Message {
     RouterMessage(views::Message),
-    BackEndEvent(net::Event),
+    BackEndEvent(events::Event),
     LoginMessage(login::Message),
     ToLogin,
     DatabaseStarted,
     NostrClientStarted,
 }
-#[derive(Debug)]
 pub enum State {
     Login {
         state: login::State,
     },
     App {
         keys: Keys,
-        db_conn: BackEndConnection<database::Message>,
-        ns_conn: BackEndConnection<nostr_client::Message>,
+        conn: BackEndConnection<net::Message>,
         router: Router,
     },
     OutsideError {
@@ -66,18 +66,12 @@ impl State {
         }
     }
     pub fn app(keys: Keys) -> Self {
-        let mut db_conn = BackEndConnection::new();
-        let router = Router::new(&mut db_conn);
-        Self::App {
-            keys,
-            db_conn,
-            ns_conn: BackEndConnection::new(),
-            router,
-        }
+        let mut conn = BackEndConnection::new();
+        let router = Router::new(&mut conn);
+        Self::App { keys, conn, router }
     }
 }
 
-#[derive(Debug)]
 pub struct App {
     state: State,
     color_theme: Option<style::Theme>,
@@ -107,12 +101,7 @@ impl Application for App {
     fn subscription(&self) -> iced::Subscription<Self::Message> {
         let backend_subscription: Vec<_> = match &self.state {
             State::Login { .. } | State::OutsideError { .. } => vec![],
-            State::App {
-                keys,
-                db_conn,
-                ns_conn,
-                ..
-            } => backend_connect(keys, db_conn, ns_conn)
+            State::App { keys, conn, .. } => backend_connect(keys, conn)
                 .into_iter()
                 .map(|stream| stream.map(Message::BackEndEvent))
                 .collect(),
@@ -166,13 +155,7 @@ impl Application for App {
                 }
             }
             Message::RouterMessage(msg) => {
-                if let State::App {
-                    ns_conn,
-                    db_conn,
-                    router,
-                    ..
-                } = &mut self.state
-                {
+                if let State::App { router, conn, .. } = &mut self.state {
                     if let views::Message::SettingsMsg(settings_msg) = msg.clone() {
                         if let settings::Message::AppearanceMessage(appearance_msg) = settings_msg {
                             if let appearance::Message::ChangeTheme(theme) = appearance_msg {
@@ -182,114 +165,64 @@ impl Application for App {
                     }
 
                     return router
-                        .update(msg, db_conn, ns_conn, self.color_theme)
+                        .update(msg, conn, self.color_theme)
                         .map(Message::RouterMessage);
                 }
             }
             Message::BackEndEvent(event) => match event {
-                net::Event::None => (),
-                net::Event::DbEvent(db_event) => match db_event {
-                    database::Event::IsProcessing => {
-                        // tracing::warn!("Database is processing messages");
+                events::Event::None => (),
+                events::Event::Connected => {
+                    tracing::warn!("Connected to backend");
+                    if let State::App { conn, .. } = &mut self.state {
+                        conn.send(net::Message::PrepareClient);
                     }
-                    database::Event::FinishedProcessing => {
-                        // tracing::warn!("Database finished");
-                        if let State::App { db_conn, .. } = &mut self.state {
-                            db_conn.send(database::Message::ProcessMessages);
-                        }
+                }
+                events::Event::IsProcessing => {
+                    // tracing::warn!("Database is processing messages");
+                }
+                events::Event::FinishedProcessing => {
+                    // tracing::warn!("Database finished");
+                    if let State::App { conn, .. } = &mut self.state {
+                        conn.send(net::Message::ProcessMessages);
                     }
-                    database::Event::GotClientConfig(config) => {
-                        tracing::warn!("Got config for client");
-                        if let State::App { ns_conn, .. } = &mut self.state {
-                            ns_conn.send(nostr_client::Message::PrepareClient(config));
-                        }
-                    }
-                    database::Event::DbConnected => {
-                        tracing::warn!("Received Database Connected Event");
-                        // send relays from db to the client?
-                        // if let State::App { db_conn, .. } = &mut self.state {
-                        //     db_conn.send(database::Message::ProcessMessages);
-                        // }
-                    }
-                    database::Event::DbDisconnected => {
-                        // self.state = State::login();
-                        tracing::warn!("Database Disconnected");
-                    }
-                    other => {
-                        if let State::App {
-                            ns_conn,
-                            db_conn,
-                            router,
-                            ..
-                        } = &mut self.state
-                        {
-                            return router
-                                .backend_event(net::Event::DbEvent(other), db_conn, ns_conn)
-                                .map(Message::RouterMessage);
-                        }
-                    }
-                },
-                net::Event::NostrClientEvent(ns_event) => match ns_event {
-                    nostr_client::Event::InsertPendingEvent(pending) => {
-                        if let State::App { db_conn, .. } = &mut self.state {
-                            db_conn.send(database::Message::InsertPendingEvent(pending));
-                        }
-                    }
-                    nostr_client::Event::ReceivedEvent((url, event)) => {
-                        // tracing::warn!("Received Nostr Event: {:?}", event);
-                        if let State::App { db_conn, .. } = &mut self.state {
-                            db_conn.send(database::Message::ReceivedEvent((url, event)));
-                        }
-                    }
-                    nostr_client::Event::ReceivedRelayMessage((url, msg)) => {
-                        // tracing::warn!("Received Nostr Event: {:?}", event);
-                        if let State::App { db_conn, .. } = &mut self.state {
-                            db_conn.send(database::Message::ReceivedRelayMessage((url, msg)));
-                        }
-                    }
-
-                    nostr_client::Event::IsProcessing => {
-                        // tracing::warn!("Database is processing messages");
-                    }
-                    nostr_client::Event::FinishedProcessing => {
-                        // tracing::warn!("Database finished");
-                        if let State::App { ns_conn, .. } = &mut self.state {
-                            ns_conn.send(nostr_client::Message::ProcessMessages);
-                        }
-                    }
-                    nostr_client::Event::FinishedPreparing => {
-                        tracing::warn!("Finished preparing client");
-                    }
-                    nostr_client::Event::NostrConnected => {
-                        tracing::warn!("Received Nostr Client Connected Event");
-                        if let State::App { db_conn, .. } = &mut self.state {
-                            db_conn.send(database::Message::PrepareClient);
-                        }
-                    }
-                    nostr_client::Event::NostrDisconnected => {
-                        tracing::warn!("Nostr Client Disconnected");
-                    }
-                    other => {
-                        if let State::App {
-                            ns_conn,
-                            db_conn,
-                            router,
-                            ..
-                        } = &mut self.state
-                        {
-                            return router
-                                .backend_event(
-                                    net::Event::NostrClientEvent(other),
-                                    db_conn,
-                                    ns_conn,
-                                )
-                                .map(Message::RouterMessage);
-                        }
-                    }
-                },
-
-                net::Event::Error(e) => {
+                }
+                events::Event::Error(e) => {
                     tracing::error!("{}", e);
+                }
+                events::Event::FinishedPreparing => {
+                    tracing::warn!("Finished preparing client");
+                    if let State::App { conn, .. } = &mut self.state {
+                        if let Ok(db_relay) = DbRelay::from_str("ws://192.168.15.151:8080") {
+                            conn.send(net::Message::AddRelay(db_relay));
+                        }
+                    }
+                }
+                events::Event::RelayCreated(db_relay) => {
+                    if let State::App { router, conn, .. } = &mut self.state {
+                        conn.send(net::Message::ConnectToRelay(db_relay.clone()));
+                        return router
+                            .backend_event(events::Event::RelayCreated(db_relay), conn)
+                            .map(Message::RouterMessage);
+                    }
+                }
+                // events::Event::DbConnected => {
+                //     tracing::info!("Received Database Connected Event");
+                // }
+                // events::Event::DbDisconnected => {
+                //     tracing::info!("Database Disconnected");
+                // }
+                // events::Event::NostrConnected => {
+                //     tracing::info!("Received Nostr Client Connected Event");
+                // }
+                // events::Event::NostrDisconnected => {
+                //     tracing::info!("Nostr Client Disconnected");
+                // }
+                other => {
+                    if let State::App { router, conn, .. } = &mut self.state {
+                        return router
+                            .backend_event(other, conn)
+                            .map(Message::RouterMessage);
+                    }
                 }
             },
         };
@@ -301,7 +234,7 @@ impl Application for App {
 #[tokio::main]
 async fn main() {
     if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "info");
+        std::env::set_var("RUST_LOG", "warn");
     }
 
     let env_filter = EnvFilter::from_default_env();

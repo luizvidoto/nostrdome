@@ -8,7 +8,8 @@ use crate::components::text::title;
 use crate::components::text_input_group::text_input_group;
 use crate::components::{file_importer, FileImporter};
 use crate::db::{DbContact, DbRelay};
-use crate::net::{self, database, nostr_client, BackEndConnection, Connection, Event};
+use crate::net::events::Event;
+use crate::net::{self, BackEndConnection, Connection};
 use crate::style;
 use crate::types::UncheckedEvent;
 use crate::utils::json_reader;
@@ -17,6 +18,7 @@ use crate::widget::{Button, Element};
 
 use self::relay_row_modal::RelayRowModal;
 
+mod about;
 mod account;
 pub mod appearance;
 mod backup;
@@ -31,11 +33,13 @@ pub enum Message {
     NetworkMessage(network::Message),
     BackupMessage(backup::Message),
     ContactsMessage(contacts::Message),
+    AboutMessage(about::Message),
     MenuAccountPress,
     MenuAppearancePress,
     MenuNetworkPress,
     MenuBackupPress,
     MenuContactsPress,
+    MenuAboutPress,
     NavEscPress,
 
     // Modal Messages
@@ -64,6 +68,7 @@ pub enum MenuState {
     Network { state: network::State } = 2,
     Backup { state: backup::State } = 3,
     Contacts { state: contacts::State } = 4,
+    About { state: about::State } = 10,
 }
 
 impl MenuState {
@@ -74,10 +79,11 @@ impl MenuState {
             (MenuState::Network { .. }, 2) => true,
             (MenuState::Backup { .. }, 3) => true,
             (MenuState::Contacts { .. }, 4) => true,
+            (MenuState::About { .. }, 10) => true,
             _ => false,
         }
     }
-    fn account(_db_conn: &mut BackEndConnection<database::Message>) -> Self {
+    fn account(_db_conn: &mut BackEndConnection<net::Message>) -> Self {
         let profile = Metadata::new();
         // conn.send(message)
         Self::Account {
@@ -89,12 +95,17 @@ impl MenuState {
             state: appearance::State::new(selected_theme),
         }
     }
-    fn network(db_conn: &mut BackEndConnection<database::Message>) -> Self {
+    pub fn network(db_conn: &mut BackEndConnection<net::Message>) -> Self {
         Self::Network {
             state: network::State::new(db_conn),
         }
     }
-    pub fn contacts(db_conn: &mut BackEndConnection<database::Message>) -> Self {
+    pub fn about(_db_conn: &mut BackEndConnection<net::Message>) -> Self {
+        Self::About {
+            state: about::State::new(),
+        }
+    }
+    pub fn contacts(db_conn: &mut BackEndConnection<net::Message>) -> Self {
         Self::Contacts {
             state: contacts::State::new(db_conn),
         }
@@ -104,7 +115,7 @@ impl MenuState {
             state: backup::State::default(),
         }
     }
-    pub fn new(db_conn: &mut BackEndConnection<database::Message>) -> Self {
+    pub fn new(db_conn: &mut BackEndConnection<net::Message>) -> Self {
         Self::account(db_conn)
     }
     pub fn view(&self) -> Element<Message> {
@@ -114,6 +125,7 @@ impl MenuState {
             Self::Network { state } => state.view().map(Message::NetworkMessage),
             Self::Backup { state } => state.view().map(Message::BackupMessage),
             Self::Contacts { state } => state.view().map(Message::ContactsMessage),
+            Self::About { state } => state.view().map(Message::AboutMessage),
         }
     }
 }
@@ -134,41 +146,52 @@ impl Settings {
             _ => Subscription::none(),
         }
     }
-    pub fn new(db_conn: &mut BackEndConnection<database::Message>) -> Self {
+    pub fn new(db_conn: &mut BackEndConnection<net::Message>) -> Self {
         Self {
             menu_state: MenuState::new(db_conn),
             modal_state: ModalState::Off,
         }
     }
-    pub fn contacts(db_conn: &mut BackEndConnection<database::Message>) -> Self {
+    pub fn contacts(db_conn: &mut BackEndConnection<net::Message>) -> Self {
         Self {
             menu_state: MenuState::contacts(db_conn),
+            modal_state: ModalState::Off,
+        }
+    }
+    pub fn network(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+        Self {
+            menu_state: MenuState::network(db_conn),
+            modal_state: ModalState::Off,
+        }
+    }
+    pub fn about(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+        Self {
+            menu_state: MenuState::about(db_conn),
             modal_state: ModalState::Off,
         }
     }
 
     pub fn backend_event(
         &mut self,
-        event: net::Event,
-        db_conn: &mut BackEndConnection<database::Message>,
-        ns_conn: &mut BackEndConnection<nostr_client::Message>,
+        event: Event,
+        conn: &mut BackEndConnection<net::Message>,
     ) -> Command<Message> {
-        self.modal_state
-            .backend_event(event.clone(), db_conn, ns_conn);
+        self.modal_state.backend_event(event.clone(), conn);
 
         match &mut self.menu_state {
+            MenuState::About { state } => state.update(about::Message::BackEndEvent(event)),
             MenuState::Account { state } => state.update(account::Message::BackEndEvent(event)),
             MenuState::Appearance { state } => {
                 state.update(appearance::Message::BackEndEvent(event))
             }
             MenuState::Network { state } => {
                 return state
-                    .update(network::Message::BackEndEvent(event), db_conn, ns_conn)
+                    .update(network::Message::BackEndEvent(event), conn)
                     .map(Message::NetworkMessage);
             }
             MenuState::Backup { state } => state.update(backup::Message::BackEndEvent(event)),
             MenuState::Contacts { state } => {
-                let _ = state.update(contacts::Message::BackEndEvent(event), db_conn);
+                let _ = state.update(contacts::Message::BackEndEvent(event), conn);
             }
         }
 
@@ -177,8 +200,7 @@ impl Settings {
     pub fn update(
         &mut self,
         message: Message,
-        db_conn: &mut BackEndConnection<database::Message>,
-        ns_conn: &mut BackEndConnection<nostr_client::Message>,
+        conn: &mut BackEndConnection<net::Message>,
         selected_theme: Option<style::Theme>,
     ) -> Command<Message> {
         match message {
@@ -194,9 +216,7 @@ impl Settings {
             }
             Message::NetworkMessage(msg) => {
                 if let MenuState::Network { state } = &mut self.menu_state {
-                    return state
-                        .update(msg, db_conn, ns_conn)
-                        .map(Message::NetworkMessage);
+                    return state.update(msg, conn).map(Message::NetworkMessage);
                 }
             }
             Message::BackupMessage(msg) => {
@@ -214,10 +234,10 @@ impl Settings {
                             self.modal_state = ModalState::import_contacts();
                         }
                         contacts::Message::OpenSendContactModal => {
-                            self.modal_state = ModalState::load_send_contacts(db_conn);
+                            self.modal_state = ModalState::load_send_contacts(conn);
                         }
                         other => {
-                            if let Some(received_msg) = state.update(other, db_conn) {
+                            if let Some(received_msg) = state.update(other, conn) {
                                 match received_msg {
                                     contacts::Message::OpenEditContactModal(contact) => {
                                         self.modal_state = ModalState::add_contact(Some(contact))
@@ -231,21 +251,24 @@ impl Settings {
             }
             Message::NavEscPress => (),
             Message::MenuAccountPress => {
-                self.menu_state = MenuState::account(db_conn);
+                self.menu_state = MenuState::account(conn);
             }
             Message::MenuAppearancePress => {
                 self.menu_state = MenuState::appearance(selected_theme);
             }
             Message::MenuNetworkPress => {
-                self.menu_state = MenuState::network(db_conn);
+                self.menu_state = MenuState::network(conn);
             }
             Message::MenuBackupPress => {
                 self.menu_state = MenuState::backup();
             }
             Message::MenuContactsPress => {
-                self.menu_state = MenuState::contacts(db_conn);
+                self.menu_state = MenuState::contacts(conn);
             }
-            other => return self.modal_state.update(other, db_conn),
+            Message::MenuAboutPress => {
+                self.menu_state = MenuState::about(conn);
+            }
+            other => return self.modal_state.update(other, conn),
         }
         Command::none()
     }
@@ -265,6 +288,7 @@ impl Settings {
             create_menu_button("Backup", &self.menu_state, 3, Message::MenuBackupPress);
         let contacts_btn =
             create_menu_button("Contacts", &self.menu_state, 4, Message::MenuContactsPress);
+        let about_btn = create_menu_button("About", &self.menu_state, 10, Message::MenuAboutPress);
         let esc_btn = button("Esc")
             .padding(10)
             .on_press(Message::NavEscPress)
@@ -278,7 +302,8 @@ impl Settings {
                 appearance_btn,
                 network_btn,
                 backup_btn,
-                contacts_btn
+                contacts_btn,
+                about_btn
             ]
             .spacing(3),
         )
@@ -288,7 +313,7 @@ impl Settings {
 
         let view_ct = container(self.menu_state.view())
             .style(style::Container::ChatContainer)
-            .padding(20)
+            .padding([20, 0, 0, 20])
             .height(Length::Fill)
             .width(Length::FillPortion(3));
 
@@ -326,50 +351,42 @@ enum ModalState {
 }
 
 impl ModalState {
-    pub fn backend_event(
-        &mut self,
-        event: Event,
-        _db_conn: &mut BackEndConnection<database::Message>,
-        ns_conn: &mut BackEndConnection<nostr_client::Message>,
-    ) {
+    pub fn backend_event(&mut self, event: Event, conn: &mut BackEndConnection<net::Message>) {
         if let ModalState::SendContactList {
             relays,
             send_contacts_to_relay,
         } = self
         {
             match event {
-                Event::DbEvent(db_event) => match db_event {
-                    database::Event::GotContacts(contacts) => {
-                        if let Some(db_relay) = &send_contacts_to_relay {
-                            ns_conn.send(nostr_client::Message::SendContactListToRelay((
-                                db_relay.clone(),
-                                contacts,
-                            )));
-                        }
+                Event::GotContacts(contacts) => {
+                    if let Some(db_relay) = &send_contacts_to_relay {
+                        conn.send(net::Message::SendContactListToRelay((
+                            db_relay.clone(),
+                            contacts,
+                        )));
                     }
-                    database::Event::GotRelays(db_relays) => {
-                        *relays = db_relays
-                            .iter()
-                            .map(|db_relay| RelayRowModal::new(db_relay))
-                            .collect();
+                }
+                Event::GotRelays(db_relays) => {
+                    *relays = db_relays
+                        .iter()
+                        .map(|db_relay| RelayRowModal::new(db_relay))
+                        .collect();
+                }
+                Event::UpdateWithRelayResponse { relay_response, .. } => {
+                    if let Some(relay_row) = relays
+                        .iter_mut()
+                        .find(|row| row.db_relay.url == relay_response.relay_url)
+                    {
+                        relay_row.success();
+                        *send_contacts_to_relay = None;
                     }
-                    database::Event::UpdateWithRelayResponse { relay_response, .. } => {
-                        if let Some(relay_row) = relays
-                            .iter_mut()
-                            .find(|row| row.db_relay.url == relay_response.relay_url)
-                        {
-                            relay_row.success();
-                            *send_contacts_to_relay = None;
-                        }
-                    }
-                    _ => (),
-                },
+                }
                 _ => (),
             }
         }
     }
-    pub fn load_send_contacts(db_conn: &mut BackEndConnection<database::Message>) -> Self {
-        db_conn.send(database::Message::FetchRelays);
+    pub fn load_send_contacts(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+        db_conn.send(net::Message::FetchRelays);
         Self::SendContactList {
             relays: vec![],
             send_contacts_to_relay: None,
@@ -405,7 +422,7 @@ impl ModalState {
     pub fn update(
         &mut self,
         message: Message,
-        db_conn: &mut BackEndConnection<database::Message>,
+        db_conn: &mut BackEndConnection<net::Message>,
     ) -> Command<Message> {
         match message {
             Message::CloseSendContactsModal => *self = Self::Off,
@@ -416,7 +433,7 @@ impl ModalState {
             }
             Message::RelayRowMessage(r_msg) => match r_msg {
                 relay_row_modal::Message::SendContactListToRelay(db_relay) => {
-                    db_conn.send(database::Message::FetchContacts);
+                    db_conn.send(net::Message::FetchContacts);
                     if let ModalState::SendContactList {
                         relays,
                         send_contacts_to_relay,
@@ -440,8 +457,8 @@ impl ModalState {
             } => match DbContact::from_submit(&pubkey, &petname, &rec_relay) {
                 Ok(db_contact) => {
                     db_conn.send(match is_edit {
-                        true => database::Message::UpdateContact(db_contact),
-                        false => database::Message::AddContact(db_contact),
+                        true => net::Message::UpdateContact(db_contact),
+                        false => net::Message::AddContact(db_contact),
                     });
                     *self = ModalState::Off;
                 }
@@ -451,7 +468,7 @@ impl ModalState {
                 }
             },
             Message::SaveImportedContacts(imported_contacts) => {
-                db_conn.send(database::Message::ImportContacts(imported_contacts));
+                db_conn.send(net::Message::ImportContacts(imported_contacts));
                 *self = ModalState::Off;
             }
             Message::FileImporterMessage(msg) => {

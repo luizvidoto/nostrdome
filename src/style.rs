@@ -42,6 +42,8 @@ pub struct AppPalette {
     pub received_message_bg: Color,
     pub chat_divider_bg: Color,
     pub chat_search_input_bg: Color,
+    pub status_bar_bg: Color,
+    pub hover_status_bar_bg: Color,
 }
 impl AppPalette {
     pub const LIGHT: Self = Self {
@@ -67,6 +69,8 @@ impl AppPalette {
         sent_message_date: Color::from_rgb(125.0 / 255.0, 168.0 / 255.0, 211.0 / 255.0),
         chat_divider_bg: Color::from_rgb(43.0 / 255.0, 83.0 / 255.0, 120.0 / 255.0),
         chat_search_input_bg: Color::from_rgb(36.0 / 255.0, 47.0 / 255.0, 61.0 / 255.0),
+        status_bar_bg: Color::from_rgb(25.0 / 255.0, 26.0 / 255.0, 33.0 / 255.0),
+        hover_status_bar_bg: Color::from_rgb(52.0 / 255.0, 53.0 / 255.0, 59.0 / 255.0),
     };
     pub const DARK: Self = Self {
         background: Color::from_rgb(23.0 / 255.0, 33.0 / 255.0, 43.0 / 255.0),
@@ -91,6 +95,8 @@ impl AppPalette {
         sent_message_date: Color::from_rgb(125.0 / 255.0, 168.0 / 255.0, 211.0 / 255.0),
         chat_divider_bg: Color::from_rgb(30.0 / 255.0, 44.0 / 255.0, 58.0 / 255.0),
         chat_search_input_bg: Color::from_rgb(36.0 / 255.0, 47.0 / 255.0, 61.0 / 255.0),
+        status_bar_bg: Color::from_rgb(25.0 / 255.0, 26.0 / 255.0, 33.0 / 255.0),
+        hover_status_bar_bg: Color::from_rgb(52.0 / 255.0, 53.0 / 255.0, 59.0 / 255.0),
     };
 }
 
@@ -278,6 +284,7 @@ pub enum Container {
     ReceivedMessage,
     ChatContainer,
     ChatDateDivider,
+    StatusBar,
 }
 
 impl container::StyleSheet for Theme {
@@ -328,6 +335,11 @@ impl container::StyleSheet for Theme {
                 border_radius: 10.0,
                 ..def
             },
+            Container::StatusBar => container::Appearance {
+                background: self.pallete().status_bar_bg.into(),
+                text_color: self.pallete().text_color.into(),
+                ..def
+            },
         }
     }
 }
@@ -342,6 +354,7 @@ pub enum Button {
     ActiveContactCard,
     ActiveMenuBtn,
     InactiveMenuBtn,
+    StatusBarButton,
 }
 
 impl button::StyleSheet for Theme {
@@ -394,6 +407,14 @@ impl button::StyleSheet for Theme {
                 border_radius: 5.0,
                 ..primary
             },
+            Button::StatusBarButton => button::Appearance {
+                background: self.pallete().status_bar_bg.into(),
+                text_color: self.pallete().text_color,
+                border_color: Color::TRANSPARENT,
+                border_radius: 0.0,
+                border_width: 0.0,
+                ..primary
+            },
         }
     }
     fn hovered(&self, style: &Self::Style) -> button::Appearance {
@@ -413,6 +434,10 @@ impl button::StyleSheet for Theme {
             Button::InactiveMenuBtn => button::Appearance {
                 background: self.pallete().contact_hover.into(),
                 text_color: self.pallete().text_color,
+                ..self.active(style)
+            },
+            Button::StatusBarButton => button::Appearance {
+                background: self.pallete().hover_status_bar_bg.into(),
                 ..self.active(style)
             },
         }

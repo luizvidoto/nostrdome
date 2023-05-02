@@ -1,5 +1,6 @@
 use iced::widget::{button, row, text};
 use iced::Length;
+use iced_native::widget::container;
 
 use crate::db::DbContact;
 use crate::icon::{delete_icon, edit_icon};
@@ -34,36 +35,54 @@ impl ContactRow {
             contact: contact.clone(),
         }
     }
+    // pub fn update(&mut self, db_contact: &DbContact) {
+    //     self.contact.update_base_from_other(db_contact);
+    // }
     pub fn header<M: 'static>() -> Element<'static, M> {
         row![
-            text("Public Key").width(Length::Fill),
-            text("Name").width(Length::Fill),
-            text("Relay").width(Length::Fill),
-            // text("Image").width(Length::Fill),
-            text("").width(EDIT_BTN_WIDTH),
-            text("").width(REMOVE_BTN_WIDTH),
+            container(text("Public Key")).width(Length::Fixed(PUBKEY_CELL_WIDTH)),
+            container(text("Name"))
+                .width(Length::Fixed(NAME_CELL_WIDTH_MIN))
+                .max_width(NAME_CELL_WIDTH_MAX),
+            container(text("Relay"))
+                .align_x(iced_native::alignment::Horizontal::Left)
+                .width(Length::Fill),
+            container(text("")).width(Length::Fixed(EDIT_BTN_WIDTH)),
+            container(text("")).width(Length::Fixed(REMOVE_BTN_WIDTH)),
         ]
+        .spacing(2)
         .into()
     }
     pub fn view(&self) -> Element<'static, Message> {
         row![
-            text(format_pubkey(&self.contact.pubkey().to_string())).width(Length::Fill),
-            text(&self.contact.get_petname().unwrap_or("".into())).width(Length::Fill),
-            text(
+            container(text(format_pubkey(&self.contact.pubkey().to_string())))
+                .width(Length::Fixed(PUBKEY_CELL_WIDTH)),
+            container(text(&self.contact.get_petname().unwrap_or("".into())))
+                .width(Length::Fixed(NAME_CELL_WIDTH_MIN))
+                .max_width(NAME_CELL_WIDTH_MAX),
+            container(text(
                 &self
                     .contact
                     .get_relay_url()
                     .map(|url| url.to_string())
                     .unwrap_or("".into())
-            )
+            ))
             .width(Length::Fill),
-            // text("Image").width(Length::Fill),
-            button(edit_icon().size(16)).on_press(Message::EditContact(self.into())),
-            button(delete_icon().size(16)).on_press(Message::DeleteContact(self.contact.clone())) // .style(style::Button::Danger)
+            container(button(edit_icon().size(16)).on_press(Message::EditContact(self.into())))
+                .width(Length::Fixed(EDIT_BTN_WIDTH)),
+            container(
+                button(delete_icon().size(16))
+                    .on_press(Message::DeleteContact(self.contact.clone()))
+            )
+            .width(Length::Fixed(REMOVE_BTN_WIDTH)) // .style(style::Button::Danger)
         ]
+        .spacing(2)
         .into()
     }
 }
 
-const EDIT_BTN_WIDTH: f32 = 50.0;
-const REMOVE_BTN_WIDTH: f32 = 100.0;
+const EDIT_BTN_WIDTH: f32 = 30.0;
+const REMOVE_BTN_WIDTH: f32 = 30.0;
+const PUBKEY_CELL_WIDTH: f32 = 100.0;
+const NAME_CELL_WIDTH_MIN: f32 = 100.0;
+const NAME_CELL_WIDTH_MAX: f32 = 200.0;

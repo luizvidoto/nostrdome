@@ -30,8 +30,8 @@ pub enum State {
     Processing {
         ns_conn: BackEndConnection<Message>,
         receiver: mpsc::UnboundedReceiver<Message>,
-        nostr_client: Client,
         keys: Keys,
+        nostr_client: Client,
         notifications_stream:
             Fuse<Pin<Box<dyn futures::Stream<Item = RelayPoolNotification> + Send>>>,
     },

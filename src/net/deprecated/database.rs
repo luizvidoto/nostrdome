@@ -498,7 +498,7 @@ pub async fn prepare_client(
     Ok((relays, last_timestamp))
 }
 
-async fn on_relay_message(
+pub async fn on_relay_message(
     pool: &SqlitePool,
     relay_url: &Url,
     relay_message: &RelayMessage,

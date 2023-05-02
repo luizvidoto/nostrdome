@@ -281,28 +281,6 @@ impl<'a> DbChat<'a> {
         }
     }
 
-    pub async fn fetch_unseen_count(&self, pool: &SqlitePool) -> Result<u8, Error> {
-        let sql = r#"
-            SELECT COUNT(*)
-            FROM message
-            WHERE 
-                (
-                    (from_pubkey = ?1 AND to_pubkey = ?2) OR 
-                    (from_pubkey = ?2 AND to_pubkey = ?1)
-                ) AND 
-                (status = ?3 OR status = ?4)
-            "#;
-        let count: i64 = sqlx::query_scalar(sql)
-            .bind(self.from_pubkey.to_string())
-            .bind(self.to_pubkey.to_string())
-            .bind(MessageStatus::Offline.to_i32())
-            .bind(MessageStatus::Delivered.to_i32())
-            .fetch_one(pool)
-            .await?;
-
-        Ok(count as u8)
-    }
-
     pub async fn fetch_chat(&self, pool: &SqlitePool) -> Result<Vec<DbMessage>, Error> {
         let sql = r#"
             SELECT *
@@ -318,23 +296,5 @@ impl<'a> DbChat<'a> {
             .await?;
 
         Ok(messages)
-    }
-
-    pub async fn fetch_last_msg_chat(&self, pool: &SqlitePool) -> Result<Option<DbMessage>, Error> {
-        let sql = r#"
-            SELECT *
-            FROM message
-            WHERE (from_pubkey = ?1 AND to_pubkey = ?2) OR (from_pubkey = ?2 AND to_pubkey = ?1)
-            ORDER BY created_at DESC
-            LIMIT 1
-        "#;
-
-        let last_message = sqlx::query_as::<_, DbMessage>(sql)
-            .bind(self.from_pubkey.to_string())
-            .bind(self.to_pubkey.to_string())
-            .fetch_optional(pool)
-            .await?;
-
-        Ok(last_message)
     }
 }

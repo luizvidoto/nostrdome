@@ -80,6 +80,11 @@ impl DbRelay {
         }
     }
 
+    pub fn from_str(url: &str) -> Result<Self, Error> {
+        let url = Url::parse(url)?;
+        Ok(Self::new(url))
+    }
+
     pub async fn fetch(pool: &SqlitePool, criteria: Option<&str>) -> Result<Vec<DbRelay>, Error> {
         let sql = Self::FETCH_QUERY.to_owned();
         let sql = match criteria {
@@ -100,7 +105,7 @@ impl DbRelay {
     }
 
     pub async fn insert(pool: &SqlitePool, db_relay: &DbRelay) -> Result<(), Error> {
-        let sql = "INSERT INTO relay (url, read, write, advertise) \
+        let sql = "INSERT OR IGNORE INTO relay (url, read, write, advertise) \
              VALUES (?1, ?2, ?3, ?4)";
 
         sqlx::query(sql)

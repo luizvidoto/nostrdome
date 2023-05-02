@@ -3,7 +3,7 @@ use nostr_sdk::Metadata;
 
 use crate::components::text::title;
 use crate::components::text_input_group::text_input_group;
-use crate::net;
+use crate::net::events::Event;
 use crate::widget::Element;
 
 #[derive(Debug, Clone)]
@@ -17,7 +17,7 @@ pub enum Message {
     LNChange(String),
     NIP05Change(String),
     SubmitPress,
-    BackEndEvent(net::Event),
+    BackEndEvent(Event),
 }
 
 #[derive(Debug, Clone)]

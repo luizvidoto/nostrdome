@@ -1,6 +1,6 @@
 use crate::db::DbRelay;
 use crate::icon::{circle_icon, delete_icon, server_icon};
-use crate::net::{database, nostr_client, BackEndConnection, Connection};
+use crate::net::{self, BackEndConnection, Connection};
 use crate::style;
 use crate::utils::event_tt_to_naive;
 use crate::widget::Element;
@@ -30,7 +30,7 @@ pub enum Message {
     ToggleRead(DbRelay),
     ToggleWrite(DbRelay),
     Ready(RelayRowConnection),
-    GotRelay(Relay),
+    GotRelayServer(nostr_sdk::Relay),
     Performing,
     Waited,
 }
@@ -73,12 +73,8 @@ pub struct RelayRow {
 }
 
 impl RelayRow {
-    pub fn new(
-        id: i32,
-        db_relay: DbRelay,
-        ns_conn: &mut BackEndConnection<nostr_client::Message>,
-    ) -> Self {
-        ns_conn.send(nostr_client::Message::FetchRelay(db_relay.url.clone()));
+    pub fn new(id: i32, db_relay: DbRelay, conn: &mut BackEndConnection<net::Message>) -> Self {
+        conn.send(net::Message::FetchRelayServer(db_relay.url.clone()));
         Self {
             id,
             db_relay,
@@ -149,20 +145,31 @@ impl RelayRow {
     pub fn update(
         &mut self,
         wrapper: MessageWrapper,
-        db_conn: &mut BackEndConnection<database::Message>,
-        ns_conn: &mut BackEndConnection<nostr_client::Message>,
+        conn: &mut BackEndConnection<net::Message>,
     ) -> Command<MessageWrapper> {
         match wrapper.message {
             Message::RelayUpdated(db_relay) => {
-                tracing::warn!("Relay updated: {:?}", db_relay);
+                tracing::info!("Relay updated: {:?}", db_relay);
                 self.db_relay = db_relay;
             }
             Message::None => (),
-            Message::GotRelay(relay) => {
+            Message::GotRelayServer(relay) => {
                 self.client_relay = Some(relay);
             }
             Message::ConnectToRelay(db_relay) => {
-                ns_conn.send(nostr_client::Message::ConnectToRelay(db_relay));
+                conn.send(net::Message::ConnectToRelay(db_relay));
+            }
+
+            Message::DeleteRelay(db_relay) => {
+                conn.send(net::Message::DeleteRelay(db_relay));
+            }
+            Message::ToggleRead(db_relay) => {
+                let read = !db_relay.read;
+                conn.send(net::Message::ToggleRelayRead((db_relay, read)));
+            }
+            Message::ToggleWrite(db_relay) => {
+                let write = !db_relay.write;
+                conn.send(net::Message::ToggleRelayWrite((db_relay, write)));
             }
             Message::UpdateStatus((status, last_connected_at)) => {
                 self.db_relay = self.db_relay.clone().with_status(status);
@@ -181,43 +188,23 @@ impl RelayRow {
                     ch.send(Input::GetStatus(relay.clone()));
                 }
             }
-            Message::DeleteRelay(db_relay) => {
-                ns_conn.send(nostr_client::Message::DeleteRelay(db_relay.clone()));
-                db_conn.send(database::Message::DeleteRelay(db_relay));
-            }
-            Message::ToggleRead(db_relay) => {
-                let read = !db_relay.read;
-                ns_conn.send(nostr_client::Message::ToggleRelayRead((
-                    db_relay.clone(),
-                    read,
-                )));
-                db_conn.send(database::Message::ToggleRelayRead((db_relay, read)));
-            }
-            Message::ToggleWrite(db_relay) => {
-                let write = !db_relay.write;
-                ns_conn.send(nostr_client::Message::ToggleRelayWrite((
-                    db_relay.clone(),
-                    write,
-                )));
-                db_conn.send(database::Message::ToggleRelayWrite((db_relay, write)));
-            }
             Message::Performing => {
-                tracing::info!("Relay Row performing");
+                tracing::debug!("Relay Row performing");
             }
             Message::Waited => {
-                tracing::info!("Message::Waited");
-                self.send_action_to_channel(ns_conn);
+                tracing::debug!("Message::Waited");
+                self.send_action_to_channel(conn);
             }
             Message::Ready(channel) => {
-                tracing::info!("Message::Ready(channel)");
+                tracing::debug!("Message::Ready(channel)");
                 self.sub_channel = Some(channel);
-                self.send_action_to_channel(ns_conn);
+                self.send_action_to_channel(conn);
             }
         }
         Command::none()
     }
 
-    fn send_action_to_channel(&mut self, ns_conn: &mut BackEndConnection<nostr_client::Message>) {
+    fn send_action_to_channel(&mut self, conn: &mut BackEndConnection<net::Message>) {
         if let Some(ch) = &mut self.sub_channel {
             match &self.client_relay {
                 Some(relay) => {
@@ -225,7 +212,7 @@ impl RelayRow {
                 }
                 None => {
                     // fetch relays again?
-                    ns_conn.send(nostr_client::Message::FetchRelay(self.db_relay.url.clone()));
+                    conn.send(net::Message::FetchRelayServer(self.db_relay.url.clone()));
                     ch.send(Input::Wait);
                 }
             }

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::{
     error::Error,
     utils::{event_hash_or_err, millis_to_naive_or_err},

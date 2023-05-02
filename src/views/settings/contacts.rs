@@ -3,15 +3,16 @@ use iced::{alignment, Length};
 
 use crate::components::{contact_row, ContactRow};
 use crate::icon::{import_icon, plus_icon, to_cloud_icon};
-use crate::net::{database, BackEndConnection, Connection};
+use crate::net::events::Event;
+use crate::net::{self, BackEndConnection, Connection};
 use crate::style;
 use crate::utils::contact_matches_search;
 use crate::widget::Element;
-use crate::{components::text::title, db::DbContact, net};
+use crate::{components::text::title, db::DbContact};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    BackEndEvent(net::Event),
+    BackEndEvent(Event),
     DeleteContact(DbContact),
     ContactRowMessage(contact_row::Message),
     OpenAddContactModal,
@@ -27,8 +28,8 @@ pub struct State {
     search_contact_input: String,
 }
 impl State {
-    pub fn new(db_conn: &mut BackEndConnection<database::Message>) -> Self {
-        db_conn.send(database::Message::FetchContacts);
+    pub fn new(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+        db_conn.send(net::Message::FetchContacts);
         Self {
             contacts: vec![],
             search_contact_input: "".into(),
@@ -38,7 +39,7 @@ impl State {
     pub fn update(
         &mut self,
         message: Message,
-        db_conn: &mut BackEndConnection<database::Message>,
+        conn: &mut BackEndConnection<net::Message>,
     ) -> Option<Message> {
         match message {
             Message::OpenSendContactModal => (),
@@ -48,7 +49,7 @@ impl State {
             Message::SearchContactInputChange(text) => self.search_contact_input = text,
             Message::ContactRowMessage(ct_msg) => match ct_msg {
                 contact_row::Message::DeleteContact(contact) => {
-                    db_conn.send(database::Message::DeleteContact(contact))
+                    conn.send(net::Message::DeleteContact(contact))
                 }
                 contact_row::Message::EditContact(contact) => {
                     // self.modal_state = ModalState::add_contact(Some(contact));
@@ -56,21 +57,18 @@ impl State {
                 }
             },
             Message::DeleteContact(contact) => {
-                db_conn.send(database::Message::DeleteContact(contact));
+                conn.send(net::Message::DeleteContact(contact));
             }
             Message::BackEndEvent(event) => match event {
-                net::Event::DbEvent(db_event) => match db_event {
-                    database::Event::ContactsImported(db_contacts)
-                    | database::Event::GotContacts(db_contacts) => {
-                        self.contacts = db_contacts;
-                    }
-                    database::Event::ContactCreated(_)
-                    | database::Event::ContactUpdated(_)
-                    | database::Event::ContactDeleted(_) => {
-                        db_conn.send(database::Message::FetchContacts);
-                    }
-                    _ => (),
-                },
+                Event::GotContacts(db_contacts) => {
+                    self.contacts = db_contacts;
+                }
+                Event::ContactsImported(_)
+                | Event::ContactCreated(_)
+                | Event::ContactUpdated(_)
+                | Event::ContactDeleted(_) => {
+                    conn.send(net::Message::FetchContacts);
+                }
                 _ => (),
             },
         }

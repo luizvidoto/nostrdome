@@ -1,11 +1,13 @@
 use chrono::{Datelike, NaiveDateTime};
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
 use iced::{alignment, Command, Length};
+use iced_native::Subscription;
 
-use crate::components::contact_card;
+use crate::components::{contact_card, status_bar, StatusBar};
 use crate::db::DbContact;
 use crate::icon::{menu_bars_icon, send_icon};
-use crate::net::{self, database, BackEndConnection, Connection};
+use crate::net::events::Event;
+use crate::net::{self, BackEndConnection, Connection};
 use crate::style;
 use crate::types::{chat_message, ChatMessage};
 use crate::utils::contact_matches_search;
@@ -17,6 +19,7 @@ static CHAT_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::uniq
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    StatusBarMessage(status_bar::Message),
     OnVerResize(u16),
     GoToChannelsPress,
     NavSettingsPress,
@@ -29,7 +32,6 @@ pub enum Message {
     Scrolled(scrollable::RelativeOffset),
 }
 
-#[derive(Debug, Clone)]
 pub struct State {
     ver_divider_position: Option<u16>,
     contacts: Vec<contact_card::State>,
@@ -39,10 +41,12 @@ pub struct State {
     search_contact_input: String,
     show_only_profile: bool,
     current_scroll_offset: scrollable::RelativeOffset,
+    status_bar: StatusBar,
 }
+
 impl State {
-    pub fn new(db_conn: &mut BackEndConnection<database::Message>) -> Self {
-        db_conn.send(database::Message::FetchContacts);
+    pub fn new(conn: &mut BackEndConnection<net::Message>) -> Self {
+        conn.send(net::Message::FetchContacts);
         Self {
             contacts: vec![],
             messages: vec![],
@@ -52,7 +56,14 @@ impl State {
             search_contact_input: "".into(),
             show_only_profile: false,
             current_scroll_offset: scrollable::RelativeOffset::END,
+            status_bar: StatusBar::new(),
         }
+    }
+
+    pub fn subscription(&self) -> Subscription<Message> {
+        self.status_bar
+            .subscription()
+            .map(Message::StatusBarMessage)
     }
 
     pub fn view(&self) -> Element<Message> {
@@ -69,6 +80,12 @@ impl State {
                     .fold(column![].spacing(0), |col, contact| {
                         col.push(contact.view().map(Message::ContactCardMessage))
                     }),
+            )
+            .vertical_scroll(
+                scrollable::Properties::new()
+                    .width(6.0)
+                    .margin(0.0)
+                    .scroller_width(6.0),
             )
             // .id(CONTACTS_SCROLLABLE_ID.clone())
             .into()
@@ -133,7 +150,12 @@ impl State {
                 .into()
         };
 
-        row![first, second].into()
+        let main_content = container(row![first, second])
+            .height(Length::Fill)
+            .width(Length::Fill);
+        let status_bar = self.status_bar.view().map(Message::StatusBarMessage);
+
+        column![main_content, status_bar].into()
 
         // iced_aw::split::Split::new(
         //     first,
@@ -148,81 +170,74 @@ impl State {
     }
     pub fn backend_event(
         &mut self,
-        event: net::Event,
-        db_conn: &mut BackEndConnection<database::Message>,
+        event: Event,
+        conn: &mut BackEndConnection<net::Message>,
     ) -> Command<Message> {
+        let _command = self.status_bar.backend_event(event.clone(), conn);
         let command = match event {
-            net::Event::DbEvent(db_event) => match db_event {
-                database::Event::ReceivedDM((db_contact, msg)) => {
-                    self.update_contact(db_contact.clone());
+            Event::GotContacts(db_contacts) => {
+                self.contacts = db_contacts
+                    .iter()
+                    .map(|c| contact_card::State::from_db_contact(c))
+                    .collect();
+                Command::none()
+            }
+            Event::GotRelayResponses(responses) => {
+                dbg!(responses);
+                Command::none()
+            }
+            Event::GotChatMessages((db_contact, chat_msgs)) => {
+                self.update_contact(db_contact.clone());
 
-                    if self.active_contact.as_ref() == Some(&db_contact) {
-                        // estou na conversa
-                        self.messages.push(msg.clone());
-                        self.current_scroll_offset = scrollable::RelativeOffset::END;
+                if self.active_contact.as_ref() == Some(&db_contact) {
+                    self.messages = chat_msgs;
+                    self.messages
+                        .sort_by(|a, b| a.created_at.cmp(&b.created_at));
 
-                        //COMMAND
-                        scrollable::snap_to(CHAT_SCROLLABLE_ID.clone(), self.current_scroll_offset)
-                    } else {
-                        // não estou na conversa
-                        db_conn.send(database::Message::AddToUnseenCount(db_contact));
-                        Command::none()
-                    }
-                }
-
-                database::Event::NewDMAndContact((db_contact, _)) => {
-                    self.contacts
-                        .push(contact_card::State::from_db_contact(&db_contact));
-                    // não estou na conversa
-                    db_conn.send(database::Message::AddToUnseenCount(db_contact));
+                    self.current_scroll_offset = scrollable::RelativeOffset::END;
+                    scrollable::snap_to(CHAT_SCROLLABLE_ID.clone(), self.current_scroll_offset)
+                } else {
                     Command::none()
                 }
-
-                database::Event::ContactUpdated(db_contact) => {
-                    self.update_contact(db_contact);
-                    Command::none()
-                }
-
-                database::Event::UpdateWithRelayResponse { db_message, .. } => {
-                    if let Some(msg) = &db_message {
-                        if let Ok(msg_id) = msg.id() {
-                            self.messages
-                                .iter_mut()
-                                .find(|m| m.msg_id == msg_id)
-                                .map(|chat_msg| chat_msg.confirm_msg(msg));
-                        }
-                    }
-                    Command::none()
-                }
-                database::Event::GotRelayResponses(responses) => {
-                    dbg!(responses);
-                    Command::none()
-                }
-                database::Event::GotChatMessages((db_contact, chat_msgs)) => {
-                    self.update_contact(db_contact.clone());
-
-                    if self.active_contact.as_ref() == Some(&db_contact) {
-                        self.messages = chat_msgs;
+            }
+            Event::UpdateWithRelayResponse { db_message, .. } => {
+                if let Some(msg) = &db_message {
+                    if let Ok(msg_id) = msg.id() {
                         self.messages
-                            .sort_by(|a, b| a.created_at.cmp(&b.created_at));
-
-                        self.current_scroll_offset = scrollable::RelativeOffset::END;
-                        scrollable::snap_to(CHAT_SCROLLABLE_ID.clone(), self.current_scroll_offset)
-                    } else {
-                        Command::none()
+                            .iter_mut()
+                            .find(|m| m.msg_id == msg_id)
+                            .map(|chat_msg| chat_msg.confirm_msg(msg));
                     }
                 }
-                database::Event::GotContacts(db_contacts) => {
-                    self.contacts = db_contacts
-                        .iter()
-                        .map(|c| contact_card::State::from_db_contact(c))
-                        .collect();
+                Command::none()
+            }
+            Event::ReceivedDM((db_contact, msg)) => {
+                self.update_contact(db_contact.clone());
+
+                if self.active_contact.as_ref() == Some(&db_contact) {
+                    // estou na conversa
+                    self.messages.push(msg.clone());
+                    self.current_scroll_offset = scrollable::RelativeOffset::END;
+
+                    //COMMAND
+                    scrollable::snap_to(CHAT_SCROLLABLE_ID.clone(), self.current_scroll_offset)
+                } else {
+                    // não estou na conversa
+                    conn.send(net::Message::AddToUnseenCount(db_contact));
                     Command::none()
                 }
-
-                _ => Command::none(),
-            },
-
+            }
+            Event::NewDMAndContact((db_contact, _)) => {
+                self.contacts
+                    .push(contact_card::State::from_db_contact(&db_contact));
+                // não estou na conversa
+                conn.send(net::Message::AddToUnseenCount(db_contact));
+                Command::none()
+            }
+            Event::ContactUpdated(db_contact) => {
+                self.update_contact(db_contact);
+                Command::none()
+            }
             _ => Command::none(),
         };
 
@@ -246,8 +261,12 @@ impl State {
         }
     }
 
-    pub fn update(&mut self, message: Message, db_conn: &mut BackEndConnection<database::Message>) {
+    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection<net::Message>) {
         match message {
+            Message::StatusBarMessage(status_msg) => {
+                let _command = self.status_bar.update(status_msg, conn);
+            }
+            // ---------
             Message::GoToChannelsPress => (),
             Message::Scrolled(offset) => {
                 self.current_scroll_offset = offset;
@@ -255,7 +274,7 @@ impl State {
             Message::SearchContactInputChange(text) => self.search_contact_input = text,
             Message::ChatMessage(chat_msg) => match chat_msg {
                 chat_message::Message::ChatRightClick(msg) => {
-                    db_conn.send(database::Message::FetchRelayResponses(msg.event_id));
+                    conn.send(net::Message::FetchRelayResponses(msg.event_id));
                     // dbg!(msg_clicked);
                 }
             },
@@ -263,21 +282,22 @@ impl State {
             Message::DMNMessageChange(text) => {
                 self.dm_msg = text;
             }
-            Message::DMSentPress => {
-                if let Some(_contact) = &self.active_contact {
-                    // match db_conn.try_send(database::Message::SendDMTo((
-                    //     contact.to_owned(),
-                    //     self.dm_msg.clone(),
-                    // ))) {
-                    //     Ok(_) => {
-                    //         self.dm_msg = "".into();
-                    //     }
-                    //     Err(e) => {
-                    //         tracing::error!("{}", e);
-                    //     }
-                    // }
+            Message::DMSentPress => match (&self.active_contact, self.dm_msg.is_empty()) {
+                (Some(contact), false) => {
+                    match conn.try_send(net::Message::SendDMTo((
+                        contact.to_owned(),
+                        self.dm_msg.clone(),
+                    ))) {
+                        Ok(_) => {
+                            self.dm_msg = "".into();
+                        }
+                        Err(e) => {
+                            tracing::error!("{}", e);
+                        }
+                    }
                 }
-            }
+                _ => (),
+            },
 
             Message::OnVerResize(position) => {
                 if position > 200 && position < 400 {
@@ -301,7 +321,7 @@ impl State {
             Message::ContactCardMessage(card_msg) => {
                 if let contact_card::Message::UpdateActiveContact(contact) = &card_msg {
                     if self.active_contact.as_ref() != Some(&contact) {
-                        db_conn.send(database::Message::FetchMessages(contact.clone()));
+                        conn.send(net::Message::FetchMessages(contact.clone()));
                         self.messages = vec![];
                     }
                     self.dm_msg = "".into();
@@ -322,6 +342,7 @@ fn chat_day_divider<Message: 'static>(date: NaiveDateTime) -> Element<'static, M
         .padding([5, 10]);
     container(text_container)
         .width(Length::Fill)
+        .padding([20, 0])
         .center_x()
         .center_y()
         .into()

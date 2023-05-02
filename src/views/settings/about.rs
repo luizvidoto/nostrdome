@@ -8,7 +8,7 @@ pub enum Message {
 #[derive(Debug, Clone)]
 pub struct State {}
 impl State {
-    pub fn default() -> Self {
+    pub fn new() -> Self {
         Self {}
     }
 
@@ -19,6 +19,6 @@ impl State {
     }
 
     pub fn view(&self) -> Element<Message> {
-        title("Backup").into()
+        title("About").into()
     }
 }

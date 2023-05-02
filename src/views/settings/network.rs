@@ -10,13 +10,14 @@ use crate::components::text_input_group::text_input_group;
 use crate::components::{relay_row, RelayRow};
 use crate::db::DbRelay;
 use crate::icon::plus_icon;
-use crate::net::{self, database, nostr_client, BackEndConnection, Connection};
+use crate::net::events::Event;
+use crate::net::{self, BackEndConnection, Connection};
 use crate::widget::Element;
 
 #[derive(Debug, Clone)]
 pub enum Message {
     RelayMessage(relay_row::MessageWrapper),
-    BackEndEvent(net::Event),
+    BackEndEvent(Event),
     OpenAddRelayModal,
     CancelButtonPressed,
     OkButtonPressed,
@@ -39,8 +40,8 @@ impl State {
             .collect();
         iced::Subscription::batch(relay_subs)
     }
-    pub fn new(db_conn: &mut BackEndConnection<database::Message>) -> Self {
-        db_conn.send(database::Message::FetchRelays);
+    pub fn new(conn: &mut BackEndConnection<net::Message>) -> Self {
+        conn.send(net::Message::FetchRelays);
         Self {
             relays: vec![],
             show_modal: false,
@@ -51,8 +52,7 @@ impl State {
     pub fn update(
         &mut self,
         message: Message,
-        db_conn: &mut BackEndConnection<database::Message>,
-        ns_conn: &mut BackEndConnection<nostr_client::Message>,
+        conn: &mut BackEndConnection<net::Message>,
     ) -> Command<Message> {
         match message {
             Message::AddRelayInputChange(relay_addrs) => self.add_relay_input = relay_addrs,
@@ -64,10 +64,7 @@ impl State {
                 match Url::try_from(self.add_relay_input.as_str()) {
                     Ok(url) => {
                         let db_relay = DbRelay::new(url);
-                        ns_conn.send(nostr_client::Message::AddRelay(db_relay.clone()));
-                        db_conn.send(database::Message::AddRelay(db_relay));
-                        // ou eu adiciono nos dois canais
-                        // ou eu faço um terceiro canal? que mandaria primeiro ao cliente e depois ao DB se confirmasse
+                        conn.send(net::Message::AddRelay(db_relay));
                     }
                     Err(e) => {
                         // SOME VALIDATION TO THE USER
@@ -81,64 +78,57 @@ impl State {
 
             Message::RelayMessage(msg) => {
                 if let Some(row) = self.relays.iter_mut().find(|r| r.id == msg.from) {
-                    let _ = row.update(msg, db_conn, ns_conn);
+                    let _ = row.update(msg, conn);
                 }
             }
 
             Message::BackEndEvent(ev) => match ev {
-                net::Event::DbEvent(db_event) => match db_event {
-                    database::Event::RelayCreated(db_relay) => {
-                        self.relays
-                            .push(RelayRow::new(self.relays.len() as i32, db_relay, ns_conn))
+                Event::RelayCreated(db_relay) => {
+                    self.relays
+                        .push(RelayRow::new(self.relays.len() as i32, db_relay, conn))
+                }
+                Event::RelayUpdated(db_relay) => {
+                    if let Some(row) = self
+                        .relays
+                        .iter_mut()
+                        .find(|row| row.db_relay.url == db_relay.url)
+                    {
+                        return row
+                            .update(
+                                MessageWrapper::new(
+                                    row.id,
+                                    relay_row::Message::RelayUpdated(db_relay),
+                                ),
+                                conn,
+                            )
+                            .map(Message::RelayMessage);
                     }
-                    database::Event::RelayUpdated(db_relay) => {
+                }
+                Event::RelayDeleted(db_relay) => {
+                    self.relays.retain(|r| r.db_relay.url != db_relay.url);
+                }
+                Event::GotRelays(mut db_relays) => {
+                    db_relays.sort_by(|a, b| a.url.cmp(&b.url));
+                    self.relays = db_relays
+                        .into_iter()
+                        .enumerate()
+                        .map(|(idx, db_relay)| RelayRow::new(idx as i32, db_relay, conn))
+                        .collect();
+                }
+                Event::GotRelayServer(relay) => {
+                    if let Some(relay) = relay {
                         if let Some(row) = self
                             .relays
                             .iter_mut()
-                            .find(|row| row.db_relay.url == db_relay.url)
+                            .find(|r| r.db_relay.url == relay.url())
                         {
-                            return row
-                                .update(
-                                    MessageWrapper::new(
-                                        row.id,
-                                        relay_row::Message::RelayUpdated(db_relay),
-                                    ),
-                                    db_conn,
-                                    ns_conn,
-                                )
-                                .map(Message::RelayMessage);
-                        }
-                    }
-                    database::Event::RelayDeleted(db_relay) => {
-                        self.relays.retain(|r| r.db_relay.url != db_relay.url);
-                    }
-                    database::Event::GotRelays(mut db_relays) => {
-                        db_relays.sort_by(|a, b| a.url.cmp(&b.url));
-                        self.relays = db_relays
-                            .into_iter()
-                            .enumerate()
-                            .map(|(idx, db_relay)| RelayRow::new(idx as i32, db_relay, ns_conn))
-                            .collect();
-                    }
-                    _ => (),
-                },
-                net::Event::NostrClientEvent(ns_event) => {
-                    if let nostr_client::Event::GotRelay(relay) = ns_event {
-                        if let Some(relay) = relay {
-                            if let Some(row) = self
-                                .relays
-                                .iter_mut()
-                                .find(|r| r.db_relay.url == relay.url())
-                            {
-                                let _ = row.update(
-                                    MessageWrapper {
-                                        from: row.id,
-                                        message: relay_row::Message::GotRelay(relay),
-                                    },
-                                    db_conn,
-                                    ns_conn,
-                                );
-                            }
+                            let _ = row.update(
+                                MessageWrapper {
+                                    from: row.id,
+                                    message: relay_row::Message::GotRelayServer(relay),
+                                },
+                                conn,
+                            );
                         }
                     }
                 }

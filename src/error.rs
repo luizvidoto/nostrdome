@@ -80,6 +80,8 @@ pub enum Error {
     // Nostrdome specific errors
     #[error("Not allowed to insert own pubkey as a contact")]
     SameContactInsert,
+    #[error("Not allowed to update to own pubkey as a contact")]
+    SameContactUpdate,
     #[error("Write actions disabled for this relay: {0}")]
     WriteActionsDisabled(String),
     #[error("Not found any relay to write to")]

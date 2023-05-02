@@ -271,7 +271,7 @@ impl DbContact {
         contact: &DbContact,
     ) -> Result<()> {
         let sql = r#"
-            INSERT INTO contact 
+            INSERT OR IGNORE INTO contact 
                 (pubkey, relay_url, petname, profile_image, status, 
                     unseen_messages, created_at, updated_at, last_message_content, last_message_date) 
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
@@ -298,6 +298,31 @@ impl DbContact {
 
         Ok(())
     }
+    // pub fn update_base_from_other(&mut self, db_contact: &DbContact) {
+    //     self.relay_url = db_contact.relay_url.clone();
+    //     self.petname = db_contact.petname.clone();
+    //     self.updated_at = Utc::now().naive_utc();
+    // }
+    pub async fn update_basic(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        contact: &DbContact,
+    ) -> Result<()> {
+        let sql = r#"
+            UPDATE contact 
+            SET relay_url=?, petname=?, updated_at=?
+            WHERE pubkey=?
+        "#;
+
+        sqlx::query(sql)
+            .bind(&contact.relay_url.as_ref().map(|url| url.to_string()))
+            .bind(&contact.petname)
+            .bind(Utc::now().timestamp_millis())
+            .bind(&contact.pubkey.to_string())
+            .execute(tx)
+            .await?;
+
+        Ok(())
+    }
 
     pub async fn insert(pool: &SqlitePool, contact: &DbContact) -> Result<()> {
         tracing::info!("Inserting Contact: {:?}", contact);
@@ -307,6 +332,7 @@ impl DbContact {
 
         // Chamar a função auxiliar para inserir o contato
         Self::insert_single_contact(&mut tx, contact).await?;
+        Self::update_basic(&mut tx, contact).await?;
 
         // Fazer commit da transação
         tx.commit().await?;

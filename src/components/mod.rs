@@ -7,3 +7,6 @@ pub mod contact_row;
 pub use contact_row::ContactRow;
 pub mod file_importer;
 pub use file_importer::FileImporter;
+
+pub mod status_bar;
+pub use status_bar::StatusBar;

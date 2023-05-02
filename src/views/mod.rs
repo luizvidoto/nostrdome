@@ -1,7 +1,8 @@
 use iced::{Command, Subscription};
 
 use crate::{
-    net::{self, database, nostr_client, BackEndConnection},
+    components::status_bar,
+    net::{self, events, BackEndConnection},
     style,
     widget::Element,
 };
@@ -17,13 +18,12 @@ pub enum Message {
     ChatMsg(chat::Message),
     SettingsMsg(settings::Message),
 }
-#[derive(Debug)]
 pub struct Router {
     previous_state: Option<ViewState>,
     state: ViewState,
 }
 impl Router {
-    pub fn new(db_conn: &mut BackEndConnection<database::Message>) -> Self {
+    pub fn new(db_conn: &mut BackEndConnection<net::Message>) -> Self {
         Self {
             previous_state: None,
             state: ViewState::chat(db_conn),
@@ -49,21 +49,18 @@ impl Router {
     }
     pub fn backend_event(
         &mut self,
-        event: net::Event,
-        db_conn: &mut BackEndConnection<database::Message>,
-        ns_conn: &mut BackEndConnection<nostr_client::Message>,
+        event: events::Event,
+        conn: &mut BackEndConnection<net::Message>,
     ) -> Command<Message> {
         match event {
             event => match &mut self.state {
-                ViewState::Channels { state } => state
-                    .backend_event(event, db_conn)
-                    .map(Message::ChannelsMsg),
-                ViewState::Chat { state } => {
-                    state.backend_event(event, db_conn).map(Message::ChatMsg)
+                ViewState::Channels { state } => {
+                    state.backend_event(event, conn).map(Message::ChannelsMsg)
                 }
-                ViewState::Settings { state } => state
-                    .backend_event(event, db_conn, ns_conn)
-                    .map(Message::SettingsMsg),
+                ViewState::Chat { state } => state.backend_event(event, conn).map(Message::ChatMsg),
+                ViewState::Settings { state } => {
+                    state.backend_event(event, conn).map(Message::SettingsMsg)
+                }
             },
         }
     }
@@ -71,16 +68,15 @@ impl Router {
     pub fn update(
         &mut self,
         message: Message,
-        db_conn: &mut BackEndConnection<database::Message>,
-        ns_conn: &mut BackEndConnection<nostr_client::Message>,
+        conn: &mut BackEndConnection<net::Message>,
         selected_theme: Option<style::Theme>,
     ) -> Command<Message> {
         match message {
             Message::ChannelsMsg(msg) => {
                 if let ViewState::Channels { state } = &mut self.state {
                     match msg {
-                        channels::Message::GoToChat => self.next_state(ViewState::chat(db_conn)),
-                        msg => state.update(msg, db_conn),
+                        channels::Message::GoToChat => self.next_state(ViewState::chat(conn)),
+                        msg => state.update(msg, conn),
                     }
                 }
             }
@@ -88,25 +84,34 @@ impl Router {
                 if let ViewState::Chat { state } = &mut self.state {
                     match msg {
                         chat::Message::AddContactPress => {
-                            self.next_state(ViewState::settings_contacts(db_conn))
+                            self.next_state(ViewState::settings_contacts(conn))
                         }
                         chat::Message::GoToChannelsPress => {
-                            self.next_state(ViewState::channels(db_conn))
+                            self.next_state(ViewState::channels(conn))
                         }
+                        chat::Message::StatusBarMessage(status_msg) => match status_msg {
+                            status_bar::Message::GoToAbout => {
+                                self.next_state(ViewState::settings_about(conn))
+                            }
+                            status_bar::Message::GoToNetwork => {
+                                self.next_state(ViewState::settings_network(conn))
+                            }
+                            other => state.update(chat::Message::StatusBarMessage(other), conn),
+                        },
                         chat::Message::NavSettingsPress => {
-                            self.next_state(ViewState::settings(db_conn))
+                            self.next_state(ViewState::settings(conn))
                         }
-                        msg => state.update(msg, db_conn),
+                        msg => state.update(msg, conn),
                     }
                 }
             }
             Message::SettingsMsg(msg) => {
                 if let ViewState::Settings { state } = &mut self.state {
                     match msg {
-                        settings::Message::NavEscPress => self.next_state(ViewState::chat(db_conn)),
+                        settings::Message::NavEscPress => self.next_state(ViewState::chat(conn)),
                         msg => {
                             return state
-                                .update(msg, db_conn, ns_conn, selected_theme)
+                                .update(msg, conn, selected_theme)
                                 .map(Message::SettingsMsg);
                         }
                     }
@@ -117,7 +122,6 @@ impl Router {
     }
 }
 
-#[derive(Debug)]
 pub enum ViewState {
     Channels { state: channels::State },
     Chat { state: chat::State },
@@ -128,25 +132,36 @@ impl ViewState {
     pub fn subscription(&self) -> Subscription<Message> {
         match self {
             ViewState::Settings { state } => state.subscription().map(Message::SettingsMsg),
+            ViewState::Chat { state } => state.subscription().map(Message::ChatMsg),
             _ => Subscription::none(),
         }
     }
-    pub fn channels(_db_conn: &mut BackEndConnection<database::Message>) -> Self {
+    pub fn channels(_db_conn: &mut BackEndConnection<net::Message>) -> Self {
         Self::Channels {
             state: channels::State::new(),
         }
     }
-    pub fn chat(db_conn: &mut BackEndConnection<database::Message>) -> Self {
+    pub fn chat(db_conn: &mut BackEndConnection<net::Message>) -> Self {
         Self::Chat {
             state: chat::State::new(db_conn),
         }
     }
-    pub fn settings(db_conn: &mut BackEndConnection<database::Message>) -> Self {
+    pub fn settings(db_conn: &mut BackEndConnection<net::Message>) -> Self {
         Self::Settings {
             state: settings::Settings::new(db_conn),
         }
     }
-    pub fn settings_contacts(db_conn: &mut BackEndConnection<database::Message>) -> Self {
+    pub fn settings_network(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+        Self::Settings {
+            state: settings::Settings::network(db_conn),
+        }
+    }
+    pub fn settings_about(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+        Self::Settings {
+            state: settings::Settings::about(db_conn),
+        }
+    }
+    pub fn settings_contacts(db_conn: &mut BackEndConnection<net::Message>) -> Self {
         Self::Settings {
             state: settings::Settings::contacts(db_conn),
         }

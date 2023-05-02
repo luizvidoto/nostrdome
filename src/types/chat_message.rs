@@ -87,17 +87,13 @@ impl ChatMessage {
             true => alignment::Horizontal::Right,
         };
 
-        // let card_padding = match self.is_from_user {
-        //     false => [2, 100, 2, 20],
-        //     true => [2, 20, 2, 100],
-        // };
-
         let container_style = if self.is_from_user {
             style::Container::SentMessage
         } else {
             style::Container::ReceivedMessage
         };
 
+        // TODO: to local timezone
         let time_str = self.created_at.time().format("%H:%M").to_string();
         let data_cp = column![
             // container(text("")).height(10.0),
