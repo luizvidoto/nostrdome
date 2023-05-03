@@ -9,7 +9,7 @@ use crate::{
 };
 use nostr_sdk::{
     secp256k1::{schnorr::Signature, XOnlyPublicKey},
-    Event, EventId, Kind, Tag,
+    Event, EventId, Kind, Tag, Timestamp,
 };
 
 #[derive(Debug, Clone)]
@@ -25,6 +25,22 @@ pub struct DbEvent {
     pub content: String,
     pub sig: Signature,
     pub confirmed: bool,
+}
+
+impl From<DbEvent> for Event {
+    fn from(value: DbEvent) -> Self {
+        Event {
+            id: value.event_hash,
+            pubkey: value.pubkey,
+            created_at: Timestamp::from(
+                (value.created_at_from_relay.timestamp_millis() / 1000) as u64,
+            ),
+            tags: value.tags,
+            kind: value.kind,
+            content: value.content,
+            sig: value.sig,
+        }
+    }
 }
 
 impl DbEvent {

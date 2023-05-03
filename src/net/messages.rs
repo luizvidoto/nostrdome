@@ -1,4 +1,7 @@
-use crate::db::{DbContact, DbRelay};
+use crate::{
+    db::{DbContact, DbRelay},
+    types::ChatMessage,
+};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -15,6 +18,7 @@ pub enum Message {
     FetchRelays,
 
     // -------- NOSTR CLIENT MESSAGES
+    RequestEvents,
     FetchRelayServer(nostr_sdk::Url),
     FetchRelayServers,
     AddRelay(DbRelay),
@@ -23,7 +27,8 @@ pub enum Message {
     ToggleRelayRead((DbRelay, bool)),
     ToggleRelayWrite((DbRelay, bool)),
     ConnectToRelay(DbRelay),
-    SendDMTo((DbContact, String)),
+    BuildDM((DbContact, String)),
+    SendDMToRelays(ChatMessage),
     SendContactListToRelay((DbRelay, Vec<DbContact>)),
     CreateChannel,
 }

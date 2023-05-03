@@ -80,6 +80,7 @@ impl State {
 
             Message::BackEndEvent(ev) => match ev {
                 Event::RelayCreated(db_relay) => {
+                    conn.send(net::Message::RequestEvents);
                     self.relays
                         .push(RelayRow::new(self.relays.len() as i32, db_relay, conn))
                 }
@@ -164,7 +165,7 @@ impl State {
                 &self.add_relay_input,
                 None,
                 Message::AddRelayInputChange,
-                None,
+                Some(Message::OkButtonPressed),
             );
             let modal_body: Element<_> = container(add_relay_input).into();
             Card::new(text("Add Relay"), modal_body)

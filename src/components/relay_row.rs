@@ -11,10 +11,10 @@ use iced_native::futures::channel::mpsc;
 use nostr_sdk::{Relay, RelayStatus, Timestamp};
 
 #[derive(Debug, Clone)]
-pub struct RelayRowConnection(mpsc::UnboundedSender<Input>);
+pub struct RelayRowConnection(mpsc::Sender<Input>);
 impl RelayRowConnection {
     pub fn send(&mut self, input: Input) {
-        if let Err(e) = self.0.unbounded_send(input).map_err(|e| e.to_string()) {
+        if let Err(e) = self.0.try_send(input).map_err(|e| e.to_string()) {
             tracing::error!("{}", e);
         }
     }
@@ -55,11 +55,11 @@ pub enum State {
     },
     Idle {
         id: i32,
-        receiver: mpsc::UnboundedReceiver<Input>,
+        receiver: mpsc::Receiver<Input>,
     },
     Querying {
         id: i32,
-        receiver: mpsc::UnboundedReceiver<Input>,
+        receiver: mpsc::Receiver<Input>,
         channel_relay: Relay,
     },
 }
@@ -89,7 +89,7 @@ impl RelayRow {
             |state| async move {
                 match state {
                     State::Initial { id } => {
-                        let (sender, receiver) = mpsc::unbounded();
+                        let (sender, receiver) = mpsc::channel(100);
                         (
                             MessageWrapper::new(id, Message::Ready(RelayRowConnection(sender))),
                             State::Idle { receiver, id },

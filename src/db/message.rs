@@ -261,8 +261,16 @@ impl MessageStatus {
     }
     pub fn is_unseen(&self) -> bool {
         match self {
-            MessageStatus::Offline => true,
+            MessageStatus::Offline => false,
             MessageStatus::Delivered => true,
+            MessageStatus::Seen => false,
+        }
+    }
+
+    pub(crate) fn is_offline(&self) -> bool {
+        match self {
+            MessageStatus::Offline => true,
+            MessageStatus::Delivered => false,
             MessageStatus::Seen => false,
         }
     }

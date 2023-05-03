@@ -215,6 +215,9 @@ impl State {
                 self.update_contact(db_contact.clone());
 
                 if self.active_contact.as_ref() == Some(&db_contact) {
+                    if msg.status.is_offline() {
+                        conn.send(net::Message::SendDMToRelays(msg.clone()));
+                    }
                     // estou na conversa
                     self.messages.push(msg.clone());
                     self.messages
@@ -286,7 +289,7 @@ impl State {
             }
             Message::DMSentPress => match (&self.active_contact, self.dm_msg.is_empty()) {
                 (Some(contact), false) => {
-                    conn.send(net::Message::SendDMTo((
+                    conn.send(net::Message::BuildDM((
                         contact.to_owned(),
                         self.dm_msg.clone(),
                     )));

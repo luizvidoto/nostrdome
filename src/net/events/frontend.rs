@@ -35,6 +35,8 @@ pub enum Event {
     RelayConnected(DbRelay),
     ChannelCreated(nostr_sdk::EventId),
     NostrLoading,
+    RequestedEvents,
+    SentDirectMessage(nostr_sdk::EventId),
     // --- Config ---
     Connected(BackEndConnection),
     Disconnected,

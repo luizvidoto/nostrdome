@@ -317,8 +317,8 @@ pub async fn on_relay_message(
     Ok(event)
 }
 
-pub async fn _fetch_contacts_from_relays(nostr_client: &Client) -> Result<Vec<Contact>, Error> {
-    let contacts = nostr_client
+pub async fn _fetch_contacts_from_relays(client: &Client) -> Result<Vec<Contact>, Error> {
+    let contacts = client
         .get_contact_list(Some(Duration::from_secs(10)))
         .await?;
     Ok(contacts)
@@ -405,41 +405,47 @@ pub async fn send_contact_list_to(
 
     Ok(BackEndInput::StorePendingEvent(event))
 }
-
-pub async fn send_dm(
-    nostr_client: &Client,
-    keys: &Keys,
-    db_contact: &DbContact,
-    content: &str,
-) -> Result<BackEndInput, Error> {
-    tracing::info!("Sending DM to relays");
-    let mut has_event: Option<(nostr_sdk::Event, Url)> = None;
+pub fn build_dm(keys: &Keys, db_contact: &DbContact, content: &str) -> Result<BackEndInput, Error> {
     let builder =
         EventBuilder::new_encrypted_direct_msg(&keys, db_contact.pubkey().to_owned(), content)?;
     let event = builder.to_event(keys)?;
-
-    for (url, relay) in nostr_client.relays().await {
-        if !relay.opts().write() {
-            // return Err(Error::WriteActionsDisabled(url.clone()))
-            tracing::error!("{}", Error::WriteActionsDisabled(url.to_string()));
-            continue;
-        }
-
-        if let Ok(_id) = nostr_client.send_event_to(url.clone(), event.clone()).await {
-            has_event = Some((event.clone(), url.clone()));
-        }
-    }
-
-    if let Some((event, _relay_url)) = has_event {
-        Ok(BackEndInput::StorePendingEvent(event))
-    } else {
-        Err(Error::NoRelayToWrite)
-    }
+    Ok(BackEndInput::StorePendingEvent(event))
 }
 
-pub async fn add_relay(nostr_client: &Client, db_relay: DbRelay) -> Result<BackEndInput, Error> {
+// pub async fn send_dm(
+//     client: &Client,
+//     keys: &Keys,
+//     db_contact: &DbContact,
+//     content: &str,
+// ) -> Result<BackEndInput, Error> {
+//     tracing::info!("Sending DM to relays");
+//     let mut has_event: Option<(nostr_sdk::Event, Url)> = None;
+//     let builder =
+//         EventBuilder::new_encrypted_direct_msg(&keys, db_contact.pubkey().to_owned(), content)?;
+//     let event = builder.to_event(keys)?;
+
+//     for (url, relay) in client.relays().await {
+//         if !relay.opts().write() {
+//             // return Err(Error::WriteActionsDisabled(url.clone()))
+//             tracing::error!("{}", Error::WriteActionsDisabled(url.to_string()));
+//             continue;
+//         }
+
+//         if let Ok(_id) = client.send_event_to(url.clone(), event.clone()).await {
+//             has_event = Some((event.clone(), url.clone()));
+//         }
+//     }
+
+//     if let Some((event, _relay_url)) = has_event {
+//         Ok(BackEndInput::StorePendingEvent(event))
+//     } else {
+//         Err(Error::NoRelayToWrite)
+//     }
+// }
+
+pub async fn add_relay(client: &Client, db_relay: DbRelay) -> Result<BackEndInput, Error> {
     tracing::info!("Adding relay to client: {}", db_relay.url);
-    nostr_client.add_relay(db_relay.url.as_str(), None).await?;
+    client.add_relay(db_relay.url.as_str(), None).await?;
     Ok(BackEndInput::AddRelayToDb(db_relay))
 }
 
@@ -454,7 +460,7 @@ pub async fn fetch_relay_servers(client: &Client) -> Result<Event, Error> {
 }
 
 pub async fn add_relays_and_connect(
-    nostr_client: &Client,
+    client: &Client,
     keys: &Keys,
     relays: &[DbRelay],
     last_event: Option<DbEvent>,
@@ -462,17 +468,17 @@ pub async fn add_relays_and_connect(
     // Received from BackEndEvent::PrepareClient
     tracing::warn!("Adding relays to client");
     for r in relays {
-        match nostr_client.add_relay(&r.url.to_string(), None).await {
+        match client.add_relay(&r.url.to_string(), None).await {
             Ok(_) => tracing::warn!("Nostr Client Added Relay: {}", &r.url),
             Err(e) => tracing::error!("{}", e),
         }
     }
 
     tracing::info!("Connecting to relays");
-    let client = nostr_client.clone();
-    tokio::spawn(async move { client.connect().await });
+    let client_c = client.clone();
+    tokio::spawn(async move { client_c.connect().await });
 
-    request_events(&nostr_client, &keys.public_key(), last_event).await?;
+    request_events(&client, &keys.public_key(), last_event).await?;
 
     Ok(Event::FinishedPreparing)
 }
@@ -504,7 +510,7 @@ pub async fn connect_to_relay(
         }
     } else {
         tracing::warn!("Relay not found on client: {}", db_relay.url);
-        // add_relay(nostr_client, db_relay).await?
+        // add_relay(client, db_relay).await?
         Event::None
     };
 
@@ -512,10 +518,11 @@ pub async fn connect_to_relay(
 }
 
 pub async fn request_events(
-    nostr_client: &Client,
+    client: &Client,
     public_key: &XOnlyPublicKey,
     last_event: Option<DbEvent>,
-) -> Result<(), Error> {
+) -> Result<Event, Error> {
+    tracing::warn!("Requesting events from relays");
     let last_timestamp_secs: u64 = last_event
         .map(|e| {
             // syncronization problems with different machines
@@ -523,11 +530,11 @@ pub async fn request_events(
             (earlier_time.timestamp_millis() / 1000) as u64
         })
         .unwrap_or(0);
+    tracing::warn!("last timestamp: {}", last_timestamp_secs);
 
-    let client = nostr_client.clone();
+    let client = client.clone();
     let pk = public_key.clone();
     tokio::spawn(async move {
-        tracing::info!("Requesting events");
         // if has last_event, request events since last_event.timestamp
         // else request events since 0
         let sent_msgs_sub_past = Filter::new()
@@ -544,7 +551,7 @@ pub async fn request_events(
             .await;
     });
 
-    Ok(())
+    Ok(Event::RequestedEvents)
 }
 
 pub async fn toggle_read_for_relay(
