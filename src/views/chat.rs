@@ -7,7 +7,7 @@ use crate::components::{contact_card, status_bar, StatusBar};
 use crate::db::DbContact;
 use crate::icon::{menu_bars_icon, send_icon};
 use crate::net::events::Event;
-use crate::net::{self, BackEndConnection, Connection};
+use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::types::{chat_message, ChatMessage};
 use crate::utils::contact_matches_search;
@@ -45,7 +45,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn new(conn: &mut BackEndConnection) -> Self {
         conn.send(net::Message::FetchContacts);
         Self {
             contacts: vec![],
@@ -171,7 +171,7 @@ impl State {
     pub fn backend_event(
         &mut self,
         event: Event,
-        conn: &mut BackEndConnection<net::Message>,
+        conn: &mut BackEndConnection,
     ) -> Command<Message> {
         let _command = self.status_bar.backend_event(event.clone(), conn);
         let command = match event {
@@ -263,7 +263,7 @@ impl State {
         }
     }
 
-    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection<net::Message>) {
+    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
         match message {
             Message::StatusBarMessage(status_msg) => {
                 let _command = self.status_bar.update(status_msg, conn);
@@ -286,17 +286,11 @@ impl State {
             }
             Message::DMSentPress => match (&self.active_contact, self.dm_msg.is_empty()) {
                 (Some(contact), false) => {
-                    match conn.try_send(net::Message::SendDMTo((
+                    conn.send(net::Message::SendDMTo((
                         contact.to_owned(),
                         self.dm_msg.clone(),
-                    ))) {
-                        Ok(_) => {
-                            self.dm_msg = "".into();
-                        }
-                        Err(e) => {
-                            tracing::error!("{}", e);
-                        }
-                    }
+                    )));
+                    self.dm_msg = "".into();
                 }
                 _ => (),
             },

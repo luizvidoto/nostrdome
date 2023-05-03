@@ -125,6 +125,7 @@ pub enum Text {
     RelayStatusConnecting,
     RelayStatusDisconnected,
     RelayStatusTerminated,
+    RelayStatusLoading,
 }
 
 impl text::StyleSheet for Theme {
@@ -164,6 +165,9 @@ impl text::StyleSheet for Theme {
             },
             Text::RelayStatusTerminated => text::Appearance {
                 color: Color::from_rgb8(229, 57, 53).into(),
+            },
+            Text::RelayStatusLoading => text::Appearance {
+                color: Color::from_rgb8(220, 220, 220).into(),
             },
         }
     }

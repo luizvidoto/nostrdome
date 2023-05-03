@@ -9,7 +9,7 @@ use crate::components::text_input_group::text_input_group;
 use crate::components::{file_importer, FileImporter};
 use crate::db::{DbContact, DbRelay};
 use crate::net::events::Event;
-use crate::net::{self, BackEndConnection, Connection};
+use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::types::UncheckedEvent;
 use crate::utils::json_reader;
@@ -83,7 +83,7 @@ impl MenuState {
             _ => false,
         }
     }
-    fn account(_db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    fn account(_db_conn: &mut BackEndConnection) -> Self {
         let profile = Metadata::new();
         // conn.send(message)
         Self::Account {
@@ -95,17 +95,17 @@ impl MenuState {
             state: appearance::State::new(selected_theme),
         }
     }
-    pub fn network(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn network(db_conn: &mut BackEndConnection) -> Self {
         Self::Network {
             state: network::State::new(db_conn),
         }
     }
-    pub fn about(_db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn about(_db_conn: &mut BackEndConnection) -> Self {
         Self::About {
             state: about::State::new(),
         }
     }
-    pub fn contacts(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn contacts(db_conn: &mut BackEndConnection) -> Self {
         Self::Contacts {
             state: contacts::State::new(db_conn),
         }
@@ -115,7 +115,7 @@ impl MenuState {
             state: backup::State::default(),
         }
     }
-    pub fn new(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn new(db_conn: &mut BackEndConnection) -> Self {
         Self::account(db_conn)
     }
     pub fn view(&self) -> Element<Message> {
@@ -146,25 +146,25 @@ impl Settings {
             _ => Subscription::none(),
         }
     }
-    pub fn new(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn new(db_conn: &mut BackEndConnection) -> Self {
         Self {
             menu_state: MenuState::new(db_conn),
             modal_state: ModalState::Off,
         }
     }
-    pub fn contacts(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn contacts(db_conn: &mut BackEndConnection) -> Self {
         Self {
             menu_state: MenuState::contacts(db_conn),
             modal_state: ModalState::Off,
         }
     }
-    pub fn network(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn network(db_conn: &mut BackEndConnection) -> Self {
         Self {
             menu_state: MenuState::network(db_conn),
             modal_state: ModalState::Off,
         }
     }
-    pub fn about(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn about(db_conn: &mut BackEndConnection) -> Self {
         Self {
             menu_state: MenuState::about(db_conn),
             modal_state: ModalState::Off,
@@ -174,7 +174,7 @@ impl Settings {
     pub fn backend_event(
         &mut self,
         event: Event,
-        conn: &mut BackEndConnection<net::Message>,
+        conn: &mut BackEndConnection,
     ) -> Command<Message> {
         self.modal_state.backend_event(event.clone(), conn);
 
@@ -200,7 +200,7 @@ impl Settings {
     pub fn update(
         &mut self,
         message: Message,
-        conn: &mut BackEndConnection<net::Message>,
+        conn: &mut BackEndConnection,
         selected_theme: Option<style::Theme>,
     ) -> Command<Message> {
         match message {
@@ -351,7 +351,7 @@ enum ModalState {
 }
 
 impl ModalState {
-    pub fn backend_event(&mut self, event: Event, conn: &mut BackEndConnection<net::Message>) {
+    pub fn backend_event(&mut self, event: Event, conn: &mut BackEndConnection) {
         if let ModalState::SendContactList {
             relays,
             send_contacts_to_relay,
@@ -385,7 +385,7 @@ impl ModalState {
             }
         }
     }
-    pub fn load_send_contacts(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn load_send_contacts(db_conn: &mut BackEndConnection) -> Self {
         db_conn.send(net::Message::FetchRelays);
         Self::SendContactList {
             relays: vec![],
@@ -422,7 +422,7 @@ impl ModalState {
     pub fn update(
         &mut self,
         message: Message,
-        db_conn: &mut BackEndConnection<net::Message>,
+        db_conn: &mut BackEndConnection,
     ) -> Command<Message> {
         match message {
             Message::CloseSendContactsModal => *self = Self::Off,

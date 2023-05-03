@@ -6,7 +6,7 @@ use nostr_sdk::RelayStatus;
 
 use crate::icon::signal_icon;
 use crate::net::events::Event;
-use crate::net::{self, BackEndConnection, Connection};
+use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::widget::Element;
 
@@ -61,7 +61,7 @@ impl StatusBar {
     pub fn backend_event(
         &mut self,
         event: Event,
-        conn: &mut BackEndConnection<net::Message>,
+        conn: &mut BackEndConnection,
     ) -> Command<Message> {
         match event {
             Event::GotRelayServers(relays) => {
@@ -75,11 +75,7 @@ impl StatusBar {
         }
         Command::none()
     }
-    pub fn update(
-        &mut self,
-        message: Message,
-        conn: &mut BackEndConnection<net::Message>,
-    ) -> Command<Message> {
+    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Command<Message> {
         match message {
             Message::GoToAbout => (),
             Message::GoToNetwork => (),
@@ -104,7 +100,7 @@ impl StatusBar {
         }
         Command::none()
     }
-    fn send_action_to_channel(&mut self, conn: &mut BackEndConnection<net::Message>) {
+    fn send_action_to_channel(&mut self, conn: &mut BackEndConnection) {
         if let Some(ch) = &mut self.sub_channel {
             let input_msg = match &self.client_relays {
                 Some(relays) => Input::GetStatus(relays.clone()),

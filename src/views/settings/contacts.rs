@@ -4,7 +4,7 @@ use iced::{alignment, Length};
 use crate::components::{contact_row, ContactRow};
 use crate::icon::{import_icon, plus_icon, to_cloud_icon};
 use crate::net::events::Event;
-use crate::net::{self, BackEndConnection, Connection};
+use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::utils::contact_matches_search;
 use crate::widget::Element;
@@ -28,7 +28,7 @@ pub struct State {
     search_contact_input: String,
 }
 impl State {
-    pub fn new(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn new(db_conn: &mut BackEndConnection) -> Self {
         db_conn.send(net::Message::FetchContacts);
         Self {
             contacts: vec![],
@@ -36,11 +36,7 @@ impl State {
         }
     }
 
-    pub fn update(
-        &mut self,
-        message: Message,
-        conn: &mut BackEndConnection<net::Message>,
-    ) -> Option<Message> {
+    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Option<Message> {
         match message {
             Message::OpenSendContactModal => (),
             Message::OpenEditContactModal(_) => (),

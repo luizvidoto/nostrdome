@@ -1,13 +1,13 @@
 use crate::{
     db::{DbContact, DbEvent, DbMessage, DbRelay, DbRelayResponse},
+    net::BackEndConnection,
     types::ChatMessage,
 };
 
 #[derive(Debug, Clone)]
-pub enum DatabaseEvent {
+pub enum Event {
+    // --- Database ---
     LocalPendingEvent(DbEvent),
-    DbConnected,
-    DbDisconnected,
     GotChatMessages((DbContact, Vec<ChatMessage>)),
     GotRelayResponses(Vec<DbRelayResponse>),
     GotContacts(Vec<DbContact>),
@@ -27,5 +27,19 @@ pub enum DatabaseEvent {
         db_event: DbEvent,
         db_message: Option<DbMessage>,
     },
-    EventReceived(DbEvent),
+    // --- Nostr ---
+    GotRelayServer(Option<nostr_sdk::Relay>),
+    GotRelayServers(Vec<nostr_sdk::Relay>),
+    RelayMessage(nostr_sdk::RelayMessage),
+    Shutdown,
+    RelayConnected(DbRelay),
+    ChannelCreated(nostr_sdk::EventId),
+    NostrLoading,
+    // --- Config ---
+    Connected(BackEndConnection),
+    Disconnected,
+    FinishedPreparing,
+    // --- General ---
+    Error(String),
+    None,
 }

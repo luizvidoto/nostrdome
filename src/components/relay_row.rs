@@ -1,6 +1,6 @@
 use crate::db::DbRelay;
 use crate::icon::{circle_icon, delete_icon, server_icon};
-use crate::net::{self, BackEndConnection, Connection};
+use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::utils::event_tt_to_naive;
 use crate::widget::Element;
@@ -73,7 +73,7 @@ pub struct RelayRow {
 }
 
 impl RelayRow {
-    pub fn new(id: i32, db_relay: DbRelay, conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn new(id: i32, db_relay: DbRelay, conn: &mut BackEndConnection) -> Self {
         conn.send(net::Message::FetchRelayServer(db_relay.url.clone()));
         Self {
             id,
@@ -145,7 +145,7 @@ impl RelayRow {
     pub fn update(
         &mut self,
         wrapper: MessageWrapper,
-        conn: &mut BackEndConnection<net::Message>,
+        conn: &mut BackEndConnection,
     ) -> Command<MessageWrapper> {
         match wrapper.message {
             Message::RelayUpdated(db_relay) => {
@@ -204,7 +204,7 @@ impl RelayRow {
         Command::none()
     }
 
-    fn send_action_to_channel(&mut self, conn: &mut BackEndConnection<net::Message>) {
+    fn send_action_to_channel(&mut self, conn: &mut BackEndConnection) {
         if let Some(ch) = &mut self.sub_channel {
             match &self.client_relay {
                 Some(relay) => {
@@ -255,8 +255,8 @@ impl RelayRow {
             None => (
                 circle_icon()
                     .size(16)
-                    .style(style::Text::RelayStatusDisconnected),
-                "Disconnected".into(),
+                    .style(style::Text::RelayStatusLoading),
+                "Loading".into(),
             ),
         };
 

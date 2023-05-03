@@ -1,6 +1,6 @@
 use crate::{
     components::text::title,
-    net::{self, events::Event, BackEndConnection},
+    net::{events::Event, BackEndConnection},
     style,
     widget::Element,
 };
@@ -25,7 +25,7 @@ impl State {
     pub fn backend_event(
         &mut self,
         event: Event,
-        _conn: &mut BackEndConnection<net::Message>,
+        _conn: &mut BackEndConnection,
     ) -> Command<Message> {
         if let Event::ChannelCreated(event_id) = event {
             println!("*** CHANNEL CREATED ***");
@@ -33,7 +33,7 @@ impl State {
         }
         Command::none()
     }
-    pub fn update(&mut self, message: Message, _conn: &mut BackEndConnection<net::Message>) {
+    pub fn update(&mut self, message: Message, _conn: &mut BackEndConnection) {
         match message {
             Message::GoToChat => (),
             Message::CreateChannel => {

@@ -2,7 +2,7 @@ use iced::{Command, Subscription};
 
 use crate::{
     components::status_bar,
-    net::{self, events, BackEndConnection},
+    net::{events, BackEndConnection},
     style,
     widget::Element,
 };
@@ -23,7 +23,7 @@ pub struct Router {
     state: ViewState,
 }
 impl Router {
-    pub fn new(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn new(db_conn: &mut BackEndConnection) -> Self {
         Self {
             previous_state: None,
             state: ViewState::chat(db_conn),
@@ -50,7 +50,7 @@ impl Router {
     pub fn backend_event(
         &mut self,
         event: events::Event,
-        conn: &mut BackEndConnection<net::Message>,
+        conn: &mut BackEndConnection,
     ) -> Command<Message> {
         match event {
             event => match &mut self.state {
@@ -68,7 +68,7 @@ impl Router {
     pub fn update(
         &mut self,
         message: Message,
-        conn: &mut BackEndConnection<net::Message>,
+        conn: &mut BackEndConnection,
         selected_theme: Option<style::Theme>,
     ) -> Command<Message> {
         match message {
@@ -136,32 +136,32 @@ impl ViewState {
             _ => Subscription::none(),
         }
     }
-    pub fn channels(_db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn channels(_db_conn: &mut BackEndConnection) -> Self {
         Self::Channels {
             state: channels::State::new(),
         }
     }
-    pub fn chat(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn chat(db_conn: &mut BackEndConnection) -> Self {
         Self::Chat {
             state: chat::State::new(db_conn),
         }
     }
-    pub fn settings(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn settings(db_conn: &mut BackEndConnection) -> Self {
         Self::Settings {
             state: settings::Settings::new(db_conn),
         }
     }
-    pub fn settings_network(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn settings_network(db_conn: &mut BackEndConnection) -> Self {
         Self::Settings {
             state: settings::Settings::network(db_conn),
         }
     }
-    pub fn settings_about(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn settings_about(db_conn: &mut BackEndConnection) -> Self {
         Self::Settings {
             state: settings::Settings::about(db_conn),
         }
     }
-    pub fn settings_contacts(db_conn: &mut BackEndConnection<net::Message>) -> Self {
+    pub fn settings_contacts(db_conn: &mut BackEndConnection) -> Self {
         Self::Settings {
             state: settings::Settings::contacts(db_conn),
         }

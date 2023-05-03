@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 pub mod components;
 pub mod crypto;
 pub mod db;
@@ -16,7 +18,7 @@ use iced::{
     widget::{button, column, container, text},
     window, Application, Command, Length, Settings,
 };
-use net::{backend_connect, events, BackEndConnection, Connection};
+use net::{backend_connect, events, BackEndConnection};
 use nostr_sdk::{prelude::FromSkStr, Keys};
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::EnvFilter;
@@ -42,10 +44,13 @@ pub enum State {
     Login {
         state: login::State,
     },
+    LoadingBackend {
+        keys: Keys,
+    },
     App {
         keys: Keys,
-        conn: BackEndConnection<net::Message>,
         router: Router,
+        conn: BackEndConnection,
     },
     OutsideError {
         message: String,
@@ -57,16 +62,15 @@ impl State {
             state: login::State::new(),
         }
     }
-    pub fn to_app(secret_key: &str) -> Self {
+    pub fn to_loading_backend(secret_key: &str) -> Self {
         match Keys::from_sk_str(secret_key) {
-            Ok(keys) => Self::app(keys),
+            Ok(keys) => Self::LoadingBackend { keys },
             Err(e) => Self::OutsideError {
                 message: e.to_string(),
             },
         }
     }
-    pub fn app(keys: Keys) -> Self {
-        let mut conn = BackEndConnection::new();
+    pub fn to_app(keys: Keys, mut conn: BackEndConnection) -> Self {
         let router = Router::new(&mut conn);
         Self::App { keys, conn, router }
     }
@@ -101,7 +105,7 @@ impl Application for App {
     fn subscription(&self) -> iced::Subscription<Self::Message> {
         let backend_subscription: Vec<_> = match &self.state {
             State::Login { .. } | State::OutsideError { .. } => vec![],
-            State::App { keys, conn, .. } => backend_connect(keys, conn)
+            State::LoadingBackend { keys } | State::App { keys, .. } => backend_connect(keys)
                 .into_iter()
                 .map(|stream| stream.map(Message::BackEndEvent))
                 .collect(),
@@ -118,6 +122,9 @@ impl Application for App {
     fn view(&self) -> Element<Self::Message> {
         let content: Element<_> = match &self.state {
             State::Login { state } => state.view().map(Message::LoginMessage),
+            State::LoadingBackend { .. } => column![title("Loading App"), text("Please wait...")]
+                .spacing(10)
+                .into(),
             State::App { router, .. } => router.view().map(Message::RouterMessage),
             State::OutsideError { message } => {
                 let error_msg = text(message);
@@ -148,7 +155,7 @@ impl Application for App {
             Message::LoginMessage(login_msg) => {
                 if let State::Login { state } = &mut self.state {
                     if let login::Message::SubmitPress(secret_key) = login_msg {
-                        self.state = State::to_app(&secret_key);
+                        self.state = State::to_loading_backend(&secret_key);
                     } else {
                         state.update(login_msg);
                     }
@@ -171,19 +178,11 @@ impl Application for App {
             }
             Message::BackEndEvent(event) => match event {
                 events::Event::None => (),
-                events::Event::Connected => {
+                events::Event::Connected(mut ready_conn) => {
                     tracing::warn!("Connected to backend");
-                    if let State::App { conn, .. } = &mut self.state {
-                        conn.send(net::Message::PrepareClient);
-                    }
-                }
-                events::Event::IsProcessing => {
-                    // tracing::warn!("Database is processing messages");
-                }
-                events::Event::FinishedProcessing => {
-                    // tracing::warn!("Database finished");
-                    if let State::App { conn, .. } = &mut self.state {
-                        conn.send(net::Message::ProcessMessages);
+                    if let State::LoadingBackend { keys } = &mut self.state {
+                        ready_conn.send(net::Message::PrepareClient);
+                        self.state = State::to_app(keys.to_owned(), ready_conn);
                     }
                 }
                 events::Event::Error(e) => {
@@ -192,7 +191,7 @@ impl Application for App {
                 events::Event::FinishedPreparing => {
                     tracing::warn!("Finished preparing client");
                     if let State::App { conn, .. } = &mut self.state {
-                        if let Ok(db_relay) = DbRelay::from_str("ws://192.168.15.151:8080") {
+                        if let Ok(db_relay) = DbRelay::from_str("ws://192.168.85.151:8080") {
                             conn.send(net::Message::AddRelay(db_relay));
                         }
                     }
@@ -205,18 +204,6 @@ impl Application for App {
                             .map(Message::RouterMessage);
                     }
                 }
-                // events::Event::DbConnected => {
-                //     tracing::info!("Received Database Connected Event");
-                // }
-                // events::Event::DbDisconnected => {
-                //     tracing::info!("Database Disconnected");
-                // }
-                // events::Event::NostrConnected => {
-                //     tracing::info!("Received Nostr Client Connected Event");
-                // }
-                // events::Event::NostrDisconnected => {
-                //     tracing::info!("Nostr Client Disconnected");
-                // }
                 other => {
                     if let State::App { router, conn, .. } = &mut self.state {
                         return router
@@ -234,7 +221,7 @@ impl Application for App {
 #[tokio::main]
 async fn main() {
     if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "warn");
+        std::env::set_var("RUST_LOG", "info");
     }
 
     let env_filter = EnvFilter::from_default_env();
