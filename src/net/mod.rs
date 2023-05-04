@@ -1,4 +1,5 @@
-use crate::db::{Database, DbEvent};
+use crate::db::{query_has_logged_in, store_first_login, Database, DbEvent};
+use crate::error::Error;
 use crate::net::events::backend::{self, backend_processing};
 use crate::net::events::frontend::Event;
 use crate::net::events::nostr::NostrSdkWrapper;
@@ -6,10 +7,11 @@ use crate::net::logic::{delete_contact, import_contacts, insert_contact, update_
 use futures::channel::mpsc;
 use futures::{Future, StreamExt};
 use iced::futures::stream::Fuse;
+use iced::subscription;
 use iced::Subscription;
-use iced_native::subscription;
 use logic::*;
 use nostr_sdk::{Keys, RelayPoolNotification};
+use sqlx::SqlitePool;
 use std::pin::Pin;
 
 mod back_channel;
@@ -23,20 +25,18 @@ use self::events::nostr::{NostrInput, NostrOutput};
 pub(crate) use messages::Message;
 
 pub struct DatabaseState {
-    in_memory: bool,
     keys: Keys,
     db_client: Option<Database>,
     sender: mpsc::Sender<BackEndInput>,
     receiver: mpsc::Receiver<BackEndInput>,
 }
 impl DatabaseState {
-    pub fn new(keys: &Keys, in_memory: bool) -> Self {
+    pub fn new(keys: &Keys) -> Self {
         let (sender, receiver) = mpsc::channel(100);
         Self {
             sender,
             receiver,
             keys: keys.to_owned(),
-            in_memory,
             db_client: None,
         }
     }
@@ -61,6 +61,19 @@ impl DatabaseState {
         if let Some(db_client) = &mut self.db_client {
             let pool = &db_client.pool;
             match message {
+                // ---- CONFIG ----
+                Message::StoreFirstLogin => match store_first_login(pool).await {
+                    Ok(_) => Event::FirstLoginStored,
+                    Err(e) => Event::Error(e.to_string()),
+                },
+                Message::QueryFirstLogin => match handle_first_login(pool, client_sender).await {
+                    Ok(event) => event,
+                    Err(e) => Event::Error(e.to_string()),
+                },
+                Message::PrepareClient => match prepare_client(pool).await {
+                    Ok(input) => to_nostr_channel(client_sender, input),
+                    Err(e) => Event::Error(e.to_string()),
+                },
                 // -------- DATABASE MESSAGES -------
                 Message::RequestEvents => match DbEvent::fetch_last(pool).await {
                     Ok(last_event) => {
@@ -116,11 +129,6 @@ impl DatabaseState {
                         client_sender,
                         NostrInput::ConnectToRelay((db_relay, last_event)),
                     ),
-                    Err(e) => Event::Error(e.to_string()),
-                },
-                // ---- NOSTR ----
-                Message::PrepareClient => match prepare_client(pool).await {
-                    Ok(input) => to_nostr_channel(client_sender, input),
                     Err(e) => Event::Error(e.to_string()),
                 },
                 Message::AddRelay(db_relay) => {
@@ -235,29 +243,23 @@ pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
         id,
         State::Disconnected {
             keys: keys.clone(),
-            database: DatabaseState::new(&keys, IN_MEMORY),
+            database: DatabaseState::new(&keys),
         },
         |state| async move {
             match state {
                 State::Disconnected { keys, database } => {
                     let (sender, receiver) = mpsc::unbounded();
                     let nostr = NostrState::new(&keys).await;
-                    let db_client =
-                        match Database::new(database.in_memory, &keys.public_key().to_string())
-                            .await
-                        {
-                            Ok(database) => database,
-                            Err(e) => {
-                                tracing::error!("Failed to init database");
-                                tracing::error!("{}", e);
-                                tracing::warn!("Trying again in 2 secs");
-                                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                                return (
-                                    Event::Disconnected,
-                                    State::Disconnected { keys, database },
-                                );
-                            }
-                        };
+                    let db_client = match Database::new(&keys.public_key().to_string()).await {
+                        Ok(database) => database,
+                        Err(e) => {
+                            tracing::error!("Failed to init database");
+                            tracing::error!("{}", e);
+                            tracing::warn!("Trying again in 2 secs");
+                            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                            return (Event::Disconnected, State::Disconnected { keys, database });
+                        }
+                    };
 
                     (
                         Event::Connected(BackEndConnection::new(sender)),
@@ -365,4 +367,15 @@ fn to_backend_channel(
     )
 }
 
-const IN_MEMORY: bool = false;
+async fn handle_first_login(
+    pool: &SqlitePool,
+    client_sender: &mut mpsc::Sender<NostrInput>,
+) -> Result<Event, Error> {
+    if query_has_logged_in(pool).await? {
+        let input = prepare_client(pool).await?;
+        to_nostr_channel(client_sender, input);
+        Ok(Event::None)
+    } else {
+        Ok(Event::FirstLogin)
+    }
+}

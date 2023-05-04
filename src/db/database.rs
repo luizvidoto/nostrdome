@@ -1,7 +1,7 @@
 use crate::error::Error;
 
 use directories::ProjectDirs;
-use sqlx::SqlitePool;
+use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use std::cmp::Ordering;
 
 #[derive(Debug, Clone)]
@@ -10,14 +10,14 @@ pub struct Database {
 }
 
 impl Database {
-    pub async fn new(in_memory: bool, pubkey: &str) -> Result<Self, Error> {
+    pub async fn new(pubkey: &str) -> Result<Self, Error> {
         if let Some(dirs) = ProjectDirs::from("com", "NostrDome", "NostrDome") {
             tracing::debug!("Creating project directory");
             let project_dir = dirs.config_dir();
             std::fs::create_dir_all(project_dir)?;
 
             tracing::debug!("Creating database");
-            let db_url = if in_memory {
+            let db_url = if IN_MEMORY {
                 "sqlite::memory:".to_owned()
             } else {
                 let mut path_ext = String::new();
@@ -45,37 +45,6 @@ impl Database {
         }
     }
 }
-
-// pub async fn store_last_event_timestamp(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-//     let sql = r#"
-//         INSERT INTO last_event_received (id, timestamp)
-//         VALUES (1, ?)
-//         ON CONFLICT(id) DO UPDATE SET timestamp = excluded.timestamp;
-//     "#;
-
-//     sqlx::query(sql)
-//         .bind(Utc::now().timestamp_millis())
-//         .execute(pool)
-//         .await?;
-
-//     Ok(())
-// }
-
-// pub async fn get_last_event_received(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
-//     tracing::info!("Get last time an event was received");
-//     let last_received_timestamp: Option<i64> =
-//         sqlx::query_scalar("SELECT timestamp FROM last_event_received WHERE id = 1")
-//             .fetch_optional(pool)
-//             .await?;
-
-//     match last_received_timestamp {
-//         Some(timestamp) => {
-//             // Convert i64 to u64
-//             Ok(timestamp as u64)
-//         }
-//         None => Ok(0),
-//     }
-// }
 
 /// Upgrade DB to latest version, and execute pragma settings
 pub async fn upgrade_db(pool: &SqlitePool) -> Result<(), Error> {
@@ -123,6 +92,23 @@ pub async fn upgrade_db(pool: &SqlitePool) -> Result<(), Error> {
     Ok(())
 }
 
+pub async fn store_first_login(pool: &SqlitePool) -> Result<(), Error> {
+    tracing::warn!("store_first_login");
+    let query = "INSERT INTO user_config (id, has_logged_in) VALUES (1, 1);";
+    sqlx::query(query).execute(pool).await?;
+    Ok(())
+}
+
+pub async fn query_has_logged_in(pool: &SqlitePool) -> Result<bool, Error> {
+    let query = "SELECT has_logged_in FROM user_config;";
+    let has_logged_in: Option<i32> = sqlx::query(query)
+        .map(|row: SqliteRow| row.get(0))
+        .fetch_optional(pool)
+        .await?;
+    let has_logged_in = has_logged_in.unwrap_or(0);
+    Ok(has_logged_in != 0)
+}
+
 /// Determine the current application database schema version.
 pub async fn curr_db_version(pool: &SqlitePool) -> Result<usize, Error> {
     let query = "PRAGMA user_version;";
@@ -167,6 +153,8 @@ const INITIAL_SETUP: [&str; 8] = [
     include_str!("../../migrations/4_tag.sql"),
     include_str!("../../migrations/5_contact.sql"),
     include_str!("../../migrations/6_message.sql"),
-    include_str!("../../migrations/7_event_timestamp.sql"),
+    include_str!("../../migrations/7_user_config.sql"),
     include_str!("../../migrations/8_relay_response.sql"),
 ];
+
+const IN_MEMORY: bool = false;

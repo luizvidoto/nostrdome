@@ -1,6 +1,5 @@
-use iced::widget::{button, row, text};
+use iced::widget::{button, container, row, text};
 use iced::Length;
-use iced_native::widget::container;
 
 use crate::db::DbContact;
 use crate::icon::{delete_icon, edit_icon};
@@ -45,7 +44,7 @@ impl ContactRow {
                 .width(Length::Fixed(NAME_CELL_WIDTH_MIN))
                 .max_width(NAME_CELL_WIDTH_MAX),
             container(text("Relay"))
-                .align_x(iced_native::alignment::Horizontal::Left)
+                .align_x(iced::alignment::Horizontal::Left)
                 .width(Length::Fill),
             container(text("")).width(Length::Fixed(EDIT_BTN_WIDTH)),
             container(text("")).width(Length::Fixed(REMOVE_BTN_WIDTH)),

@@ -38,8 +38,10 @@ pub enum Event {
     RequestedEvents,
     SentDirectMessage(nostr_sdk::EventId),
     // --- Config ---
+    FirstLogin,
     Connected(BackEndConnection),
     Disconnected,
+    FirstLoginStored,
     FinishedPreparing,
     // --- General ---
     Error(String),

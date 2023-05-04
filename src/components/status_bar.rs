@@ -1,7 +1,7 @@
 use futures::channel::mpsc;
 use iced::widget::{button, container, row, text, Space};
+use iced::Subscription;
 use iced::{alignment, Command, Length};
-use iced_native::Subscription;
 use nostr_sdk::RelayStatus;
 
 use crate::icon::signal_icon;
@@ -128,7 +128,7 @@ impl StatusBar {
                         )
                     }
                     NetState::Idle { mut receiver } => {
-                        use iced_native::futures::StreamExt;
+                        use iced::futures::StreamExt;
 
                         tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
 

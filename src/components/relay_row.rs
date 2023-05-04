@@ -1,13 +1,13 @@
 use crate::db::DbRelay;
-use crate::icon::{circle_icon, delete_icon, server_icon};
+use crate::icon::{delete_icon, server_icon, solid_circle_icon};
 use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::utils::event_tt_to_naive;
 use crate::widget::Element;
 use chrono::Utc;
+use iced::futures::channel::mpsc;
 use iced::widget::{button, checkbox, container, row, text, tooltip};
 use iced::{alignment, Command, Length, Subscription};
-use iced_native::futures::channel::mpsc;
 use nostr_sdk::{Relay, RelayStatus, Timestamp};
 
 #[derive(Debug, Clone)]
@@ -96,7 +96,7 @@ impl RelayRow {
                         )
                     }
                     State::Idle { mut receiver, id } => {
-                        use iced_native::futures::StreamExt;
+                        use iced::futures::StreamExt;
 
                         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
@@ -233,19 +233,19 @@ impl RelayRow {
         let (status_icon, status_text) = match &self.db_relay.status {
             Some(last_active) => {
                 let status_icon = match last_active.0 {
-                    RelayStatus::Initialized => circle_icon()
+                    RelayStatus::Initialized => solid_circle_icon()
                         .size(16)
                         .style(style::Text::RelayStatusInitialized),
-                    RelayStatus::Connected => circle_icon()
+                    RelayStatus::Connected => solid_circle_icon()
                         .size(16)
                         .style(style::Text::RelayStatusConnected),
-                    RelayStatus::Connecting => circle_icon()
+                    RelayStatus::Connecting => solid_circle_icon()
                         .size(16)
                         .style(style::Text::RelayStatusConnecting),
-                    RelayStatus::Disconnected => circle_icon()
+                    RelayStatus::Disconnected => solid_circle_icon()
                         .size(16)
                         .style(style::Text::RelayStatusDisconnected),
-                    RelayStatus::Terminated => circle_icon()
+                    RelayStatus::Terminated => solid_circle_icon()
                         .size(16)
                         .style(style::Text::RelayStatusTerminated),
                 };
@@ -253,7 +253,7 @@ impl RelayRow {
                 (status_icon, status_text)
             }
             None => (
-                circle_icon()
+                solid_circle_icon()
                     .size(16)
                     .style(style::Text::RelayStatusLoading),
                 "Loading".into(),

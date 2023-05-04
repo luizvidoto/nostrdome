@@ -44,6 +44,9 @@ pub struct AppPalette {
     pub chat_search_input_bg: Color,
     pub status_bar_bg: Color,
     pub hover_status_bar_bg: Color,
+    pub welcome_bg_1: Color,
+    pub welcome_bg_2: Color,
+    pub welcome_bg_3: Color,
 }
 impl AppPalette {
     pub const LIGHT: Self = Self {
@@ -71,6 +74,9 @@ impl AppPalette {
         chat_search_input_bg: Color::from_rgb(36.0 / 255.0, 47.0 / 255.0, 61.0 / 255.0),
         status_bar_bg: Color::from_rgb(25.0 / 255.0, 26.0 / 255.0, 33.0 / 255.0),
         hover_status_bar_bg: Color::from_rgb(52.0 / 255.0, 53.0 / 255.0, 59.0 / 255.0),
+        welcome_bg_1: Color::from_rgb(42.0 / 255.0, 37.0 / 255.0, 120.0 / 255.0),
+        welcome_bg_2: Color::from_rgb(26.0 / 255.0, 36.0 / 255.0, 56.0 / 255.0),
+        welcome_bg_3: Color::from_rgb(16.0 / 255.0, 21.0 / 255.0, 60.0 / 255.0),
     };
     pub const DARK: Self = Self {
         background: Color::from_rgb(23.0 / 255.0, 33.0 / 255.0, 43.0 / 255.0),
@@ -97,6 +103,9 @@ impl AppPalette {
         chat_search_input_bg: Color::from_rgb(36.0 / 255.0, 47.0 / 255.0, 61.0 / 255.0),
         status_bar_bg: Color::from_rgb(25.0 / 255.0, 26.0 / 255.0, 33.0 / 255.0),
         hover_status_bar_bg: Color::from_rgb(52.0 / 255.0, 53.0 / 255.0, 59.0 / 255.0),
+        welcome_bg_1: Color::from_rgb(42.0 / 255.0, 37.0 / 255.0, 120.0 / 255.0),
+        welcome_bg_2: Color::from_rgb(26.0 / 255.0, 36.0 / 255.0, 56.0 / 255.0),
+        welcome_bg_3: Color::from_rgb(16.0 / 255.0, 21.0 / 255.0, 60.0 / 255.0),
     };
 }
 
@@ -289,6 +298,9 @@ pub enum Container {
     ChatContainer,
     ChatDateDivider,
     StatusBar,
+    WelcomeBg1,
+    WelcomeBg2,
+    WelcomeBg3,
 }
 
 impl container::StyleSheet for Theme {
@@ -341,6 +353,21 @@ impl container::StyleSheet for Theme {
             },
             Container::StatusBar => container::Appearance {
                 background: self.pallete().status_bar_bg.into(),
+                text_color: self.pallete().text_color.into(),
+                ..def
+            },
+            Container::WelcomeBg1 => container::Appearance {
+                background: self.pallete().welcome_bg_1.into(),
+                text_color: self.pallete().text_color.into(),
+                ..def
+            },
+            Container::WelcomeBg2 => container::Appearance {
+                background: self.pallete().welcome_bg_2.into(),
+                text_color: self.pallete().text_color.into(),
+                ..def
+            },
+            Container::WelcomeBg3 => container::Appearance {
+                background: self.pallete().welcome_bg_3.into(),
                 text_color: self.pallete().text_color.into(),
                 ..def
             },

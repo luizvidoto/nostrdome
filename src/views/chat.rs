@@ -1,7 +1,7 @@
 use chrono::{Datelike, NaiveDateTime};
+use iced::subscription::Subscription;
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
 use iced::{alignment, Command, Length};
-use iced_native::Subscription;
 
 use crate::components::{contact_card, status_bar, StatusBar};
 use crate::db::DbContact;

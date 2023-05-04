@@ -6,6 +6,8 @@ use crate::{
 #[derive(Debug, Clone)]
 pub enum Message {
     // -------- DATABASE MESSAGES
+    QueryFirstLogin,
+    StoreFirstLogin,
     PrepareClient,
     FetchRelayResponses(i64),
     FetchMessages(DbContact),

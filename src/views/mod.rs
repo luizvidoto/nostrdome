@@ -9,8 +9,9 @@ use crate::{
 
 mod channels;
 mod chat;
-pub mod login;
-pub mod settings;
+pub(crate) mod login;
+pub(crate) mod settings;
+pub(crate) mod welcome;
 
 #[derive(Debug, Clone)]
 pub enum Message {

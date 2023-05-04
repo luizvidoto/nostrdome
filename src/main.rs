@@ -1,16 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-pub mod components;
-pub mod crypto;
-pub mod db;
-pub mod error;
-pub mod icon;
-pub mod net;
-pub mod style;
-pub mod types;
-pub mod utils;
-pub mod views;
-pub mod widget;
+pub(crate) mod components;
+pub(crate) mod consts;
+pub(crate) mod crypto;
+pub(crate) mod db;
+pub(crate) mod error;
+pub(crate) mod icon;
+pub(crate) mod net;
+pub(crate) mod style;
+pub(crate) mod types;
+pub(crate) mod utils;
+pub(crate) mod views;
+pub(crate) mod widget;
 
 use components::text::title;
 use iced::{
@@ -25,7 +26,7 @@ use tracing_subscriber::EnvFilter;
 use views::{
     login,
     settings::{self, appearance},
-    Router,
+    welcome, Router,
 };
 use widget::Element;
 
@@ -36,9 +37,8 @@ pub enum Message {
     RouterMessage(views::Message),
     BackEndEvent(events::Event),
     LoginMessage(login::Message),
+    WelcomeMessage(welcome::Message),
     ToLogin,
-    DatabaseStarted,
-    NostrClientStarted,
 }
 pub enum State {
     Login {
@@ -46,6 +46,15 @@ pub enum State {
     },
     LoadingBackend {
         keys: Keys,
+    },
+    BackendLoaded {
+        keys: Keys,
+        conn: BackEndConnection,
+    },
+    Welcome {
+        keys: Keys,
+        conn: BackEndConnection,
+        state: welcome::State,
     },
     App {
         keys: Keys,
@@ -62,6 +71,13 @@ impl State {
             state: login::State::new(),
         }
     }
+    pub fn welcome(keys: Keys, conn: BackEndConnection) -> Self {
+        Self::Welcome {
+            state: welcome::State::new(),
+            keys,
+            conn,
+        }
+    }
     pub fn to_loading_backend(secret_key: &str) -> Self {
         match Keys::from_sk_str(secret_key) {
             Ok(keys) => Self::LoadingBackend { keys },
@@ -69,6 +85,9 @@ impl State {
                 message: e.to_string(),
             },
         }
+    }
+    pub fn backend_loaded(keys: Keys, conn: BackEndConnection) -> Self {
+        Self::BackendLoaded { keys, conn }
     }
     pub fn to_app(keys: Keys, mut conn: BackEndConnection) -> Self {
         let router = Router::new(&mut conn);
@@ -105,7 +124,10 @@ impl Application for App {
     fn subscription(&self) -> iced::Subscription<Self::Message> {
         let backend_subscription: Vec<_> = match &self.state {
             State::Login { .. } | State::OutsideError { .. } => vec![],
-            State::LoadingBackend { keys } | State::App { keys, .. } => backend_connect(keys)
+            State::LoadingBackend { keys }
+            | State::Welcome { keys, .. }
+            | State::BackendLoaded { keys, .. }
+            | State::App { keys, .. } => backend_connect(keys)
                 .into_iter()
                 .map(|stream| stream.map(Message::BackEndEvent))
                 .collect(),
@@ -122,9 +144,12 @@ impl Application for App {
     fn view(&self) -> Element<Self::Message> {
         let content: Element<_> = match &self.state {
             State::Login { state } => state.view().map(Message::LoginMessage),
-            State::LoadingBackend { .. } => column![title("Loading App"), text("Please wait...")]
-                .spacing(10)
-                .into(),
+            State::Welcome { state, .. } => state.view().map(Message::WelcomeMessage),
+            State::LoadingBackend { .. } | State::BackendLoaded { .. } => {
+                column![title("Loading App"), text("Please wait...")]
+                    .spacing(10)
+                    .into()
+            }
             State::App { router, .. } => router.view().map(Message::RouterMessage),
             State::OutsideError { message } => {
                 let error_msg = text(message);
@@ -143,11 +168,10 @@ impl Application for App {
     }
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
-            Message::DatabaseStarted => {
-                println!("--- DATABASE STARTED PROCESSING MESSAGES ---");
-            }
-            Message::NostrClientStarted => {
-                println!("--- NOSTR CLIENT STARTED PROCESSING MESSAGES ---");
+            Message::WelcomeMessage(welcome_msg) => {
+                if let State::Welcome { state, .. } = &mut self.state {
+                    state.update(welcome_msg);
+                }
             }
             Message::ToLogin => {
                 self.state = State::login();
@@ -178,11 +202,17 @@ impl Application for App {
             }
             Message::BackEndEvent(event) => match event {
                 events::Event::None => (),
+                events::Event::FirstLogin => {
+                    tracing::warn!("First login");
+                    if let State::BackendLoaded { keys, conn } = &mut self.state {
+                        self.state = State::welcome(keys.to_owned(), conn.to_owned());
+                    }
+                }
                 events::Event::Connected(mut ready_conn) => {
                     tracing::warn!("Connected to backend");
                     if let State::LoadingBackend { keys } = &mut self.state {
-                        ready_conn.send(net::Message::PrepareClient);
-                        self.state = State::to_app(keys.to_owned(), ready_conn);
+                        ready_conn.send(net::Message::QueryFirstLogin);
+                        self.state = State::backend_loaded(keys.to_owned(), ready_conn);
                     }
                 }
                 events::Event::Error(e) => {
@@ -190,10 +220,12 @@ impl Application for App {
                 }
                 events::Event::FinishedPreparing => {
                     tracing::warn!("Finished preparing client");
-                    if let State::App { conn, .. } = &mut self.state {
+                    if let State::BackendLoaded { conn, keys } = &mut self.state {
+                        // only for testing
                         if let Ok(db_relay) = DbRelay::from_str("ws://192.168.85.151:8080") {
                             conn.send(net::Message::AddRelay(db_relay));
                         }
+                        self.state = State::to_app(keys.to_owned(), conn.to_owned());
                     }
                 }
                 events::Event::RelayCreated(db_relay) => {
@@ -221,7 +253,7 @@ impl Application for App {
 #[tokio::main]
 async fn main() {
     if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "warn");
+        std::env::set_var("RUST_LOG", "info");
     }
 
     let env_filter = EnvFilter::from_default_env();

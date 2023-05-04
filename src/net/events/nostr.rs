@@ -2,13 +2,11 @@ use async_stream::stream;
 use futures::channel::mpsc;
 use futures::{Future, Stream, StreamExt};
 use iced::futures::stream::Fuse;
-use nostr_sdk::secp256k1::XOnlyPublicKey;
 use nostr_sdk::{Client, Filter, Keys, RelayPoolNotification, Timestamp};
 use std::pin::Pin;
 
 use crate::error::Error;
 use crate::net::logic::request_events;
-use crate::types::ChatMessage;
 use crate::{
     db::{DbContact, DbEvent, DbRelay},
     net::logic::{
@@ -35,7 +33,6 @@ pub enum NostrInput {
     ToggleRelayRead((DbRelay, bool)),
     ToggleRelayWrite((DbRelay, bool)),
     ConnectToRelay((DbRelay, Option<DbEvent>)),
-    SendDMTo((DbContact, String)),
     SendContactListToRelay((DbRelay, Vec<DbContact>)),
     CreateChannel,
 }
@@ -191,17 +188,6 @@ impl NostrSdkWrapper {
                     )
                     .await;
                 });
-            }
-            NostrInput::SendDMTo((db_contact, content)) => {
-                tracing::info!("SendDMTo");
-                // let keys_1 = keys.clone();
-                // tokio::spawn(async move {
-                //     run_and_send(
-                //         send_dm(&client, &keys_1, &db_contact, &content),
-                //         &mut channel,
-                //     )
-                //     .await;
-                // });
             }
             NostrInput::SendContactListToRelay((db_relay, list)) => {
                 tracing::info!("SendContactListToRelay");
