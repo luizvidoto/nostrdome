@@ -1,5 +1,5 @@
 use iced::widget::{button, column, container, image, row, text};
-use iced::Length;
+use iced::{Alignment, Length};
 
 use crate::consts::{CONTACTS_IMAGE, RELAYS_IMAGE, WELCOME_IMAGE};
 use crate::icon::{regular_circle_icon, solid_circle_icon};
@@ -27,15 +27,38 @@ impl State {
         }
     }
     pub fn view(&self) -> Element<Message> {
-        let title_1 = "Welcome to NostrDome";
-        let text_1a = "Secure, encrypted chats on the NOSTR network.";
-        let text_1b = "Protect your privacy effortlessly.";
-        let title_2 = "Manage Your Relays";
-        let text_2a = "NostrDome connects to multiple servers known as Relays, giving you the power to choose which servers you want to connect to.";
-        let text_2b = "You can easily manage your Relays and customize your experience to suit your privacy needs.";
-        let title_3 = "Handle Your Contacts";
-        let text_3a = "Effortlessly manage your contacts and share them with connected Relays.";
-        let text_3b = "Create backups of your sent messages, ensuring that your valuable conversations are always preserved.";
+        let title_1 = "NostrDome";
+        let text_1a = "Secure, encrypted chats on the NOSTR network";
+        let title_2 = "Relays Setup";
+        let text_2 = "Add relays to connect";
+        let title_3 = "Contacts";
+        let text_3 = "Import from relays, a file or add a new one";
+        let relay_list = vec![
+            "wss://relay.plebstr.com",
+            "wss://nostr.wine",
+            "wss://relay.nostr.info",
+            "wss://relay.snort.social",
+            "ws://192.168.15.151:8080",
+        ]
+        .iter()
+        .fold(column![].spacing(5), |column, relay| {
+            column.push(
+                container(
+                    row![
+                        container(solid_circle_icon()),
+                        container(text(relay).size(20)).width(Length::Fill),
+                    ]
+                    .spacing(10)
+                    .align_items(Alignment::Center),
+                )
+                .width(Length::Fill)
+                .height(Length::Shrink),
+            )
+        });
+        let relays_sugestions = container(relay_list)
+            .style(style::Container::Bordered)
+            .width(Length::Fill)
+            .height(Length::Fill);
 
         let welcome_image = image::Image::new(image::Handle::from_memory(WELCOME_IMAGE));
         let relays_image = image::Image::new(image::Handle::from_memory(RELAYS_IMAGE));
@@ -101,17 +124,13 @@ impl State {
                                 .max_width(WELCOME_IMAGE_MAX_WIDTH)
                                 .height(Length::Fill),
                             container(
-                                column![
-                                    text(text_2a).size(WELCOME_TEXT_SIZE),
-                                    text(text_2b).size(WELCOME_TEXT_SIZE)
-                                ]
-                                .spacing(10)
+                                column![text(text_2).size(WELCOME_TEXT_SIZE), relays_sugestions]
+                                    .spacing(10)
                             )
                             .width(Length::Fixed(WELCOME_TEXT_WIDTH))
                             .height(Length::Fill)
                             .center_x()
                             .center_y(),
-                            // sugestões de relays para adicionar?
                         ]
                         .spacing(20)
                     )
@@ -159,17 +178,11 @@ impl State {
                             container(contacts_image)
                                 .max_width(WELCOME_IMAGE_MAX_WIDTH)
                                 .height(Length::Fill),
-                            container(
-                                column![
-                                    text(text_3a).size(WELCOME_TEXT_SIZE),
-                                    text(text_3b).size(WELCOME_TEXT_SIZE)
-                                ]
-                                .spacing(10)
-                            )
-                            .width(Length::Fixed(WELCOME_TEXT_WIDTH))
-                            .height(Length::Fill)
-                            .center_x()
-                            .center_y(),
+                            container(column![text(text_3).size(WELCOME_TEXT_SIZE),].spacing(10))
+                                .width(Length::Fixed(WELCOME_TEXT_WIDTH))
+                                .height(Length::Fill)
+                                .center_x()
+                                .center_y(),
                         ]
                         .spacing(20)
                     )
