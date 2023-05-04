@@ -31,7 +31,7 @@ impl checkbox::StyleSheet for Theme {
         match style {
             Checkbox::Default => checkbox::Appearance {
                 background: if is_checked {
-                    self.pallete().send_button.into()
+                    self.pallete().primary.into()
                 } else {
                     self.pallete().background.into()
                 },

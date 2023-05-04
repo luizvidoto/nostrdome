@@ -2,7 +2,6 @@
 
 pub(crate) mod components;
 pub(crate) mod consts;
-pub(crate) mod crypto;
 pub(crate) mod db;
 pub(crate) mod error;
 pub(crate) mod icon;
@@ -19,12 +18,8 @@ use iced::{
     widget::{button, column, container, text},
     window, Application, Command, Length, Settings,
 };
-use net::{
-    backend_connect,
-    events::{self, Event},
-    BackEndConnection,
-};
-use nostr_sdk::{prelude::FromSkStr, Keys};
+use net::{backend_connect, events::Event, BackEndConnection};
+use nostr_sdk::Keys;
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::EnvFilter;
 use views::{
@@ -82,13 +77,8 @@ impl State {
             conn,
         }
     }
-    pub fn to_loading_backend(secret_key: &str) -> Self {
-        match Keys::from_sk_str(secret_key) {
-            Ok(keys) => Self::LoadingBackend { keys },
-            Err(e) => Self::OutsideError {
-                message: e.to_string(),
-            },
-        }
+    pub fn to_loading_backend(keys: Keys) -> Self {
+        Self::LoadingBackend { keys }
     }
     pub fn backend_loaded(keys: Keys, conn: BackEndConnection) -> Self {
         Self::BackendLoaded { keys, conn }
@@ -189,10 +179,10 @@ impl Application for App {
             }
             Message::LoginMessage(login_msg) => {
                 if let State::Login { state } = &mut self.state {
-                    if let login::Message::SubmitPress(secret_key) = login_msg {
-                        self.state = State::to_loading_backend(&secret_key);
-                    } else {
-                        state.update(login_msg);
+                    if let Some(msg) = state.update(login_msg) {
+                        if let login::Message::LoginSuccess(keys) = msg {
+                            self.state = State::to_loading_backend(keys);
+                        }
                     }
                 }
             }

@@ -7,6 +7,7 @@ pub enum Text {
     #[default]
     Default,
     Primary,
+    Danger,
     ChatMessageStatus,
     ChatMessageDate,
     Placeholder,
@@ -31,7 +32,10 @@ impl text::StyleSheet for Theme {
                 }
             }
             Text::Primary => text::Appearance {
-                color: self.pallete().send_button.into(),
+                color: self.pallete().primary.into(),
+            },
+            Text::Danger => text::Appearance {
+                color: self.pallete().danger.into(),
             },
             Text::ChatMessageStatus => text::Appearance {
                 color: self.pallete().sent_message_status.into(),

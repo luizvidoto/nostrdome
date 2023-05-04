@@ -50,9 +50,6 @@ impl FileImporter {
             .width(Length::Fill)
             .into()
     }
-    pub fn reset_inputs(&mut self) {
-        self.file_input = "".into();
-    }
     pub fn update(&mut self, message: Message) -> Option<Message> {
         match message {
             Message::ChooseFile => {

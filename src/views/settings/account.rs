@@ -2,7 +2,7 @@ use iced::widget::{button, column};
 use nostr_sdk::Metadata;
 
 use crate::components::text::title;
-use crate::components::text_input_group::text_input_group;
+use crate::components::text_input_group::TextInputGroup;
 use crate::net::events::Event;
 use crate::widget::Element;
 
@@ -67,70 +67,49 @@ impl State {
     pub fn view(&self) -> Element<Message> {
         let title = title("Account");
 
-        let profile_name_input = text_input_group(
-            "Name",
-            "Name",
-            &self.name,
-            None,
-            Message::ProfileNameChange,
-            None,
-        );
-        let user_name_input = text_input_group(
-            "Username",
-            "Username",
-            &self.user_name,
-            None,
-            Message::UserNameChange,
-            None,
-        );
-        let picture_url_input = text_input_group(
-            "Picture Url",
-            "https://my-picture.com/img/bitcoin_is_king.jpg",
-            &self.picture_url,
-            None,
-            Message::PictureUrlChange,
-            None,
-        );
-        let about_input = text_input_group(
-            "About",
-            "About you, what you like, what you post, etc.",
-            &self.about,
-            None,
-            Message::AboutChange,
-            None,
-        );
-        let banner_input = text_input_group(
-            "Banner",
-            "https://my-picture.com/img/bitcoin_is_king.jpg",
-            &self.banner,
-            None,
-            Message::BannerChange,
-            None,
-        );
-        let website_input = text_input_group(
-            "Website",
-            "https://my-website-rocks.com",
-            &self.website,
-            None,
-            Message::WebsiteChange,
-            None,
-        );
-        let ln_input = text_input_group(
+        let profile_name_input =
+            TextInputGroup::new("Name", &self.name, Message::ProfileNameChange)
+                .placeholder("Name")
+                .build();
+
+        let user_name_input =
+            TextInputGroup::new("Username", &self.user_name, Message::UserNameChange)
+                .placeholder("Username")
+                .build();
+
+        let picture_url_input =
+            TextInputGroup::new("Picture Url", &self.picture_url, Message::PictureUrlChange)
+                .placeholder("https://my-picture.com/img/bitcoin_is_king.jpg")
+                .build();
+
+        let about_input = TextInputGroup::new("About", &self.about, Message::AboutChange)
+            .placeholder("About you, what you like, what you post, etc.")
+            .build();
+
+        let banner_input = TextInputGroup::new("Banner", &self.banner, Message::BannerChange)
+            .placeholder("https://my-picture.com/img/bitcoin_is_king.jpg")
+            .build();
+
+        let website_input = TextInputGroup::new("Website", &self.website, Message::WebsiteChange)
+            .placeholder("https://my-website-rocks.com")
+            .build();
+
+        let ln_input = TextInputGroup::new(
             "Lightning Network Address (LUD 16)",
-            "my-ln-address@walletofsatoshi.com",
             &self.ln_addrs,
-            Some("Some wallets support Lightning Network Address".to_string()),
             Message::LNChange,
-            None,
-        );
-        let nostr_addrs_input = text_input_group(
+        )
+        .placeholder("my-ln-address@walletofsatoshi.com")
+        .tooltip("Some wallets support Lightning Network Address")
+        .build();
+
+        let nostr_addrs_input = TextInputGroup::new(
             "Nostr Address (NIP 05)",
-            "my-addrs@example.com",
             &self.nostr_addrs,
-            None,
             Message::NIP05Change,
-            None,
-        );
+        )
+        .placeholder("my-addrs@example.com")
+        .build();
 
         let submit_btn = button("Submit").on_press(Message::SubmitPress);
 

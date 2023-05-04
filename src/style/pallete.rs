@@ -4,7 +4,8 @@ use iced::Color;
 pub struct AppPalette {
     pub background: Color,
     pub chat_bg: Color,
-    pub send_button: Color,
+    pub primary: Color,
+    pub danger: Color,
     pub text_color: Color,
     pub link_1: Color,
     pub link_2: Color,
@@ -34,7 +35,8 @@ impl AppPalette {
     pub const LIGHT: Self = Self {
         background: Color::from_rgb(23.0 / 255.0, 33.0 / 255.0, 43.0 / 255.0),
         chat_bg: Color::from_rgb(14.0 / 255.0, 22.0 / 255.0, 33.0 / 255.0),
-        send_button: Color::from_rgb(82.0 / 255.0, 136.0 / 255.0, 193.0 / 255.0),
+        primary: Color::from_rgb(82.0 / 255.0, 136.0 / 255.0, 193.0 / 255.0),
+        danger: Color::from_rgb(246.0 / 255.0, 50.0 / 255.0, 126.0 / 255.0),
         text_color: Color::from_rgb(245.0 / 255.0, 245.0 / 255.0, 245.0 / 255.0),
         link_1: Color::from_rgb(106.0 / 255.0, 179.0 / 255.0, 243.0 / 255.0),
         link_2: Color::from_rgb(115.0 / 255.0, 185.0 / 255.0, 245.0 / 255.0),
@@ -63,7 +65,8 @@ impl AppPalette {
     pub const DARK: Self = Self {
         background: Color::from_rgb(23.0 / 255.0, 33.0 / 255.0, 43.0 / 255.0),
         chat_bg: Color::from_rgb(14.0 / 255.0, 22.0 / 255.0, 33.0 / 255.0),
-        send_button: Color::from_rgb(82.0 / 255.0, 136.0 / 255.0, 193.0 / 255.0),
+        primary: Color::from_rgb(82.0 / 255.0, 136.0 / 255.0, 193.0 / 255.0),
+        danger: Color::from_rgb(246.0 / 255.0, 50.0 / 255.0, 126.0 / 255.0),
         text_color: Color::from_rgb(245.0 / 255.0, 245.0 / 255.0, 245.0 / 255.0),
         link_1: Color::from_rgb(106.0 / 255.0, 179.0 / 255.0, 243.0 / 255.0),
         link_2: Color::from_rgb(115.0 / 255.0, 185.0 / 255.0, 245.0 / 255.0),

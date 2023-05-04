@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 use iced::application;
 
 use self::pallete::AppPalette;

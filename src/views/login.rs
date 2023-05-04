@@ -3,9 +3,10 @@ use iced::{
     widget::{button, column, container, row, text, Space},
     Length,
 };
+use nostr_sdk::{prelude::FromSkStr, Keys};
 
 use crate::{
-    components::{text::title, text_input_group::text_input_group},
+    components::{text::title, text_input_group::TextInputGroup},
     style,
     widget::Element,
 };
@@ -21,6 +22,7 @@ pub enum Message {
     NameInputChange(String),
     AboutInputChange(String),
     ProfilePictureInputChange(String),
+    LoginSuccess(Keys),
 }
 
 #[allow(dead_code)]
@@ -56,7 +58,7 @@ impl State {
         }
     }
 
-    pub fn update(&mut self, message: Message) {
+    pub fn update(&mut self, message: Message) -> Option<Message> {
         match self {
             State::ChooseAccount => match message {
                 Message::ToCreateAccount => *self = Self::create_account(),
@@ -81,12 +83,23 @@ impl State {
                 secret_key_input,
                 is_invalid,
             } => match message {
-                Message::SecretKeyInputChange(secret_key) => *secret_key_input = secret_key,
-                Message::SubmitPress(_) => (),
+                Message::SecretKeyInputChange(secret_key) => {
+                    *secret_key_input = secret_key;
+                    *is_invalid = false;
+                }
+                Message::SubmitPress(secret_key) => match Keys::from_sk_str(&secret_key) {
+                    Ok(keys) => return Some(Message::LoginSuccess(keys)),
+                    Err(e) => {
+                        tracing::error!("Invalid secret key: {}", e);
+                        *is_invalid = true;
+                    }
+                },
                 Message::ToChooseAccount => *self = Self::new(),
                 _ => (),
             },
         }
+
+        None
     }
 
     pub fn view(&self) -> Element<Message> {
@@ -137,23 +150,13 @@ impl State {
                 about_input,
                 profile_picture_input,
             } => {
-                let name_input =
-                    text_input_group("Name", "", name_input, None, Message::NameInputChange, None);
-                let about_input = text_input_group(
-                    "About",
-                    "",
-                    about_input,
-                    None,
-                    Message::AboutInputChange,
-                    None,
-                );
-                let profile_pic_input = text_input_group(
+                let name_input = TextInputGroup::new("Name", name_input, Message::NameInputChange);
+                let about_input =
+                    TextInputGroup::new("About", about_input, Message::AboutInputChange);
+                let profile_pic_input = TextInputGroup::new(
                     "Profile Picture",
-                    "",
                     profile_picture_input,
-                    None,
                     Message::ProfilePictureInputChange,
-                    None,
                 );
                 let back_btn = button("Back")
                     .style(style::Button::Invisible)
@@ -163,9 +166,9 @@ impl State {
                     row![back_btn, Space::with_width(Length::Fill), submit_btn].spacing(10);
                 column![
                     title("Create Nostr Account"),
-                    name_input,
-                    about_input,
-                    profile_pic_input,
+                    name_input.build(),
+                    about_input.build(),
+                    profile_pic_input.build(),
                     buttons
                 ]
                 .spacing(20)
@@ -175,14 +178,18 @@ impl State {
                 secret_key_input,
                 is_invalid,
             } => {
-                let secret_input = text_input_group(
+                let mut secret_input = TextInputGroup::new(
                     "Secret Key",
-                    "a4s6d84as6d4a...",
                     secret_key_input,
-                    None,
                     Message::SecretKeyInputChange,
-                    Some(Message::SubmitPress(secret_key_input.clone())),
-                );
+                )
+                .placeholder("a4s6d84as6d4a...")
+                .on_submit(Message::SubmitPress(secret_key_input.clone()));
+
+                if *is_invalid {
+                    secret_input = secret_input.invalid("Invalid Secret Key");
+                }
+
                 let back_btn = button("Back")
                     .style(style::Button::Invisible)
                     .on_press(Message::ToChooseAccount);
@@ -190,7 +197,7 @@ impl State {
                     button("Submit").on_press(Message::SubmitPress(secret_key_input.clone()));
                 let buttons =
                     row![back_btn, Space::with_width(Length::Fill), submit_btn].spacing(10);
-                column![title("Login"), secret_input, buttons]
+                column![title("Login"), secret_input.build(), buttons]
                     .spacing(20)
                     .into()
             }

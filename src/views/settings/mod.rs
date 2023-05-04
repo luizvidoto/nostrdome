@@ -5,7 +5,7 @@ use iced_aw::{Card, Modal};
 use nostr_sdk::{Metadata, Tag};
 
 use crate::components::text::title;
-use crate::components::text_input_group::text_input_group;
+use crate::components::text_input_group::TextInputGroup;
 use crate::components::{file_importer, FileImporter};
 use crate::db::{DbContact, DbRelay};
 use crate::net::events::Event;
@@ -137,10 +137,6 @@ pub struct Settings {
     modal_state: ModalState,
 }
 impl Settings {
-    pub fn reset_inputs(&mut self) {
-        self.modal_state = ModalState::Off;
-    }
-
     pub fn subscription(&self) -> Subscription<Message> {
         match &self.menu_state {
             MenuState::Network { state } => state.subscription().map(Message::NetworkMessage),
@@ -569,30 +565,30 @@ impl ModalState {
                 modal_rec_relay_input,
                 is_edit,
             } => Modal::new(true, underlay, move || {
-                let add_relay_input = text_input_group(
+                let add_relay_input = TextInputGroup::new(
                     "Contact Name",
-                    "",
                     modal_petname_input,
-                    None,
                     Message::ModalPetNameInputChange,
-                    None,
-                );
-                let add_pubkey_input = text_input_group(
+                )
+                .placeholder("")
+                .build();
+
+                let add_pubkey_input = TextInputGroup::new(
                     "Contact PubKey",
-                    "",
                     modal_pubkey_input,
-                    None,
                     Message::ModalPubKeyInputChange,
-                    None,
-                );
-                let add_rec_relay_input = text_input_group(
+                )
+                .placeholder("")
+                .build();
+
+                let add_rec_relay_input = TextInputGroup::new(
                     "Recommended Relay",
-                    "",
                     modal_rec_relay_input,
-                    None,
                     Message::ModalRecRelayInputChange,
-                    None,
-                );
+                )
+                .placeholder("")
+                .build();
+
                 let modal_body: Element<_> =
                     column![add_relay_input, add_pubkey_input, add_rec_relay_input]
                         .spacing(4)

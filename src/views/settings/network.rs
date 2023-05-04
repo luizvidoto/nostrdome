@@ -6,7 +6,7 @@ use nostr_sdk::Url;
 
 use crate::components::relay_row::MessageWrapper;
 use crate::components::text::title;
-use crate::components::text_input_group::text_input_group;
+use crate::components::text_input_group::TextInputGroup;
 use crate::components::{relay_row, RelayRow};
 use crate::db::DbRelay;
 use crate::icon::plus_icon;
@@ -159,15 +159,15 @@ impl State {
             .into();
 
         Modal::new(self.show_modal, content, || {
-            let add_relay_input = text_input_group(
+            let add_relay_input = TextInputGroup::new(
                 "Relay Address",
-                "wss://my-relay.com",
                 &self.add_relay_input,
-                None,
                 Message::AddRelayInputChange,
-                Some(Message::OkButtonPressed),
-            );
-            let modal_body: Element<_> = container(add_relay_input).into();
+            )
+            .placeholder("wss://my-relay.com")
+            .on_submit(Message::OkButtonPressed);
+
+            let modal_body: Element<_> = container(add_relay_input.build()).into();
             Card::new(text("Add Relay"), modal_body)
                 .foot(
                     row![

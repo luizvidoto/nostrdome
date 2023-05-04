@@ -23,7 +23,7 @@ impl button::StyleSheet for Theme {
 
     fn active(&self, style: &Self::Style) -> button::Appearance {
         let primary = button::Appearance {
-            background: self.pallete().send_button.into(),
+            background: self.pallete().primary.into(),
             border_radius: 4.0,
             border_width: 1.0,
             border_color: Color::TRANSPARENT,
@@ -34,8 +34,8 @@ impl button::StyleSheet for Theme {
             Button::Primary => primary,
             Button::Secondary => button::Appearance {
                 background: Color::TRANSPARENT.into(),
-                border_color: self.pallete().send_button,
-                text_color: self.pallete().send_button,
+                border_color: self.pallete().primary,
+                text_color: self.pallete().primary,
                 ..primary
             },
             Button::Invisible => button::Appearance {
@@ -47,7 +47,7 @@ impl button::StyleSheet for Theme {
             Button::Bordered => button::Appearance {
                 background: Color::TRANSPARENT.into(),
                 border_color: Color::from_rgb8(120, 120, 120),
-                text_color: self.pallete().send_button,
+                text_color: self.pallete().primary,
                 ..primary
             },
             Button::ContactCard => button::Appearance {
@@ -90,8 +90,8 @@ impl button::StyleSheet for Theme {
             Button::Secondary => self.active(style),
             Button::Invisible => self.active(style),
             Button::Bordered => button::Appearance {
-                border_color: self.pallete().send_button,
-                text_color: self.pallete().send_button,
+                border_color: self.pallete().primary,
+                text_color: self.pallete().primary,
                 ..self.active(style)
             },
             Button::ContactCard => button::Appearance {

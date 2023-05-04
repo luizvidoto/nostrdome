@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use iced::{alignment, widget::text, Font};
 
 use crate::widget::Text;
