@@ -1,6 +1,8 @@
 use crate::error::Error;
+
+use nostr_sdk::prelude::UncheckedUrl;
 use regex::Regex;
-use std::fmt;
+use std::{fmt, str::FromStr};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
 pub struct RelayUrl(pub String);
@@ -18,15 +20,22 @@ impl RelayUrl {
         re.is_match(url)
     }
     pub fn try_from_str(url: &str) -> Result<RelayUrl, Error> {
-        match Self::is_url_valid(url) {
-            true => {
-                let mut url_lower = url.to_lowercase();
-                if !url_lower.ends_with('/') {
-                    url_lower.push('/');
-                }
-                Ok(RelayUrl(url_lower))
+        if Self::is_url_valid(url) {
+            let mut url_lower = url.to_lowercase();
+            if !url_lower.ends_with('/') {
+                url_lower.push('/');
             }
-            false => Err(Error::InvalidUrlRegex(url.to_string())),
+            Ok(RelayUrl(url_lower))
+        } else {
+            Err(Error::InvalidUrlRegex(url.to_string()))
+        }
+    }
+
+    pub fn try_into_unchecked_url(url: &str) -> Result<UncheckedUrl, Error> {
+        if let Ok(_) = Self::try_from_str(url) {
+            UncheckedUrl::from_str(url).map_err(|_| Error::InvalidRelayUrl(url.to_string()))
+        } else {
+            Err(Error::InvalidRelayUrl(url.to_string()))
         }
     }
 

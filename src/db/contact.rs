@@ -1,16 +1,33 @@
-use std::result::Result as StdResult;
-use std::str::FromStr;
-
 use chrono::{NaiveDateTime, Utc};
 use nostr_sdk::{prelude::UncheckedUrl, secp256k1::XOnlyPublicKey, Tag};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
+use std::result::Result as StdResult;
+use std::str::FromStr;
+use thiserror::Error;
 
 use crate::{
-    error::{Error, Result},
-    types::ChatMessage,
+    types::{ChatMessage, RelayUrl},
     utils::{millis_to_naive_or_err, unchecked_url_or_err},
 };
+
+type Result<T> = std::result::Result<T, DbContactError>;
+
+#[derive(Error, Debug)]
+pub enum DbContactError {
+    // General errors
+    #[error("Invalid Public Key")]
+    InvalidPublicKey,
+    // General errors
+    #[error("Invalid Relay Url: {0}")]
+    InvalidRelayUrl(String),
+    #[error("Not found contact with pubkey: {0}")]
+    NotFoundContact(String),
+    #[error("Other type of Tag")]
+    TagToContactError,
+    #[error("Sqlx error: {0}")]
+    SqlxError(#[from] sqlx::Error),
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum ContactStatus {
@@ -100,7 +117,7 @@ impl DbContact {
 
                 Ok(contact)
             }
-            _ => Err(Error::TagToContactError),
+            _ => Err(DbContactError::TagToContactError),
         }
     }
 
@@ -108,7 +125,8 @@ impl DbContact {
         &self.pubkey
     }
     pub fn from_str(pubkey: &str) -> Result<Self> {
-        let pubkey = XOnlyPublicKey::from_str(pubkey)?;
+        let pubkey =
+            XOnlyPublicKey::from_str(pubkey).map_err(|_| DbContactError::InvalidPublicKey)?;
         Ok(Self::new(&pubkey))
     }
     pub fn from_submit(pubkey: &str, petname: &str, relay_url: &str) -> Result<Self> {
@@ -163,9 +181,9 @@ impl DbContact {
             tracing::info!("Can't update last_message with an older message.");
         }
 
-        let db_contact_updated = Self::fetch_one(pool, &db_contact.pubkey)
-            .await?
-            .ok_or(Error::NotFoundContact(db_contact.pubkey().to_string()))?;
+        let db_contact_updated = Self::fetch_one(pool, &db_contact.pubkey).await?.ok_or(
+            DbContactError::NotFoundContact(db_contact.pubkey().to_string()),
+        )?;
 
         Ok(db_contact_updated)
     }
@@ -186,9 +204,9 @@ impl DbContact {
             .execute(pool)
             .await?;
 
-        let db_contact_updated = Self::fetch_one(pool, &db_contact.pubkey)
-            .await?
-            .ok_or(Error::NotFoundContact(db_contact.pubkey().to_string()))?;
+        let db_contact_updated = Self::fetch_one(pool, &db_contact.pubkey).await?.ok_or(
+            DbContactError::NotFoundContact(db_contact.pubkey().to_string()),
+        )?;
 
         Ok(db_contact_updated)
     }
@@ -212,9 +230,9 @@ impl DbContact {
             .execute(pool)
             .await?;
 
-        let db_contact_updated = Self::fetch_one(pool, &db_contact.pubkey)
-            .await?
-            .ok_or(Error::NotFoundContact(db_contact.pubkey().to_string()))?;
+        let db_contact_updated = Self::fetch_one(pool, &db_contact.pubkey).await?.ok_or(
+            DbContactError::NotFoundContact(db_contact.pubkey().to_string()),
+        )?;
 
         Ok(db_contact_updated)
     }
@@ -225,8 +243,9 @@ impl DbContact {
     }
 
     pub fn with_relay_url(mut self, relay_url: &str) -> Result<Self> {
-        self.relay_url =
-            Some(UncheckedUrl::from_str(relay_url).map_err(|_e| Error::Url(relay_url.to_owned()))?);
+        let url = RelayUrl::try_into_unchecked_url(relay_url)
+            .map_err(|_e| DbContactError::InvalidRelayUrl(relay_url.to_owned()))?;
+        self.relay_url = Some(url);
         Ok(self)
     }
 

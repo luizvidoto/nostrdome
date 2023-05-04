@@ -7,7 +7,7 @@ mod relay;
 mod relay_response;
 mod user;
 
-pub(crate) use contact::DbContact;
+pub(crate) use contact::{DbContact, DbContactError};
 pub(crate) use database::{query_has_logged_in, store_first_login, Database};
 pub(crate) use event::DbEvent;
 pub(crate) use message::{DbChat, DbMessage, MessageStatus};

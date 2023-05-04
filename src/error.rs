@@ -1,6 +1,8 @@
 use nostr_sdk::{prelude::TagKind, EventId};
 use thiserror::Error;
 
+use crate::db::DbContactError;
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Errors that can occur in the nostrdome crate
@@ -28,6 +30,10 @@ pub enum Error {
     #[error("Database setup error: {0}")]
     DatabaseSetup(String),
 
+    // FromDbContactError
+    #[error("{0}")]
+    FromDbContactError(#[from] DbContactError),
+
     // FromDbEventError
     #[error("{0}")]
     FromDbEventError(#[from] FromDbEventError),
@@ -37,6 +43,8 @@ pub enum Error {
     Fmt(#[from] std::fmt::Error),
     #[error("Invalid URL: \"{0}\"")]
     InvalidUrl(#[from] url::ParseError),
+    #[error("Invalid Relay URL: \"{0}\"")]
+    InvalidRelayUrl(String),
     #[error("Invalid URL Regex: \"{0}\"")]
     InvalidUrlRegex(String),
     #[error("Invalid URL Host: \"{0}\"")]
@@ -73,10 +81,7 @@ pub enum Error {
     NewerDbVersion { current: usize, db_ver: usize },
     #[error("TagKind is not P: {0}")]
     TagKindToContactError(TagKind),
-    #[error("Other type of Tag")]
-    TagToContactError,
-    #[error("Not found contact with pubkey: {0}")]
-    NotFoundContact(String),
+
     // Nostrdome specific errors
     #[error("Not allowed to insert own pubkey as a contact")]
     SameContactInsert,

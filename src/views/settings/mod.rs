@@ -47,12 +47,7 @@ pub enum Message {
     ModalPetNameInputChange(String),
     ModalPubKeyInputChange(String),
     ModalRecRelayInputChange(String),
-    SubmitContact {
-        petname: String,
-        pubkey: String,
-        rec_relay: String,
-        is_edit: bool,
-    },
+    SubmitContact,
     SaveImportedContacts(Vec<DbContact>),
     FileImporterMessage(file_importer::Message),
     CloseImportContactModal,
@@ -344,6 +339,8 @@ enum ModalState {
         modal_pubkey_input: String,
         modal_rec_relay_input: String,
         is_edit: bool,
+        is_pub_invalid: bool,
+        is_relay_invalid: bool,
     },
     ImportList {
         imported_contacts: Vec<DbContact>,
@@ -416,6 +413,8 @@ impl ModalState {
             modal_pubkey_input: pubkey,
             modal_rec_relay_input: rec_relay,
             is_edit,
+            is_pub_invalid: false,
+            is_relay_invalid: false,
         }
     }
     pub fn import_contacts() -> Self {
@@ -455,24 +454,39 @@ impl ModalState {
                     }
                 }
             },
-            Message::SubmitContact {
-                petname,
-                pubkey,
-                rec_relay,
-                is_edit,
-            } => match DbContact::from_submit(&pubkey, &petname, &rec_relay) {
-                Ok(db_contact) => {
-                    db_conn.send(match is_edit {
-                        true => net::Message::UpdateContact(db_contact),
-                        false => net::Message::AddContact(db_contact),
-                    });
-                    *self = ModalState::Off;
+            Message::SubmitContact => {
+                if let ModalState::ContactDetails {
+                    is_pub_invalid,
+                    is_relay_invalid,
+                    modal_petname_input: petname,
+                    modal_pubkey_input: pubkey,
+                    modal_rec_relay_input: rec_relay,
+                    is_edit,
+                } = self
+                {
+                    match DbContact::from_submit(&pubkey, &petname, &rec_relay) {
+                        Ok(db_contact) => {
+                            db_conn.send(match is_edit {
+                                true => net::Message::UpdateContact(db_contact),
+                                false => net::Message::AddContact(db_contact),
+                            });
+                            *self = ModalState::Off;
+                        }
+                        Err(e) => {
+                            tracing::error!("Error: {:?}", e);
+                            match e {
+                                crate::db::DbContactError::InvalidPublicKey => {
+                                    *is_pub_invalid = true;
+                                }
+                                crate::db::DbContactError::InvalidRelayUrl(_) => {
+                                    *is_relay_invalid = true;
+                                }
+                                _ => (),
+                            }
+                        }
+                    }
                 }
-                Err(_e) => {
-                    // TODO redo here
-                    tracing::error!("Every contact must have a valid pubkey and valid url.");
-                }
-            },
+            }
             Message::SaveImportedContacts(imported_contacts) => {
                 db_conn.send(net::Message::ImportContacts(imported_contacts));
                 *self = ModalState::Off;
@@ -499,19 +513,24 @@ impl ModalState {
             }
             Message::ModalPubKeyInputChange(text) => {
                 if let ModalState::ContactDetails {
-                    modal_pubkey_input, ..
+                    modal_pubkey_input,
+                    is_pub_invalid,
+                    ..
                 } = self
                 {
                     *modal_pubkey_input = text;
+                    *is_pub_invalid = false;
                 }
             }
             Message::ModalRecRelayInputChange(text) => {
                 if let ModalState::ContactDetails {
                     modal_rec_relay_input,
+                    is_relay_invalid,
                     ..
                 } = self
                 {
                     *modal_rec_relay_input = text;
+                    *is_relay_invalid = false;
                 }
             }
             _ => (),
@@ -564,35 +583,45 @@ impl ModalState {
                 modal_pubkey_input,
                 modal_rec_relay_input,
                 is_edit,
+                is_pub_invalid,
+                is_relay_invalid,
             } => Modal::new(true, underlay, move || {
                 let add_relay_input = TextInputGroup::new(
                     "Contact Name",
                     modal_petname_input,
                     Message::ModalPetNameInputChange,
                 )
-                .placeholder("")
-                .build();
+                .placeholder("");
 
-                let add_pubkey_input = TextInputGroup::new(
+                let mut add_pubkey_input = TextInputGroup::new(
                     "Contact PubKey",
                     modal_pubkey_input,
                     Message::ModalPubKeyInputChange,
                 )
-                .placeholder("")
-                .build();
+                .placeholder("");
 
-                let add_rec_relay_input = TextInputGroup::new(
+                if *is_pub_invalid {
+                    add_pubkey_input = add_pubkey_input.invalid("Invalid Public Key");
+                }
+
+                let mut add_rec_relay_input = TextInputGroup::new(
                     "Recommended Relay",
                     modal_rec_relay_input,
                     Message::ModalRecRelayInputChange,
                 )
-                .placeholder("")
-                .build();
+                .placeholder("ws://my-relay.com");
 
-                let modal_body: Element<_> =
-                    column![add_relay_input, add_pubkey_input, add_rec_relay_input]
-                        .spacing(4)
-                        .into();
+                if *is_relay_invalid {
+                    add_rec_relay_input = add_rec_relay_input.invalid("Invalid Relay URL");
+                }
+
+                let modal_body: Element<_> = column![
+                    add_relay_input.build(),
+                    add_pubkey_input.build(),
+                    add_rec_relay_input.build()
+                ]
+                .spacing(4)
+                .into();
                 let title = match is_edit {
                     true => text("Edit Contact"),
                     false => text("Add Contact"),
@@ -607,12 +636,7 @@ impl ModalState {
                             .on_press(Message::CloseAddContactModal),
                             button(text("Ok").horizontal_alignment(alignment::Horizontal::Center),)
                                 .width(Length::Fill)
-                                .on_press(Message::SubmitContact {
-                                    petname: modal_petname_input.clone(),
-                                    pubkey: modal_pubkey_input.clone(),
-                                    rec_relay: modal_rec_relay_input.clone(),
-                                    is_edit: is_edit.to_owned()
-                                })
+                                .on_press(Message::SubmitContact)
                         ]
                         .spacing(10)
                         .padding(5)
