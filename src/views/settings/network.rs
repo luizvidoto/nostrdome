@@ -30,6 +30,7 @@ pub struct State {
     relays: Vec<RelayRow>,
     show_modal: bool,
     add_relay_input: String,
+    is_invalid: bool,
 }
 impl State {
     pub fn subscription(&self) -> Subscription<Message> {
@@ -46,30 +47,33 @@ impl State {
             relays: vec![],
             show_modal: false,
             add_relay_input: "".into(),
+            is_invalid: false,
         }
     }
 
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Command<Message> {
         match message {
-            Message::AddRelayInputChange(relay_addrs) => self.add_relay_input = relay_addrs,
+            Message::AddRelayInputChange(relay_addrs) => {
+                self.add_relay_input = relay_addrs;
+                self.is_invalid = false;
+            }
             Message::CloseModal | Message::CancelButtonPressed => {
                 self.add_relay_input = "".into();
                 self.show_modal = false;
             }
-            Message::OkButtonPressed => {
-                match Url::try_from(self.add_relay_input.as_str()) {
-                    Ok(url) => {
-                        let db_relay = DbRelay::new(url);
-                        conn.send(net::Message::AddRelay(db_relay));
-                    }
-                    Err(e) => {
-                        // SOME VALIDATION TO THE USER
-                        tracing::error!("{}", e);
-                    }
+            Message::OkButtonPressed => match Url::try_from(self.add_relay_input.as_str()) {
+                Ok(url) => {
+                    self.is_invalid = false;
+                    self.show_modal = false;
+                    self.add_relay_input = "".into();
+                    let db_relay = DbRelay::new(url);
+                    conn.send(net::Message::AddRelay(db_relay));
                 }
-                self.add_relay_input = "".into();
-                self.show_modal = false;
-            }
+                Err(e) => {
+                    tracing::error!("{}", e);
+                    self.is_invalid = true;
+                }
+            },
             Message::OpenAddRelayModal => self.show_modal = true,
 
             Message::RelayMessage(msg) => {
@@ -159,13 +163,17 @@ impl State {
             .into();
 
         Modal::new(self.show_modal, content, || {
-            let add_relay_input = TextInputGroup::new(
+            let mut add_relay_input = TextInputGroup::new(
                 "Relay Address",
                 &self.add_relay_input,
                 Message::AddRelayInputChange,
             )
             .placeholder("wss://my-relay.com")
             .on_submit(Message::OkButtonPressed);
+
+            if self.is_invalid {
+                add_relay_input = add_relay_input.invalid("Relay address is invalid");
+            }
 
             let modal_body: Element<_> = container(add_relay_input.build()).into();
             Card::new(text("Add Relay"), modal_body)
