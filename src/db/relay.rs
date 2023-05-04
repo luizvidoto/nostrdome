@@ -105,7 +105,7 @@ impl DbRelay {
     }
 
     pub async fn insert(pool: &SqlitePool, db_relay: &DbRelay) -> Result<(), Error> {
-        let sql = "INSERT OR IGNORE INTO relay (url, read, write, advertise) \
+        let sql = "INSERT INTO relay (url, read, write, advertise) \
              VALUES (?1, ?2, ?3, ?4)";
 
         sqlx::query(sql)

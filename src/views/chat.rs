@@ -108,7 +108,10 @@ impl State {
         .padding([10, 10])
         .width(Length::Fill)
         .height(NAVBAR_HEIGHT);
-        let first = container(column![search_container, contact_list]).width(Length::Fixed(300.0));
+        let first = container(column![search_container, contact_list])
+            .height(Length::Fill)
+            .width(Length::Fixed(300.0))
+            .style(style::Container::ContactList);
         // ---
         // --- SECOND SPLIT ---
         let chat_messages = create_chat_content(&self.messages);

@@ -11,19 +11,39 @@ pub enum Message {
     ToNextStep,
     ToPreviousStep,
     ToApp,
+    AddRelay(String),
+    ImportContactsRelays,
+    ImportContactsFile,
 }
 pub struct State {
     pub step: usize,
+    pub relays_added: Vec<String>,
+    pub loading_client: bool,
 }
 impl State {
     pub fn new() -> Self {
-        Self { step: 0 }
+        Self {
+            loading_client: false,
+            step: 0,
+            relays_added: vec![],
+        }
     }
     pub fn update(&mut self, message: Message) {
         match message {
             Message::ToNextStep => self.step += 1,
             Message::ToPreviousStep => self.step -= 1,
-            Message::ToApp => (),
+            Message::ToApp => {
+                self.loading_client = true;
+            }
+            Message::AddRelay(relay_url) => {
+                self.relays_added.push(relay_url);
+            }
+            Message::ImportContactsRelays => {
+                tracing::info!("Importing contacts from relays");
+            }
+            Message::ImportContactsFile => {
+                tracing::info!("Importing contacts from a file");
+            }
         }
     }
     pub fn view(&self) -> Element<Message> {
@@ -32,7 +52,9 @@ impl State {
         let title_2 = "Relays Setup";
         let text_2 = "Add relays to connect";
         let title_3 = "Contacts";
-        let text_3 = "Import from relays, a file or add a new one";
+        let text_3a = "Import from relays";
+        let text_3b = "Import from file";
+
         let relay_list = vec![
             "wss://relay.plebstr.com",
             "wss://nostr.wine",
@@ -42,20 +64,22 @@ impl State {
         ]
         .iter()
         .fold(column![].spacing(5), |column, relay| {
+            let relay_btn = if self.relays_added.contains(&relay.to_string()) {
+                button("Ok")
+            } else {
+                button("Add").on_press(Message::AddRelay(relay.to_string()))
+            };
             column.push(
                 container(
-                    row![
-                        container(solid_circle_icon()),
-                        container(text(relay).size(20)).width(Length::Fill),
-                    ]
-                    .spacing(10)
-                    .align_items(Alignment::Center),
+                    row![text(relay).size(20).width(Length::Fill), relay_btn]
+                        .align_items(Alignment::Center),
                 )
                 .width(Length::Fill)
                 .height(Length::Shrink),
             )
         });
         let relays_sugestions = container(relay_list)
+            .padding(20)
             .style(style::Container::Bordered)
             .width(Length::Fill)
             .height(Length::Fill);
@@ -63,6 +87,17 @@ impl State {
         let welcome_image = image::Image::new(image::Handle::from_memory(WELCOME_IMAGE));
         let relays_image = image::Image::new(image::Handle::from_memory(RELAYS_IMAGE));
         let contacts_image = image::Image::new(image::Handle::from_memory(CONTACTS_IMAGE));
+
+        let last_step_buttons: Element<_> = if self.loading_client {
+            text("Loading...").into()
+        } else {
+            row![
+                button("Back").on_press(Message::ToPreviousStep),
+                button("Start").on_press(Message::ToApp)
+            ]
+            .spacing(10)
+            .into()
+        };
 
         let view: Element<_> = match self.step {
             0 => {
@@ -124,13 +159,16 @@ impl State {
                                 .max_width(WELCOME_IMAGE_MAX_WIDTH)
                                 .height(Length::Fill),
                             container(
-                                column![text(text_2).size(WELCOME_TEXT_SIZE), relays_sugestions]
-                                    .spacing(10)
+                                column![
+                                    container(text(text_2).size(WELCOME_TEXT_SIZE))
+                                        .width(Length::Fill)
+                                        .center_x(),
+                                    relays_sugestions
+                                ]
+                                .spacing(10)
                             )
                             .width(Length::Fixed(WELCOME_TEXT_WIDTH))
-                            .height(Length::Fill)
-                            .center_x()
-                            .center_y(),
+                            .height(Length::Fill),
                         ]
                         .spacing(20)
                     )
@@ -178,11 +216,27 @@ impl State {
                             container(contacts_image)
                                 .max_width(WELCOME_IMAGE_MAX_WIDTH)
                                 .height(Length::Fill),
-                            container(column![text(text_3).size(WELCOME_TEXT_SIZE),].spacing(10))
-                                .width(Length::Fixed(WELCOME_TEXT_WIDTH))
-                                .height(Length::Fill)
-                                .center_x()
-                                .center_y(),
+                            container(
+                                column![
+                                    button(
+                                        container(text(text_3a).size(WELCOME_TEXT_SIZE))
+                                            .padding(30)
+                                    )
+                                    .style(style::Button::Bordered)
+                                    .on_press(Message::ImportContactsRelays),
+                                    button(
+                                        container(text(text_3b).size(WELCOME_TEXT_SIZE))
+                                            .padding(30)
+                                    )
+                                    .style(style::Button::Bordered)
+                                    .on_press(Message::ImportContactsFile),
+                                ]
+                                .spacing(10)
+                            )
+                            .width(Length::Fixed(WELCOME_TEXT_WIDTH))
+                            .height(Length::Fill)
+                            .center_x()
+                            .center_y(),
                         ]
                         .spacing(20)
                     )
@@ -195,15 +249,7 @@ impl State {
                             container(make_dots(self.step))
                                 .center_x()
                                 .width(Length::Fill),
-                            container(
-                                row![
-                                    button("Back").on_press(Message::ToPreviousStep),
-                                    button("Start").on_press(Message::ToApp)
-                                ]
-                                .spacing(10)
-                            )
-                            .center_x()
-                            .width(Length::Fill)
+                            container(last_step_buttons).center_x().width(Length::Fill)
                         ]
                         .spacing(5)
                     )

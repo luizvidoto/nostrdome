@@ -62,6 +62,7 @@ impl DatabaseState {
             let pool = &db_client.pool;
             match message {
                 // ---- CONFIG ----
+                Message::Logout => Event::Logout,
                 Message::StoreFirstLogin => match store_first_login(pool).await {
                     Ok(_) => Event::FirstLoginStored,
                     Err(e) => Event::Error(e.to_string()),

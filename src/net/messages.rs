@@ -5,6 +5,7 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    Logout,
     // -------- DATABASE MESSAGES
     QueryFirstLogin,
     StoreFirstLogin,

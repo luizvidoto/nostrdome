@@ -19,7 +19,11 @@ use iced::{
     widget::{button, column, container, text},
     window, Application, Command, Length, Settings,
 };
-use net::{backend_connect, events, BackEndConnection};
+use net::{
+    backend_connect,
+    events::{self, Event},
+    BackEndConnection,
+};
 use nostr_sdk::{prelude::FromSkStr, Keys};
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::EnvFilter;
@@ -35,7 +39,7 @@ use crate::db::DbRelay;
 #[derive(Debug, Clone)]
 pub enum Message {
     RouterMessage(views::Message),
-    BackEndEvent(events::Event),
+    BackEndEvent(Event),
     LoginMessage(login::Message),
     WelcomeMessage(welcome::Message),
     ToLogin,
@@ -168,13 +172,20 @@ impl Application for App {
     }
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
-            Message::WelcomeMessage(welcome_msg) => {
-                if let State::Welcome { state, .. } = &mut self.state {
-                    state.update(welcome_msg);
-                }
-            }
             Message::ToLogin => {
                 self.state = State::login();
+            }
+            Message::WelcomeMessage(welcome_msg) => {
+                if let State::Welcome { state, conn, .. } = &mut self.state {
+                    match welcome_msg {
+                        welcome::Message::ToApp => {
+                            conn.send(net::Message::StoreFirstLogin);
+                            conn.send(net::Message::PrepareClient);
+                            state.update(welcome::Message::ToApp);
+                        }
+                        other => state.update(other),
+                    }
+                }
             }
             Message::LoginMessage(login_msg) => {
                 if let State::Login { state } = &mut self.state {
@@ -201,38 +212,44 @@ impl Application for App {
                 }
             }
             Message::BackEndEvent(event) => match event {
-                events::Event::None => (),
-                events::Event::FirstLogin => {
+                Event::None => (),
+                Event::Logout => {
+                    self.state = State::login();
+                }
+                Event::FirstLogin => {
                     tracing::warn!("First login");
                     if let State::BackendLoaded { keys, conn } = &mut self.state {
                         self.state = State::welcome(keys.to_owned(), conn.to_owned());
                     }
                 }
-                events::Event::Connected(mut ready_conn) => {
+                Event::Connected(mut ready_conn) => {
                     tracing::warn!("Connected to backend");
                     if let State::LoadingBackend { keys } = &mut self.state {
                         ready_conn.send(net::Message::QueryFirstLogin);
                         self.state = State::backend_loaded(keys.to_owned(), ready_conn);
                     }
                 }
-                events::Event::Error(e) => {
+                Event::Error(e) => {
                     tracing::error!("{}", e);
                 }
-                events::Event::FinishedPreparing => {
+                Event::FinishedPreparing => {
                     tracing::warn!("Finished preparing client");
-                    if let State::BackendLoaded { conn, keys } = &mut self.state {
-                        // only for testing
-                        if let Ok(db_relay) = DbRelay::from_str("ws://192.168.85.151:8080") {
-                            conn.send(net::Message::AddRelay(db_relay));
+                    match &mut self.state {
+                        State::Welcome { keys, conn, .. } | State::BackendLoaded { conn, keys } => {
+                            // only for testing
+                            if let Ok(db_relay) = DbRelay::from_str("ws://192.168.85.151:8080") {
+                                conn.send(net::Message::AddRelay(db_relay));
+                            }
+                            self.state = State::to_app(keys.to_owned(), conn.to_owned());
                         }
-                        self.state = State::to_app(keys.to_owned(), conn.to_owned());
+                        _ => (),
                     }
                 }
-                events::Event::RelayCreated(db_relay) => {
+                Event::RelayCreated(db_relay) => {
                     if let State::App { router, conn, .. } = &mut self.state {
                         conn.send(net::Message::ConnectToRelay(db_relay.clone()));
                         return router
-                            .backend_event(events::Event::RelayCreated(db_relay), conn)
+                            .backend_event(Event::RelayCreated(db_relay), conn)
                             .map(Message::RouterMessage);
                     }
                 }

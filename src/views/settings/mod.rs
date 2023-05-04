@@ -40,6 +40,7 @@ pub enum Message {
     MenuBackupPress,
     MenuContactsPress,
     MenuAboutPress,
+    LogoutPress,
     NavEscPress,
 
     // Modal Messages
@@ -268,6 +269,9 @@ impl Settings {
             Message::MenuAboutPress => {
                 self.menu_state = MenuState::about(conn);
             }
+            Message::LogoutPress => {
+                conn.send(net::Message::Logout);
+            }
             other => return self.modal_state.update(other, conn),
         }
         Command::none()
@@ -289,10 +293,14 @@ impl Settings {
         let contacts_btn =
             create_menu_button("Contacts", &self.menu_state, 4, Message::MenuContactsPress);
         let about_btn = create_menu_button("About", &self.menu_state, 10, Message::MenuAboutPress);
+        let logout_btn = button("Logout")
+            .padding(10)
+            .on_press(Message::LogoutPress)
+            .style(style::Button::MenuBtn);
         let esc_btn = button("Esc")
             .padding(10)
             .on_press(Message::NavEscPress)
-            .style(style::Button::InactiveMenuBtn);
+            .style(style::Button::MenuBtn);
         let spacer = iced::widget::horizontal_space(Length::Fixed(3.0));
         let menubar = container(
             column![
@@ -303,7 +311,9 @@ impl Settings {
                 network_btn,
                 backup_btn,
                 contacts_btn,
-                about_btn
+                about_btn,
+                Space::with_height(Length::Fill),
+                logout_btn
             ]
             .spacing(3),
         )
@@ -313,7 +323,7 @@ impl Settings {
 
         let view_ct = container(self.menu_state.view())
             .style(style::Container::ChatContainer)
-            .padding([20, 0, 0, 20])
+            .padding([20, 20, 0, 20])
             .height(Length::Fill)
             .width(Length::FillPortion(3));
 
@@ -674,7 +684,7 @@ fn create_menu_button<'a>(
     let style = if is_active {
         style::Button::ActiveMenuBtn
     } else {
-        style::Button::InactiveMenuBtn
+        style::Button::MenuBtn
     };
 
     button(label)

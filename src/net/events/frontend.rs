@@ -44,6 +44,7 @@ pub enum Event {
     FirstLoginStored,
     FinishedPreparing,
     // --- General ---
+    Logout,
     Error(String),
     None,
 }
