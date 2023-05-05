@@ -13,6 +13,7 @@ pub(crate) mod views;
 pub(crate) mod widget;
 
 use components::text::title;
+use dotenv::dotenv;
 use iced::{
     executor,
     widget::{button, column, container, text},
@@ -20,10 +21,12 @@ use iced::{
 };
 use net::{backend_connect, events::Event, BackEndConnection};
 use nostr_sdk::Keys;
-use tracing::metadata::LevelFilter;
-use tracing_subscriber::EnvFilter;
+use tracing::{metadata::LevelFilter, Subscriber};
+use tracing_subscriber::{
+    fmt::SubscriberBuilder, prelude::__tracing_subscriber_SubscriberExt, EnvFilter,
+};
 use views::{
-    login::{self, Profile},
+    login::{self, BasicProfile},
     settings::{self, appearance},
     welcome, Router,
 };
@@ -49,7 +52,7 @@ pub enum State {
     },
     LoadingBackend {
         keys: Keys,
-        new_profile: Option<Profile>,
+        new_profile: Option<BasicProfile>,
     },
     BackendLoaded {
         keys: Keys,
@@ -94,7 +97,7 @@ impl State {
             new_profile: None,
         }
     }
-    pub fn load_back_with_profile(keys: Keys, profile: Profile) -> Self {
+    pub fn load_back_with_profile(keys: Keys, profile: BasicProfile) -> Self {
         Self::LoadingBackend {
             keys: keys,
             new_profile: Some(profile),
@@ -236,31 +239,29 @@ impl Application for App {
             Message::BackEndEvent(event) => match event {
                 Event::None => (),
                 Event::Disconnected => {
-                    tracing::warn!("Disconnected from backend");
+                    tracing::info!("Disconnected from backend");
                 }
                 Event::BackendClosed => {
-                    tracing::warn!("Database closed");
+                    tracing::info!("Database closed");
                     if let State::App { keys, conn, .. } = &mut self.state {
                         self.state = State::logging_out(keys, conn);
                     }
                 }
                 Event::LoggedOut => {
+                    tracing::info!("Logged out");
                     self.state = State::login();
                 }
                 Event::FirstLogin => {
-                    tracing::warn!("First login");
+                    tracing::info!("First login");
                     if let State::BackendLoaded { keys, conn } = &mut self.state {
                         self.state = State::welcome(keys, conn);
                     }
                 }
                 Event::Connected(mut ready_conn) => {
-                    tracing::warn!("Connected to backend");
+                    tracing::info!("Connected to backend");
                     if let State::LoadingBackend { keys, new_profile } = &mut self.state {
                         if let Some(profile) = new_profile {
-                            ready_conn.send(net::Message::CreateAccount((
-                                profile.to_owned(),
-                                keys.to_owned(),
-                            )));
+                            ready_conn.send(net::Message::CreateAccount(profile.to_owned()));
                         }
                         ready_conn.send(net::Message::FetchLatestVersion);
                         ready_conn.send(net::Message::QueryFirstLogin);
@@ -271,11 +272,14 @@ impl Application for App {
                     tracing::error!("{}", e);
                 }
                 Event::FinishedPreparing => {
-                    tracing::warn!("Finished preparing client");
+                    tracing::info!("Finished preparing client");
                     match &mut self.state {
                         State::Welcome { keys, conn, .. } | State::BackendLoaded { conn, keys } => {
                             // only for testing
                             if let Ok(db_relay) = DbRelay::from_str("ws://192.168.85.151:8080") {
+                                conn.send(net::Message::AddRelay(db_relay));
+                            }
+                            if let Ok(db_relay) = DbRelay::from_str("ws://192.168.15.151:8080") {
                                 conn.send(net::Message::AddRelay(db_relay));
                             }
                             self.state = State::to_app(keys, conn);
@@ -284,6 +288,7 @@ impl Application for App {
                     }
                 }
                 Event::RelayCreated(db_relay) => {
+                    tracing::info!("Relay created: {:?}", db_relay);
                     if let State::App { router, conn, .. } = &mut self.state {
                         conn.send(net::Message::ConnectToRelay(db_relay.clone()));
                         return router
@@ -292,6 +297,7 @@ impl Application for App {
                     }
                 }
                 other => {
+                    tracing::info!("Backend event: {:?}", other);
                     if let State::App { router, conn, .. } = &mut self.state {
                         return router
                             .backend_event(other, conn)
@@ -325,24 +331,30 @@ fn inform_card<'a>(
 
 #[tokio::main]
 async fn main() {
+    dotenv().ok();
+
     if std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", "info");
     }
 
-    let env_filter = EnvFilter::from_default_env();
-    let max_level = match env_filter.max_level_hint() {
-        Some(l) => l,
-        None => LevelFilter::ERROR,
-    };
-    let show_debug = cfg!(debug_assertions) || max_level <= LevelFilter::DEBUG;
-    tracing_subscriber::fmt::fmt()
-        .with_target(false)
-        .with_file(show_debug)
-        .with_line_number(show_debug)
-        .with_env_filter(env_filter)
-        .init();
+    // Cria um filtro de ambiente que define o nível de log padrão para todas as bibliotecas como ERROR e o nível de log do seu aplicativo como INFO
+    let filter = EnvFilter::from_default_env()
+        .add_directive("nostrdome=info".parse().unwrap())
+        .add_directive("warn".parse().unwrap());
 
-    tracing::warn!("Starting up");
+    let subscriber = SubscriberBuilder::default()
+        .with_env_filter(filter)
+        .with_file(true)
+        .with_line_number(true)
+        .with_target(false)
+        .fmt_fields(tracing_subscriber::fmt::format::DefaultFields::default()) // Adicione esta linha para incluir eventos de spans
+        .finish()
+        .with(tracing_error::ErrorLayer::default());
+
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("Failed to set global default subscriber");
+
+    tracing::info!("Starting up");
 
     App::run(Settings {
         id: Some(String::from("nostrdome")),

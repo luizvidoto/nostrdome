@@ -3,7 +3,7 @@ use nostr_sdk::Keys;
 use crate::{
     db::{DbContact, DbRelay},
     types::ChatMessage,
-    views::login::Profile,
+    views::login::BasicProfile,
 };
 
 #[derive(Debug, Clone)]
@@ -24,9 +24,14 @@ pub enum Message {
     ImportContacts(Vec<DbContact>),
     AddToUnseenCount(DbContact),
     FetchRelays,
-    CreateAccount((Profile, Keys)),
+    CreateAccount(BasicProfile),
+    GetUserProfileMeta,
+    UpdateUserProfileMeta(nostr_sdk::Metadata),
 
     // -------- NOSTR CLIENT MESSAGES
+    SendProfile(nostr_sdk::Metadata),
+    GetContactProfile(DbContact),
+    RequestEventsOf(DbRelay),
     RequestEvents,
     FetchRelayServer(nostr_sdk::Url),
     FetchRelayServers,
@@ -38,6 +43,6 @@ pub enum Message {
     ConnectToRelay(DbRelay),
     BuildDM((DbContact, String)),
     SendDMToRelays(ChatMessage),
-    SendContactListToRelay((DbRelay, Vec<DbContact>)),
+    SendContactListToRelay(DbRelay),
     CreateChannel,
 }

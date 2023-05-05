@@ -1,5 +1,5 @@
 #![allow(unused_imports)]
-use iced::application;
+use iced::{application, widget::tooltip};
 
 use self::pallete::AppPalette;
 

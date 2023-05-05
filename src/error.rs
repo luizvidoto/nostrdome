@@ -8,12 +8,19 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Errors that can occur in the nostrdome crate
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("GITHUB_TOKEN not found")]
+    GitHubTokenNotFound,
     #[error("Request error: {0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("Request failed. Status code: {0}")]
     RequestFailed(reqwest::StatusCode),
-    #[error("Request failed. Tag name not found")]
+    #[error("Tag name not found")]
     RequestTagNameNotFound,
+    #[error("Not found any releases")]
+    RequestReleaseNotFound,
+
+    #[error("Error parsing JSON content into nostr_sdk::Metadata: {0}")]
+    JsonToMetadata(String),
 
     #[error("Failed to send to nostr input channel: {0}")]
     FailedToSendNostrInput(String),
@@ -83,6 +90,8 @@ pub enum Error {
     NostrSdkEventBuilderError(#[from] nostr_sdk::prelude::builder::Error),
     #[error("Nostr secp256k1 Error: {0}")]
     NostrSecp256k1Error(#[from] nostr_sdk::secp256k1::Error),
+    #[error("Nostr relay Error: {0}")]
+    NostrSdkRelayError(#[from] nostr_sdk::relay::Error),
     #[error("Invalid Date: {0}")]
     InvalidDate(String),
     #[error(

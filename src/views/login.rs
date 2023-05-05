@@ -12,17 +12,27 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct Profile {
+pub struct BasicProfile {
     pub name: String,
     pub about: String,
     pub profile_picture: String,
 }
-impl Profile {
+impl BasicProfile {
     pub fn new(name: String, about: String, profile_picture: String) -> Self {
         Self {
             name,
             about,
             profile_picture,
+        }
+    }
+}
+impl From<BasicProfile> for nostr_sdk::Metadata {
+    fn from(profile: BasicProfile) -> Self {
+        Self {
+            name: Some(profile.name),
+            about: Some(profile.about),
+            picture: Some(profile.profile_picture),
+            ..Default::default()
         }
     }
 }
@@ -34,12 +44,12 @@ pub enum Message {
     ToCreateAccount,
     ToImportAccount,
     ToChooseAccount,
-    CreateAccountSubmit(Profile),
+    CreateAccountSubmit(BasicProfile),
     NameInputChange(String),
     AboutInputChange(String),
     ProfilePictureInputChange(String),
     // to main
-    CreateAccountSubmitSuccess((Profile, Keys)),
+    CreateAccountSubmitSuccess((BasicProfile, Keys)),
     LoginSuccess(Keys),
 }
 
@@ -51,6 +61,7 @@ pub enum State {
         name: String,
         about: String,
         profile_picture: String,
+        is_profile_pic_invalid: bool,
     },
     ImportAccount {
         secret_key_input: String,
@@ -73,6 +84,7 @@ impl State {
             name: "".into(),
             about: "".into(),
             profile_picture: "".into(),
+            is_profile_pic_invalid: false,
         }
     }
 
@@ -87,10 +99,14 @@ impl State {
                 name: name_input,
                 about: about_input,
                 profile_picture: profile_picture_input,
+                is_profile_pic_invalid,
             } => match message {
                 Message::NameInputChange(text) => *name_input = text,
                 Message::AboutInputChange(text) => *about_input = text,
-                Message::ProfilePictureInputChange(text) => *profile_picture_input = text,
+                Message::ProfilePictureInputChange(text) => {
+                    *profile_picture_input = text;
+                    *is_profile_pic_invalid = false;
+                }
                 Message::ToChooseAccount => *self = Self::new(),
                 Message::CreateAccountSubmit(profile) => {
                     let keys = Keys::generate();
@@ -168,20 +184,29 @@ impl State {
                 name,
                 about,
                 profile_picture,
+                is_profile_pic_invalid,
             } => {
                 let name_input = TextInputGroup::new("Name", name, Message::NameInputChange);
                 let about_input = TextInputGroup::new("About", about, Message::AboutInputChange);
-                let profile_pic_input = TextInputGroup::new(
+                let mut profile_pic_input = TextInputGroup::new(
                     "Profile Picture",
                     profile_picture,
                     Message::ProfilePictureInputChange,
                 );
+
                 let back_btn = button("Back")
                     .style(style::Button::Invisible)
                     .on_press(Message::ToChooseAccount);
-                let submit_btn = button("Submit").on_press(Message::CreateAccountSubmit(
-                    Profile::new(name.clone(), about.clone(), profile_picture.clone()),
-                ));
+                let mut submit_btn = button("Submit");
+
+                if *is_profile_pic_invalid {
+                    profile_pic_input = profile_pic_input.invalid("Invalid profile picture URL");
+                } else {
+                    submit_btn = submit_btn.on_press(Message::CreateAccountSubmit(
+                        BasicProfile::new(name.clone(), about.clone(), profile_picture.clone()),
+                    ));
+                }
+
                 let buttons =
                     row![back_btn, Space::with_width(Length::Fill), submit_btn].spacing(10);
                 column![

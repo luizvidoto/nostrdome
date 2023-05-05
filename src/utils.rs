@@ -112,6 +112,9 @@ pub fn url_or_err(url: &str, index: &str) -> Result<Url, sqlx::Error> {
 pub fn unchecked_url_or_err(url: &str, index: &str) -> Result<UncheckedUrl, sqlx::Error> {
     UncheckedUrl::from_str(url).map_err(|e| handle_decode_error(e, index))
 }
+pub fn profile_meta_or_err(json: &str, index: &str) -> Result<nostr_sdk::Metadata, sqlx::Error> {
+    serde_json::from_str::<nostr_sdk::Metadata>(json).map_err(|e| handle_decode_error(e, index))
+}
 
 pub fn contact_matches_search(contact: &DbContact, search: &str) -> bool {
     let pubkey_matches = contact

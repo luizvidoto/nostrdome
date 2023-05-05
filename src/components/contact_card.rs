@@ -48,10 +48,11 @@ impl State {
             }
         };
 
-        let pic: Element<_> = match self.contact.get_profile_image() {
-            Some(_image) => text("pic").into(),
-            None => self.name_element(true),
-        };
+        // let pic: Element<_> = match self.contact.get_profile_image() {
+        //     Some(_image) => text("pic").into(),
+        //     None => self.name_element(true),
+        // };
+        let pic = self.name_element(true);
         let pic_container = container(pic).width(PIC_WIDTH);
 
         let btn_content: Element<_> = if self.only_profile {

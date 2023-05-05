@@ -31,7 +31,10 @@ pub enum Event {
         db_event: DbEvent,
         db_message: Option<DbMessage>,
     },
+    GotUserProfileMeta(nostr_sdk::Metadata),
+    UpdatedUserProfileMeta(nostr_sdk::Metadata),
     // --- Nostr ---
+    SentProfileMeta((nostr_sdk::Metadata, nostr_sdk::EventId)),
     GotRelayServer(Option<nostr_sdk::Relay>),
     GotRelayServers(Vec<nostr_sdk::Relay>),
     RelayMessage(nostr_sdk::RelayMessage),
@@ -41,6 +44,7 @@ pub enum Event {
     NostrLoading,
     RequestedEvents,
     SentDirectMessage(nostr_sdk::EventId),
+    RelayEventsUpdated(nostr_sdk::Url),
     // --- Config ---
     FirstLogin,
     Connected(BackEndConnection),

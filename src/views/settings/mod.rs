@@ -6,7 +6,7 @@ use nostr_sdk::{Metadata, Tag};
 
 use crate::components::text::title;
 use crate::components::text_input_group::TextInputGroup;
-use crate::components::{file_importer, FileImporter};
+use crate::components::{file_importer, relay_row, FileImporter, RelayRow};
 use crate::db::{DbContact, DbRelay};
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
@@ -15,8 +15,6 @@ use crate::types::UncheckedEvent;
 use crate::utils::json_reader;
 
 use crate::widget::{Button, Element};
-
-use self::relay_row_modal::RelayRowModal;
 
 mod about;
 mod account;
@@ -27,7 +25,7 @@ mod network;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    RelayRowMessage(relay_row_modal::Message),
+    RelayRowMessage(relay_row::MessageWrapper),
     AccountMessage(account::Message),
     AppearanceMessage(appearance::Message),
     NetworkMessage(network::Message),
@@ -79,11 +77,9 @@ impl MenuState {
             _ => false,
         }
     }
-    fn account(_db_conn: &mut BackEndConnection) -> Self {
-        let profile = Metadata::new();
-        // conn.send(message)
+    fn account(conn: &mut BackEndConnection) -> Self {
         Self::Account {
-            state: account::State::new(profile),
+            state: account::State::new(conn),
         }
     }
     fn appearance(selected_theme: Option<style::Theme>) -> Self {
@@ -133,10 +129,11 @@ pub struct Settings {
 }
 impl Settings {
     pub fn subscription(&self) -> Subscription<Message> {
-        match &self.menu_state {
+        let menu_subs = match &self.menu_state {
             MenuState::Network { state } => state.subscription().map(Message::NetworkMessage),
             _ => Subscription::none(),
-        }
+        };
+        Subscription::batch(vec![menu_subs, self.modal_state.subscription()])
     }
     pub fn new(db_conn: &mut BackEndConnection) -> Self {
         Self {
@@ -172,7 +169,9 @@ impl Settings {
 
         match &mut self.menu_state {
             MenuState::About { state } => state.update(about::Message::BackEndEvent(event)),
-            MenuState::Account { state } => state.update(account::Message::BackEndEvent(event)),
+            MenuState::Account { state } => {
+                state.update(account::Message::BackEndEvent(event), conn)
+            }
             MenuState::Appearance { state } => {
                 state.update(appearance::Message::BackEndEvent(event))
             }
@@ -198,7 +197,7 @@ impl Settings {
         match message {
             Message::AccountMessage(msg) => {
                 if let MenuState::Account { state } = &mut self.menu_state {
-                    state.update(msg);
+                    state.update(msg, conn);
                 }
             }
             Message::AppearanceMessage(msg) => {
@@ -242,24 +241,30 @@ impl Settings {
                 }
             }
             Message::NavEscPress => (),
-            Message::MenuAccountPress => {
-                self.menu_state = MenuState::account(conn);
-            }
-            Message::MenuAppearancePress => {
-                self.menu_state = MenuState::appearance(selected_theme);
-            }
-            Message::MenuNetworkPress => {
-                self.menu_state = MenuState::network(conn);
-            }
-            Message::MenuBackupPress => {
-                self.menu_state = MenuState::backup();
-            }
-            Message::MenuContactsPress => {
-                self.menu_state = MenuState::contacts(conn);
-            }
-            Message::MenuAboutPress => {
-                self.menu_state = MenuState::about(conn);
-            }
+            Message::MenuAccountPress => match self.menu_state {
+                MenuState::Account { .. } => (),
+                _ => self.menu_state = MenuState::account(conn),
+            },
+            Message::MenuAppearancePress => match self.menu_state {
+                MenuState::Appearance { .. } => (),
+                _ => self.menu_state = MenuState::appearance(selected_theme),
+            },
+            Message::MenuNetworkPress => match self.menu_state {
+                MenuState::Network { .. } => (),
+                _ => self.menu_state = MenuState::network(conn),
+            },
+            Message::MenuBackupPress => match self.menu_state {
+                MenuState::Backup { .. } => (),
+                _ => self.menu_state = MenuState::backup(),
+            },
+            Message::MenuContactsPress => match self.menu_state {
+                MenuState::Contacts { .. } => (),
+                _ => self.menu_state = MenuState::contacts(conn),
+            },
+            Message::MenuAboutPress => match self.menu_state {
+                MenuState::About { .. } => (),
+                _ => self.menu_state = MenuState::about(conn),
+            },
             Message::LogoutPress => {
                 conn.send(net::Message::Logout);
             }
@@ -347,41 +352,47 @@ enum ModalState {
         file_importer: FileImporter,
     },
     SendContactList {
-        relays: Vec<relay_row_modal::RelayRowModal>,
-        send_contacts_to_relay: Option<DbRelay>,
+        relays: Vec<RelayRow>,
     },
     Off,
 }
 
 impl ModalState {
+    pub fn subscription(&self) -> Subscription<Message> {
+        match self {
+            ModalState::SendContactList { relays, .. } => {
+                let relay_subs: Vec<_> = relays
+                    .iter()
+                    .map(|r| r.subscription().map(Message::RelayRowMessage))
+                    .collect();
+                Subscription::batch(relay_subs)
+            }
+            _ => Subscription::none(),
+        }
+    }
     pub fn backend_event(&mut self, event: Event, conn: &mut BackEndConnection) {
-        if let ModalState::SendContactList {
-            relays,
-            send_contacts_to_relay,
-        } = self
-        {
+        if let ModalState::SendContactList { relays, .. } = self {
             match event {
-                Event::GotContacts(contacts) => {
-                    if let Some(db_relay) = &send_contacts_to_relay {
-                        conn.send(net::Message::SendContactListToRelay((
-                            db_relay.clone(),
-                            contacts,
-                        )));
-                    }
-                }
                 Event::GotRelays(db_relays) => {
                     *relays = db_relays
-                        .iter()
-                        .map(|db_relay| RelayRowModal::new(db_relay))
+                        .into_iter()
+                        .enumerate()
+                        .map(|(idx, db_relay)| {
+                            RelayRow::new(idx as i32, db_relay, conn).with_mode()
+                        })
                         .collect();
                 }
                 Event::UpdateWithRelayResponse { relay_response, .. } => {
-                    if let Some(relay_row) = relays
-                        .iter_mut()
-                        .find(|row| row.db_relay.url == relay_response.relay_url)
-                    {
-                        relay_row.success();
-                        *send_contacts_to_relay = None;
+                    for r in relays {
+                        r.relay_response(relay_response.clone());
+                    }
+                }
+                Event::GotRelayServer(relay) => {
+                    if let Some(relay) = relay {
+                        if let Some(row) = relays.iter_mut().find(|r| r.db_relay.url == relay.url())
+                        {
+                            row.relay_server(relay);
+                        }
                     }
                 }
                 _ => (),
@@ -390,10 +401,7 @@ impl ModalState {
     }
     pub fn load_send_contacts(db_conn: &mut BackEndConnection) -> Self {
         db_conn.send(net::Message::FetchRelays);
-        Self::SendContactList {
-            relays: vec![],
-            send_contacts_to_relay: None,
-        }
+        Self::SendContactList { relays: vec![] }
     }
     pub fn add_contact(contact: Option<DbContact>) -> Self {
         let (petname, pubkey, rec_relay, is_edit) = match contact {
@@ -424,11 +432,7 @@ impl ModalState {
                 .file_filter("JSON File", &["json"]),
         }
     }
-    pub fn update(
-        &mut self,
-        message: Message,
-        db_conn: &mut BackEndConnection,
-    ) -> Command<Message> {
+    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Command<Message> {
         match message {
             Message::CloseSendContactsModal => *self = Self::Off,
             Message::CloseAddContactModal => *self = Self::Off,
@@ -436,24 +440,13 @@ impl ModalState {
             Message::SendContactListToAll => {
                 println!("Send contacts to all relays");
             }
-            Message::RelayRowMessage(r_msg) => match r_msg {
-                relay_row_modal::Message::SendContactListToRelay(db_relay) => {
-                    db_conn.send(net::Message::FetchContacts);
-                    if let ModalState::SendContactList {
-                        relays,
-                        send_contacts_to_relay,
-                    } = self
-                    {
-                        if let Some(relay_row) = relays
-                            .iter_mut()
-                            .find(|row| row.db_relay.url == db_relay.url)
-                        {
-                            *send_contacts_to_relay = Some(db_relay.clone());
-                            relay_row.loading();
-                        }
+            Message::RelayRowMessage(msg) => {
+                if let ModalState::SendContactList { relays, .. } = self {
+                    if let Some(row) = relays.iter_mut().find(|r| r.id == msg.from) {
+                        let _ = row.update(msg, conn);
                     }
                 }
-            },
+            }
             Message::SubmitContact => {
                 if let ModalState::ContactDetails {
                     is_pub_invalid,
@@ -466,7 +459,7 @@ impl ModalState {
                 {
                     match DbContact::from_submit(&pubkey, &petname, &rec_relay) {
                         Ok(db_contact) => {
-                            db_conn.send(match is_edit {
+                            conn.send(match is_edit {
                                 true => net::Message::UpdateContact(db_contact),
                                 false => net::Message::AddContact(db_contact),
                             });
@@ -488,7 +481,7 @@ impl ModalState {
                 }
             }
             Message::SaveImportedContacts(imported_contacts) => {
-                db_conn.send(net::Message::ImportContacts(imported_contacts));
+                conn.send(net::Message::ImportContacts(imported_contacts));
                 *self = ModalState::Off;
             }
             Message::FileImporterMessage(msg) => {
@@ -542,7 +535,9 @@ impl ModalState {
         let view: Element<_> = match self {
             ModalState::SendContactList { relays, .. } => Modal::new(true, underlay, move || {
                 let title = title("Send Contact List");
-                let send_to_all_btn = button("Send All").on_press(Message::SendContactListToAll);
+                // let send_to_all_btn = row![Space::with_width(Length::Fill), button("Send All").on_press(Message::SendContactListToAll)];
+                let send_to_all_btn = text("");
+
                 let header = container(title)
                     .width(Length::Fill)
                     .style(style::Container::Default)
@@ -550,10 +545,9 @@ impl ModalState {
 
                 let relay_list: Element<_> = relays
                     .iter()
-                    .fold(
-                        column![row![Space::with_width(Length::Fill), send_to_all_btn]].spacing(5),
-                        |col, relay_row| col.push(relay_row.view().map(Message::RelayRowMessage)),
-                    )
+                    .fold(column![send_to_all_btn].spacing(5), |col, relay_row| {
+                        col.push(relay_row.modal_view().map(Message::RelayRowMessage))
+                    })
                     .into();
 
                 let modal_body = container(scrollable(relay_list))
@@ -747,62 +741,3 @@ fn update_imported_contacts(tags: &[Tag], imported_contacts: &mut Vec<DbContact>
 
 const ADD_CONTACT_MODAL_WIDTH: f32 = 400.0;
 const IMPORT_MODAL_WIDTH: f32 = 400.0;
-
-mod relay_row_modal {
-    use crate::{db::DbRelay, style, widget::Element};
-    use iced::{
-        widget::{button, container, row, text, Space},
-        Length,
-    };
-
-    #[derive(Debug, Clone)]
-    pub enum Message {
-        SendContactListToRelay(DbRelay),
-    }
-
-    #[derive(Debug, Clone)]
-    pub enum RelayRowState {
-        Idle,
-        Loading,
-        Success,
-        Error(String),
-    }
-    #[derive(Debug, Clone)]
-    pub struct RelayRowModal {
-        pub state: RelayRowState,
-        pub db_relay: DbRelay,
-    }
-    impl RelayRowModal {
-        pub fn new(db_relay: &DbRelay) -> Self {
-            Self {
-                state: RelayRowState::Idle,
-                db_relay: db_relay.to_owned(),
-            }
-        }
-        pub fn loading(&mut self) {
-            self.state = RelayRowState::Loading;
-        }
-        pub fn success(&mut self) {
-            self.state = RelayRowState::Success;
-        }
-        pub fn view(&self) -> Element<Message> {
-            let button_or_checkmark: Element<_> = match self.state {
-                RelayRowState::Idle => button("Send")
-                    .style(style::Button::Primary)
-                    .on_press(Message::SendContactListToRelay(self.db_relay.clone()))
-                    .into(),
-                RelayRowState::Loading => button("...").style(style::Button::Primary).into(),
-                RelayRowState::Success => text("Sent!").into(),
-                RelayRowState::Error(_) => text("Error").into(),
-            };
-
-            container(row![
-                text(&self.db_relay.url),
-                Space::with_width(Length::Fill),
-                button_or_checkmark
-            ])
-            .center_y()
-            .into()
-        }
-    }
-}

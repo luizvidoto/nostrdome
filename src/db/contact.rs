@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use crate::{
     types::{ChatMessage, RelayUrl},
-    utils::{millis_to_naive_or_err, unchecked_url_or_err},
+    utils::{millis_to_naive_or_err, profile_meta_or_err, unchecked_url_or_err},
 };
 
 type Result<T> = std::result::Result<T, DbContactError>;
@@ -49,13 +49,13 @@ pub struct DbContact {
     pubkey: XOnlyPublicKey,
     relay_url: Option<UncheckedUrl>,
     petname: Option<String>,
-    profile_image: Option<String>,
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
     status: ContactStatus,
     unseen_messages: u8,
     last_message_content: Option<String>,
     last_message_date: Option<NaiveDateTime>,
+    profile_meta: Option<nostr_sdk::Metadata>,
 }
 
 impl From<&DbContact> for nostr_sdk::Contact {
@@ -82,13 +82,13 @@ impl DbContact {
             pubkey: pubkey.clone(),
             relay_url: None,
             petname: None,
-            profile_image: None,
             status: ContactStatus::Unknown,
             created_at: chrono::Utc::now().naive_utc(),
             updated_at: chrono::Utc::now().naive_utc(),
             unseen_messages: 0,
             last_message_content: None,
             last_message_date: None,
+            profile_meta: None,
         }
     }
 
@@ -138,11 +138,11 @@ impl DbContact {
     pub fn get_petname(&self) -> Option<String> {
         self.petname.clone()
     }
+    pub fn get_profile_meta(&self) -> Option<nostr_sdk::Metadata> {
+        self.profile_meta.clone()
+    }
     pub fn get_relay_url(&self) -> Option<UncheckedUrl> {
         self.relay_url.clone()
-    }
-    pub fn get_profile_image(&self) -> Option<String> {
-        self.profile_image.clone()
     }
     pub fn last_message_content(&self) -> Option<String> {
         self.last_message_content.clone()
@@ -155,6 +155,10 @@ impl DbContact {
     }
     pub fn unseen_messages(&self) -> u8 {
         self.unseen_messages
+    }
+    pub fn with_profile_meta(mut self, meta: &nostr_sdk::Metadata) -> Self {
+        self.profile_meta = Some(meta.clone());
+        self
     }
 
     pub async fn new_message(
@@ -254,17 +258,6 @@ impl DbContact {
         self
     }
 
-    pub fn profile_image(self, image: &str) -> Self {
-        if image.is_empty() {
-            self
-        } else {
-            Self {
-                profile_image: Some(image.to_owned()),
-                ..self
-            }
-        }
-    }
-
     pub async fn fetch(pool: &SqlitePool) -> Result<Vec<DbContact>> {
         let rows: Vec<DbContact> = sqlx::query_as::<_, DbContact>(Self::FETCH_QUERY)
             .fetch_all(pool)
@@ -291,8 +284,8 @@ impl DbContact {
     ) -> Result<()> {
         let sql = r#"
             INSERT OR IGNORE INTO contact 
-                (pubkey, relay_url, petname, profile_image, status, 
-                    unseen_messages, created_at, updated_at, last_message_content, last_message_date) 
+                (pubkey, relay_url, petname, status, 
+                    unseen_messages, created_at, updated_at, last_message_content, last_message_date, profile_meta) 
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
         "#;
 
@@ -300,7 +293,6 @@ impl DbContact {
             .bind(&contact.pubkey.to_string())
             .bind(&contact.relay_url.as_ref().map(|url| url.to_string()))
             .bind(&contact.petname)
-            .bind(&contact.profile_image)
             .bind(contact.status as u8)
             .bind(contact.unseen_messages)
             .bind(contact.created_at.timestamp_millis())
@@ -312,16 +304,13 @@ impl DbContact {
                     .as_ref()
                     .map(|date| date.timestamp_millis()),
             )
+            .bind(&contact.profile_meta.as_ref().map(|meta| meta.as_json()))
             .execute(tx)
             .await?;
 
         Ok(())
     }
-    // pub fn update_base_from_other(&mut self, db_contact: &DbContact) {
-    //     self.relay_url = db_contact.relay_url.clone();
-    //     self.petname = db_contact.petname.clone();
-    //     self.updated_at = Utc::now().naive_utc();
-    // }
+
     pub async fn update_basic(
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         contact: &DbContact,
@@ -379,17 +368,16 @@ impl DbContact {
     pub async fn update(pool: &SqlitePool, contact: &DbContact) -> Result<()> {
         let sql = r#"
             UPDATE contact 
-            SET relay_url=?, petname=?, profile_image=?, 
+            SET relay_url=?, petname=?, 
                 status=?, unseen_messages=?,  
                 last_message_content=?, last_message_date=?,
-                updated_at=?
+                profile_meta=?, updated_at=? 
             WHERE pubkey=?
         "#;
 
         sqlx::query(sql)
             .bind(&contact.relay_url.as_ref().map(|url| url.to_string()))
             .bind(&contact.petname)
-            .bind(&contact.profile_image)
             .bind(contact.status as u8)
             .bind(contact.unseen_messages)
             .bind(&contact.last_message_content)
@@ -399,6 +387,7 @@ impl DbContact {
                     .as_ref()
                     .map(|date| date.timestamp_millis()),
             )
+            .bind(&contact.profile_meta.as_ref().map(|meta| meta.as_json()))
             .bind(Utc::now().timestamp_millis())
             .bind(&contact.pubkey.to_string())
             .execute(pool)
@@ -421,6 +410,12 @@ impl DbContact {
 
 impl sqlx::FromRow<'_, SqliteRow> for DbContact {
     fn from_row(row: &'_ SqliteRow) -> StdResult<Self, sqlx::Error> {
+        let profile_meta: Option<String> = row.try_get("profile_meta")?;
+        let profile_meta = profile_meta
+            .as_ref()
+            .map(|json| profile_meta_or_err(json, "profile_meta"))
+            .transpose()?;
+
         let pubkey = row.try_get::<String, &str>("pubkey")?;
         let created_at =
             millis_to_naive_or_err(row.try_get::<i64, &str>("created_at")?, "created_at")?;
@@ -433,6 +428,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbContact {
             .transpose()?;
 
         Ok(DbContact {
+            profile_meta,
             pubkey: XOnlyPublicKey::from_str(&pubkey).map_err(|e| sqlx::Error::ColumnDecode {
                 index: "pubkey".into(),
                 source: Box::new(e),
@@ -441,7 +437,6 @@ impl sqlx::FromRow<'_, SqliteRow> for DbContact {
             updated_at,
             petname: row.try_get::<Option<String>, &str>("petname")?,
             relay_url,
-            profile_image: row.try_get::<Option<String>, &str>("profile_image")?,
             status: row.get::<u8, &str>("status").into(),
             unseen_messages: row.try_get::<i64, &str>("unseen_messages")? as u8,
             last_message_content: row.get::<Option<String>, &str>("last_message_content"),

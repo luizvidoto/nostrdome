@@ -2,7 +2,7 @@ CREATE TABLE contact (
     pubkey TEXT PRIMARY KEY,
     petname TEXT,
     relay_url TEXT,
-    profile_image TEXT,
+    profile_meta TEXT,
     status INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -11,4 +11,8 @@ CREATE TABLE contact (
     last_message_date INTEGER
 );
 
--- -- Contact Indexes
+CREATE INDEX contact_created_at ON contact (created_at);
+
+CREATE INDEX contact_updated_at ON contact (updated_at);
+
+CREATE INDEX contact_status ON contact (status);

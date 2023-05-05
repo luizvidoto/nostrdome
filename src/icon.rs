@@ -84,6 +84,10 @@ pub fn to_cloud_icon() -> Text<'static> {
     solid_icon('\u{F0EE}')
 }
 
+pub fn download_icon() -> Text<'static> {
+    solid_icon('\u{F019}')
+}
+
 pub fn import_icon() -> Text<'static> {
     solid_icon('\u{F56F}')
 }

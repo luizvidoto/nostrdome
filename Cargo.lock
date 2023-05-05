@@ -978,6 +978,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "dotenv"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
+
+[[package]]
 name = "dotenvy"
 version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2680,7 +2686,7 @@ dependencies = [
 
 [[package]]
 name = "nostrdome"
-version = "0.4.0"
+version = "0.4.0-alpha"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2691,6 +2697,7 @@ dependencies = [
  "chrono",
  "csv",
  "directories",
+ "dotenv",
  "fake",
  "futures",
  "iced",
@@ -2712,6 +2719,8 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+ "tracing-error",
+ "tracing-log",
  "tracing-subscriber",
  "unicode-segmentation",
  "url",
@@ -4353,6 +4362,16 @@ checksum = "24eb03ba0eab1fd845050058ce5e616558e8f8d8fca633e6b163fe25c797213a"
 dependencies = [
  "once_cell",
  "valuable",
+]
+
+[[package]]
+name = "tracing-error"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d686ec1c0f384b1277f097b2f279a2ecc11afe8c133c1aabf036a27cb4cd206e"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

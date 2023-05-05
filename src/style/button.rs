@@ -9,6 +9,7 @@ pub enum Button {
     #[default]
     Primary,
     Secondary,
+    Danger,
     Invisible,
     ContactCard,
     ActiveContactCard,
@@ -36,6 +37,10 @@ impl button::StyleSheet for Theme {
                 background: Color::TRANSPARENT.into(),
                 border_color: self.pallete().primary,
                 text_color: self.pallete().primary,
+                ..primary
+            },
+            Button::Danger => button::Appearance {
+                background: self.pallete().danger.into(),
                 ..primary
             },
             Button::Invisible => button::Appearance {
@@ -88,6 +93,7 @@ impl button::StyleSheet for Theme {
         match style {
             Button::Primary => self.active(style),
             Button::Secondary => self.active(style),
+            Button::Danger => self.active(style),
             Button::Invisible => self.active(style),
             Button::Bordered => button::Appearance {
                 border_color: self.pallete().primary,

@@ -1,7 +1,7 @@
-use crate::error::Error;
+use crate::{db::user_config::setup_user_config, error::Error};
 
 use directories::ProjectDirs;
-use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
+use sqlx::SqlitePool;
 use std::cmp::Ordering;
 
 #[derive(Debug, Clone)]
@@ -11,6 +11,8 @@ pub struct Database {
 
 impl Database {
     pub async fn new(pubkey: &str) -> Result<Self, Error> {
+        tracing::info!("NEW DATABASE_pubkey {:?}", pubkey);
+
         if let Some(dirs) = ProjectDirs::from("com", "NostrDome", "NostrDome") {
             tracing::debug!("Creating project directory");
             let project_dir = dirs.config_dir();
@@ -92,23 +94,6 @@ pub async fn upgrade_db(pool: &SqlitePool) -> Result<(), Error> {
     Ok(())
 }
 
-pub async fn store_first_login(pool: &SqlitePool) -> Result<(), Error> {
-    tracing::warn!("store_first_login");
-    let query = "INSERT INTO user_config (id, has_logged_in) VALUES (1, 1);";
-    sqlx::query(query).execute(pool).await?;
-    Ok(())
-}
-
-pub async fn query_has_logged_in(pool: &SqlitePool) -> Result<bool, Error> {
-    let query = "SELECT has_logged_in FROM user_config;";
-    let has_logged_in: Option<i32> = sqlx::query(query)
-        .map(|row: SqliteRow| row.get(0))
-        .fetch_optional(pool)
-        .await?;
-    let has_logged_in = has_logged_in.unwrap_or(0);
-    Ok(has_logged_in != 0)
-}
-
 /// Determine the current application database schema version.
 pub async fn curr_db_version(pool: &SqlitePool) -> Result<usize, Error> {
     let query = "PRAGMA user_version;";
@@ -118,10 +103,15 @@ pub async fn curr_db_version(pool: &SqlitePool) -> Result<usize, Error> {
 
 async fn initial_setup(pool: &SqlitePool) -> Result<usize, sqlx::Error> {
     tracing::info!("Database initial setup");
+
     for sql in INITIAL_SETUP {
         sqlx::query(sql).execute(pool).await?;
     }
-    log::info!("Database schema initialized to v1");
+
+    setup_user_config(pool).await?;
+
+    tracing::info!("Database schema initialized to v1");
+
     Ok(1)
 }
 
@@ -131,7 +121,7 @@ const _UPGRADE_SQL: [&str; 0] = [
 
 /* async fn mig_1_to_2(pool: &SqlitePool) -> Result<usize, Error> {
     sqlx::query(include_str!("../migrations/002.sql")).execute(pool).await?;
-    log::info!("database schema upgraded v1 -> v2");
+    tracing::info!("database schema upgraded v1 -> v2");
     Ok(2)
 } */
 

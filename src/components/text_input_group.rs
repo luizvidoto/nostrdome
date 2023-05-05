@@ -91,9 +91,11 @@ fn text_input_group<'a, Message: Clone + 'a>(
     let label = text(label_str).style(label_style);
     let tooltip: Element<_> = if let Some(tooltip_str) = tooltip_str {
         let tooltip_icon = container(text("?").size(15))
-            .style(style::Container::TooltipContainer)
+            .style(style::Container::TooltipIcon)
             .padding([2, 4]);
-        tooltip(tooltip_icon, tooltip_str, tooltip::Position::Top).into()
+        tooltip(tooltip_icon, tooltip_str, tooltip::Position::Top)
+            .style(style::Container::TooltipBg)
+            .into()
     } else {
         text("").into()
     };

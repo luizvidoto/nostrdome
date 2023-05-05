@@ -51,6 +51,9 @@ impl State {
                     // self.modal_state = ModalState::add_contact(Some(contact));
                     return Some(Message::OpenEditContactModal(contact));
                 }
+                contact_row::Message::GetProfile(db_contact) => {
+                    conn.send(net::Message::GetContactProfile(db_contact));
+                }
             },
             Message::DeleteContact(contact) => {
                 conn.send(net::Message::DeleteContact(contact));

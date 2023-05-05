@@ -2,12 +2,14 @@ use iced::widget::{button, container, row, text};
 use iced::Length;
 
 use crate::db::DbContact;
-use crate::icon::{delete_icon, edit_icon};
+use crate::icon::{delete_icon, download_icon, edit_icon};
+use crate::style;
 use crate::utils::format_pubkey;
 use crate::widget::Element;
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    GetProfile(DbContact),
     DeleteContact(DbContact),
     EditContact(DbContact),
 }
@@ -67,13 +69,16 @@ impl ContactRow {
                     .unwrap_or("".into())
             ))
             .width(Length::Fill),
+            container(button(download_icon().size(16)).on_press(Message::GetProfile(self.into())))
+                .width(Length::Fixed(EDIT_BTN_WIDTH)),
             container(button(edit_icon().size(16)).on_press(Message::EditContact(self.into())))
                 .width(Length::Fixed(EDIT_BTN_WIDTH)),
             container(
                 button(delete_icon().size(16))
                     .on_press(Message::DeleteContact(self.contact.clone()))
+                    .style(style::Button::Danger)
             )
-            .width(Length::Fixed(REMOVE_BTN_WIDTH)) // .style(style::Button::Danger)
+            .width(Length::Fixed(REMOVE_BTN_WIDTH))
         ]
         .spacing(2)
         .into()

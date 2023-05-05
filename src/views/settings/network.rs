@@ -123,13 +123,7 @@ impl State {
                             .iter_mut()
                             .find(|r| r.db_relay.url == relay.url())
                         {
-                            let _ = row.update(
-                                MessageWrapper {
-                                    from: row.id,
-                                    message: relay_row::Message::GotRelayServer(relay),
-                                },
-                                conn,
-                            );
+                            row.relay_server(relay);
                         }
                     }
                 }

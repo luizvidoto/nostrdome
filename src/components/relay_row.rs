@@ -1,12 +1,12 @@
-use crate::db::DbRelay;
-use crate::icon::{delete_icon, server_icon, solid_circle_icon};
+use crate::db::{DbRelay, DbRelayResponse};
+use crate::icon::{delete_icon, download_icon, solid_circle_icon};
 use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::utils::event_tt_to_naive;
-use crate::widget::Element;
+use crate::widget::{Element, Text};
 use chrono::Utc;
 use iced::futures::channel::mpsc;
-use iced::widget::{button, checkbox, container, row, text, tooltip};
+use iced::widget::{button, checkbox, container, row, text, tooltip, Space};
 use iced::{alignment, Command, Length, Subscription};
 use nostr_sdk::{Relay, RelayStatus, Timestamp};
 
@@ -21,6 +21,37 @@ impl RelayRowConnection {
 }
 
 #[derive(Debug, Clone)]
+pub enum RelayRowState {
+    Idle,
+    Loading,
+    Success,
+    Error(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum Mode {
+    ModalView { state: RelayRowState },
+    Normal,
+}
+impl Mode {
+    pub fn success(&mut self) {
+        if let Mode::ModalView { state } = self {
+            *state = RelayRowState::Success;
+        }
+    }
+    pub fn loading(&mut self) {
+        if let Mode::ModalView { state } = self {
+            *state = RelayRowState::Loading;
+        }
+    }
+    pub fn error(&mut self, error: String) {
+        if let Mode::ModalView { state } = self {
+            *state = RelayRowState::Error(error);
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Message {
     None,
     RelayUpdated(DbRelay),
@@ -30,9 +61,10 @@ pub enum Message {
     ToggleRead(DbRelay),
     ToggleWrite(DbRelay),
     Ready(RelayRowConnection),
-    GotRelayServer(nostr_sdk::Relay),
     Performing,
     Waited,
+    RequestEventsOf(DbRelay),
+    SendContactListToRelay(DbRelay),
 }
 #[derive(Debug, Clone)]
 pub struct MessageWrapper {
@@ -50,14 +82,14 @@ pub enum Input {
     Wait,
 }
 pub enum State {
-    Initial {
+    Start {
         id: i32,
     },
     Idle {
         id: i32,
         receiver: mpsc::Receiver<Input>,
     },
-    Querying {
+    Performing {
         id: i32,
         receiver: mpsc::Receiver<Input>,
         channel_relay: Relay,
@@ -70,6 +102,7 @@ pub struct RelayRow {
     pub db_relay: DbRelay,
     client_relay: Option<Relay>,
     sub_channel: Option<RelayRowConnection>,
+    mode: Mode,
 }
 
 impl RelayRow {
@@ -80,15 +113,23 @@ impl RelayRow {
             db_relay,
             client_relay: None,
             sub_channel: None,
+            mode: Mode::Normal,
         }
     }
+    pub fn with_mode(mut self) -> Self {
+        self.mode = Mode::ModalView {
+            state: RelayRowState::Idle,
+        };
+        self
+    }
     pub fn subscription(&self) -> Subscription<MessageWrapper> {
+        // let unique_id = uuid::Uuid::new_v4().to_string();
         iced::subscription::unfold(
             self.db_relay.url.clone(),
-            State::Initial { id: self.id },
+            State::Start { id: self.id },
             |state| async move {
                 match state {
-                    State::Initial { id } => {
+                    State::Start { id } => {
                         let (sender, receiver) = mpsc::channel(100);
                         (
                             MessageWrapper::new(id, Message::Ready(RelayRowConnection(sender))),
@@ -105,7 +146,7 @@ impl RelayRow {
                         match input {
                             Input::GetStatus(channel_relay) => (
                                 MessageWrapper::new(id, Message::Performing),
-                                State::Querying {
+                                State::Performing {
                                     id,
                                     receiver,
                                     channel_relay,
@@ -120,7 +161,7 @@ impl RelayRow {
                             }
                         }
                     }
-                    State::Querying {
+                    State::Performing {
                         id,
                         channel_relay,
                         receiver,
@@ -142,24 +183,33 @@ impl RelayRow {
         )
     }
 
+    pub fn relay_server(&mut self, relay: nostr_sdk::Relay) {
+        self.client_relay = Some(relay);
+    }
+
     pub fn update(
         &mut self,
         wrapper: MessageWrapper,
         conn: &mut BackEndConnection,
     ) -> Command<MessageWrapper> {
         match wrapper.message {
+            Message::None => (),
+            Message::SendContactListToRelay(db_relay) => {
+                if let Mode::ModalView { .. } = &mut self.mode {
+                    conn.send(net::Message::SendContactListToRelay(db_relay));
+                    self.mode.loading();
+                }
+            }
             Message::RelayUpdated(db_relay) => {
                 tracing::info!("Relay updated: {:?}", db_relay);
                 self.db_relay = db_relay;
             }
-            Message::None => (),
-            Message::GotRelayServer(relay) => {
-                self.client_relay = Some(relay);
-            }
             Message::ConnectToRelay(db_relay) => {
                 conn.send(net::Message::ConnectToRelay(db_relay));
             }
-
+            Message::RequestEventsOf(db_relay) => {
+                conn.send(net::Message::RequestEventsOf(db_relay));
+            }
             Message::DeleteRelay(db_relay) => {
                 conn.send(net::Message::DeleteRelay(db_relay));
             }
@@ -229,7 +279,94 @@ impl RelayRow {
             text("").into()
         }
     }
+    pub fn view_header() -> Element<'static, MessageWrapper> {
+        row![
+            container(text("")).width(Length::Fixed(RELAY_STATUS_ICON_WIDTH)),
+            container(text("Address")).center_x().width(Length::Fill),
+            container(text("Activity"))
+                .center_x()
+                .width(Length::Fixed(ACTIVITY_CELL_WIDTH)),
+            container(text("Read"))
+                .center_x()
+                .width(Length::Fixed(CHECKBOX_CELL_WIDTH)),
+            container(text("Write"))
+                .center_x()
+                .width(Length::Fixed(CHECKBOX_CELL_WIDTH)),
+            container(text(""))
+                .center_x()
+                .width(Length::Fixed(ACTION_ICON_WIDTH)),
+            container(text(""))
+                .center_x()
+                .width(Length::Fixed(ACTION_ICON_WIDTH))
+        ]
+        .into()
+    }
+
+    fn is_connected(&self) -> bool {
+        match &self.db_relay.status {
+            Some(last_active) => match last_active.0 {
+                RelayStatus::Connected => true,
+                _ => false,
+            },
+            None => false,
+        }
+    }
+
     pub fn view<'a>(&'a self) -> Element<'a, MessageWrapper> {
+        let (status_icon, status_text) = self.relay_status_icon();
+        let delete_btn = button(delete_icon().size(16))
+            .on_press(MessageWrapper::new(
+                self.id,
+                Message::DeleteRelay(self.db_relay.clone()),
+            ))
+            .style(style::Button::Danger)
+            .width(Length::Fixed(ACTION_ICON_WIDTH));
+        let mut download_btn =
+            button(download_icon().size(16)).width(Length::Fixed(ACTION_ICON_WIDTH));
+        if self.is_connected() && self.db_relay.read {
+            download_btn = download_btn.on_press(MessageWrapper::new(
+                self.id,
+                Message::RequestEventsOf(self.db_relay.clone()),
+            ));
+        }
+
+        container(
+            row![
+                tooltip(
+                    status_icon.width(Length::Fixed(RELAY_STATUS_ICON_WIDTH)),
+                    status_text,
+                    tooltip::Position::Top
+                )
+                .style(style::Container::TooltipBg),
+                container(text(&self.db_relay.url))
+                    .center_x()
+                    .width(Length::Fill),
+                container(self.seconds_since_last_conn())
+                    .center_x()
+                    .width(Length::Fixed(ACTIVITY_CELL_WIDTH)),
+                container(checkbox("", self.db_relay.read, |_| MessageWrapper::new(
+                    self.id,
+                    Message::ToggleRead(self.db_relay.clone())
+                )))
+                .center_x()
+                .width(Length::Fixed(CHECKBOX_CELL_WIDTH)),
+                container(checkbox("", self.db_relay.write, |_| MessageWrapper::new(
+                    self.id,
+                    Message::ToggleWrite(self.db_relay.clone())
+                )))
+                .center_x()
+                .width(Length::Fixed(CHECKBOX_CELL_WIDTH)),
+                download_btn,
+                delete_btn,
+            ]
+            .align_items(alignment::Alignment::Center),
+        )
+        // queria um hover para cada linha da tabela
+        // .style(style::Container::TableRow)
+        .into()
+    }
+
+    fn relay_status_icon<'a>(&'a self) -> (Text<'a>, String) {
         let (status_icon, status_text) = match &self.db_relay.status {
             Some(last_active) => {
                 let status_icon = match last_active.0 {
@@ -259,72 +396,54 @@ impl RelayRow {
                 "Loading".into(),
             ),
         };
-
-        container(
-            row![
-                tooltip(
-                    status_icon.width(Length::Fixed(RELAY_STATUS_ICON_WIDTH)),
-                    status_text,
-                    tooltip::Position::Top
-                ),
-                container(text(&self.db_relay.url))
-                    .center_x()
-                    .width(Length::Fill),
-                container(self.seconds_since_last_conn())
-                    .center_x()
-                    .width(Length::Fixed(ACTIVITY_CELL_WIDTH)),
-                container(checkbox("", self.db_relay.read, |_| MessageWrapper::new(
-                    self.id,
-                    Message::ToggleRead(self.db_relay.clone())
-                )))
-                .center_x()
-                .width(Length::Fixed(CHECKBOX_CELL_WIDTH)),
-                container(checkbox("", self.db_relay.write, |_| MessageWrapper::new(
-                    self.id,
-                    Message::ToggleWrite(self.db_relay.clone())
-                )))
-                .center_x()
-                .width(Length::Fixed(CHECKBOX_CELL_WIDTH)),
-                button(server_icon().size(16))
-                    .on_press(MessageWrapper::new(
-                        self.id,
-                        Message::ConnectToRelay(self.db_relay.clone())
-                    ))
-                    .width(Length::Fixed(ACTION_ICON_WIDTH)),
-                button(delete_icon().size(16))
-                    .on_press(MessageWrapper::new(
-                        self.id,
-                        Message::DeleteRelay(self.db_relay.clone())
-                    ))
-                    .width(Length::Fixed(ACTION_ICON_WIDTH)),
-            ]
-            .align_items(alignment::Alignment::Center),
-        )
-        // queria um hover para cada linha da tabela
-        // .style(style::Container::TableRow)
-        .into()
+        (status_icon, status_text)
     }
-    pub fn view_header() -> Element<'static, MessageWrapper> {
-        row![
-            container(text("")).width(Length::Fixed(RELAY_STATUS_ICON_WIDTH)),
-            container(text("Address")).center_x().width(Length::Fill),
-            container(text("Activity"))
-                .center_x()
-                .width(Length::Fixed(ACTIVITY_CELL_WIDTH)),
-            container(text("Read"))
-                .center_x()
-                .width(Length::Fixed(CHECKBOX_CELL_WIDTH)),
-            container(text("Write"))
-                .center_x()
-                .width(Length::Fixed(CHECKBOX_CELL_WIDTH)),
-            container(text(""))
-                .center_x()
-                .width(Length::Fixed(ACTION_ICON_WIDTH)),
-            container(text(""))
-                .center_x()
-                .width(Length::Fixed(ACTION_ICON_WIDTH))
-        ]
-        .into()
+
+    pub fn relay_response(&mut self, relay_response: DbRelayResponse) {
+        if self.db_relay.url == relay_response.relay_url {
+            self.mode.success()
+        }
+    }
+    pub fn modal_view(&self) -> Element<MessageWrapper> {
+        if let Mode::ModalView { state } = &self.mode {
+            let button_or_checkmark: Element<_> = match state {
+                RelayRowState::Idle => {
+                    let mut btn = button("Send").style(style::Button::Primary);
+                    if self.is_connected() {
+                        btn = btn.on_press(MessageWrapper::new(
+                            self.id,
+                            Message::SendContactListToRelay(self.db_relay.clone()),
+                        ))
+                    }
+                    btn.into()
+                }
+
+                RelayRowState::Loading => button("...").style(style::Button::Primary).into(),
+                RelayRowState::Success => text("Sent!").into(),
+                RelayRowState::Error(_) => text("Error").into(),
+            };
+
+            let (status_icon, status_text) = self.relay_status_icon();
+
+            container(
+                row![
+                    tooltip(
+                        status_icon.width(Length::Fixed(RELAY_STATUS_ICON_WIDTH)),
+                        status_text,
+                        tooltip::Position::Top
+                    )
+                    .style(style::Container::TooltipBg),
+                    text(&self.db_relay.url),
+                    Space::with_width(Length::Fill),
+                    button_or_checkmark
+                ]
+                .align_items(alignment::Alignment::Center),
+            )
+            .center_y()
+            .into()
+        } else {
+            text("").into()
+        }
     }
 }
 

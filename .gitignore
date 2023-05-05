@@ -8,3 +8,4 @@ insert_event_flux.txt
 /assets/color_pallete.png
 community.json
 test.http
+.env

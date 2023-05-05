@@ -1,20 +1,19 @@
+use std::str::FromStr;
+use std::time::Duration;
+use url::Url;
+
 use async_stream::stream;
 use futures::channel::mpsc;
 use futures::{Future, Stream, StreamExt};
 use iced::futures::stream::Fuse;
-use nostr_sdk::{Client, Filter, Keys, RelayPoolNotification, Timestamp};
+use nostr_sdk::secp256k1::XOnlyPublicKey;
+use nostr_sdk::{
+    Client, Contact, EventBuilder, Filter, Keys, Kind, Metadata, RelayPoolNotification, Timestamp,
+};
 use std::pin::Pin;
 
+use crate::db::{DbContact, DbEvent, DbRelay};
 use crate::error::Error;
-use crate::net::logic::request_events;
-use crate::{
-    db::{DbContact, DbEvent, DbRelay},
-    net::logic::{
-        add_relay, add_relays_and_connect, connect_to_relay, create_channel, delete_relay,
-        fetch_relay_server, fetch_relay_servers, send_contact_list_to, toggle_read_for_relay,
-        toggle_write_for_relay,
-    },
-};
 
 use super::{backend::BackEndInput, Event};
 
@@ -34,39 +33,11 @@ pub enum NostrInput {
     ToggleRelayWrite((DbRelay, bool)),
     ConnectToRelay((DbRelay, Option<DbEvent>)),
     SendContactListToRelay((DbRelay, Vec<DbContact>)),
+    GetContactProfile(DbContact),
+    SendProfile(Metadata),
     CreateChannel,
+    RequestEventsOf(DbRelay),
 }
-
-// impl TryFrom<Message> for NostrInput {
-//     type Error = ConversionError;
-
-//     fn try_from(message: Message) -> Result<Self, Self::Error> {
-//         match message {
-//             Message::PrepareClient { relays, last_event } => {
-//                 Ok(NostrInput::PrepareClient { relays, last_event })
-//             }
-//             Message::FetchRelayServer(url) => Ok(Self::FetchRelayServer(url)),
-//             Message::FetchRelayServers => Ok(Self::FetchRelayServers),
-//             Message::AddRelay(db_relay) => Ok(Self::AddRelay(db_relay)),
-//             Message::DeleteRelay(db_relay) => Ok(Self::DeleteRelay(db_relay)),
-//             Message::ToggleRelayRead((db_relay, read)) => {
-//                 Ok(Self::ToggleRelayRead((db_relay, read)))
-//             }
-//             Message::ToggleRelayWrite((db_relay, write)) => {
-//                 Ok(Self::ToggleRelayWrite((db_relay, write)))
-//             }
-//             Message::ConnectToRelay((db_relay, last_event)) => {
-//                 Ok(Self::ConnectToRelay((db_relay, last_event)))
-//             }
-//             Message::SendDMTo((db_contact, content)) => Ok(Self::SendDMTo((db_contact, content))),
-//             Message::SendContactListToRelay((db_relay, list)) => {
-//                 Ok(Self::SendContactListToRelay((db_relay, list)))
-//             }
-//             Message::CreateChannel => Ok(Self::CreateChannel),
-//             other => Error::UnsupportedMessage(other),
-//         }
-//     }
-// }
 
 pub enum NostrOutput {
     Ok(Event),
@@ -114,6 +85,29 @@ impl NostrSdkWrapper {
         let client = self.client.clone();
         let mut channel = channel.clone();
         match input {
+            NostrInput::RequestEventsOf(db_relay) => {
+                tracing::info!("RequestEventsOf");
+                let keys_1 = keys.clone();
+                tokio::spawn(async move {
+                    run_and_send(
+                        request_events_of(&client, db_relay, &keys_1.public_key()),
+                        &mut channel,
+                    )
+                    .await;
+                });
+            }
+            NostrInput::SendProfile(metadata) => {
+                tracing::info!("SendProfile");
+                tokio::spawn(async move {
+                    run_and_send(send_profile(&client, metadata), &mut channel).await;
+                });
+            }
+            NostrInput::GetContactProfile(db_contact) => {
+                tracing::info!("GetContactProfile");
+                tokio::spawn(async move {
+                    run_and_send(get_contact_profile(&client, db_contact), &mut channel).await;
+                });
+            }
             NostrInput::SendDMToRelays(db_event) => {
                 tracing::info!("SendDMToRelays");
                 tokio::spawn(async move {
@@ -275,39 +269,237 @@ async fn send_dm_to_relays(client: &Client, event: DbEvent) -> Result<Event, Err
     Ok(Event::SentDirectMessage(event_id))
 }
 
-// fn spawn_and_send<F>(f: F) -> impl FnOnce(Client, mpsc::Sender<NostrOutput>) + Send
-// where
-//     F: FnOnce(&Client) -> Pin<Box<dyn Future<Output = NostrOutput> + Send>> + Send + Sync + 'static,
-// {
-//     move |client: Client, mut channel: mpsc::Sender<NostrOutput>| {
-//         tokio::spawn(async move {
-//             let output = (f)(&client).await;
-//             match channel.try_send(output) {
-//                 Ok(_) => (),
-//                 Err(e) => tracing::error!("{}", e),
-//             };
-//         });
-//     }
-// }
-// async fn run_and_send<T, E>(
-//     f: impl Future<Output = Result<T, E>>,
-//     channel: &mut mpsc::Sender<NostrOutput>,
-// ) where
-//     T: Into<NostrOutput>,
-//     E: std::error::Error + Send + 'static,
-// {
-//     let result = f.await;
+async fn get_contact_profile(
+    client: &Client,
+    db_contact: DbContact,
+) -> Result<BackEndInput, Error> {
+    let filter = Filter::new()
+        .author(db_contact.pubkey().to_string())
+        .kind(Kind::Metadata)
+        .limit(1);
+    let timeout = Some(Duration::from_secs(30));
+    let events: Vec<nostr_sdk::Event> = client.get_events_of(vec![filter], timeout).await?;
+    if let Some(event) = events.get(0) {
+        let metadata = Metadata::from_json(&event.content)
+            .map_err(|_| Error::JsonToMetadata(event.content.to_string()))?;
+        Ok(BackEndInput::GotProfile((db_contact, metadata)))
+    } else {
+        Ok(BackEndInput::None)
+    }
+}
 
-//     match result {
-//         Ok(t) => {
-//             if let Err(e) = channel.try_send(t.into()) {
-//                 tracing::error!("{}", e);
-//             }
-//         }
-//         Err(e) => {
-//             if let Err(e) = channel.try_send(NostrOutput::Err(Box::new(e))) {
-//                 tracing::error!("{}", e);
-//             }
-//         }
-//     }
-// }
+async fn send_profile(client: &Client, meta: Metadata) -> Result<Event, Error> {
+    let event_id = client.set_metadata(meta.clone()).await?;
+    Ok(Event::SentProfileMeta((meta, event_id)))
+}
+
+async fn request_events_of(
+    client: &Client,
+    db_relay: DbRelay,
+    own_public_key: &XOnlyPublicKey,
+) -> Result<BackEndInput, Error> {
+    if let Some(relay) = client.relays().await.get(&db_relay.url) {
+        let from_me = Filter::new()
+            .author(own_public_key.to_string())
+            .until(Timestamp::now());
+        let to_me = Filter::new()
+            .pubkey(own_public_key.to_owned())
+            .until(Timestamp::now());
+        let timeout = Some(Duration::from_secs(10));
+        let events = relay.get_events_of(vec![from_me, to_me], timeout).await?;
+        Ok(BackEndInput::StoreEvents((db_relay.url.to_owned(), events)))
+    } else {
+        Ok(BackEndInput::None)
+    }
+}
+
+pub async fn _fetch_contacts_from_relays(client: &Client) -> Result<Vec<Contact>, Error> {
+    let contacts = client
+        .get_contact_list(Some(Duration::from_secs(10)))
+        .await?;
+    Ok(contacts)
+}
+
+async fn _send_contact_list(client: &Client, list: &[DbContact]) -> Result<Event, Error> {
+    let c_list: Vec<_> = list.iter().map(|c| c.into()).collect();
+    let _event_id = client.set_contact_list(c_list).await?;
+
+    Ok(Event::None)
+}
+
+pub async fn create_channel(client: &Client) -> Result<Event, Error> {
+    let metadata = Metadata::new()
+        .about("Channel about cars")
+        .display_name("Best Cars")
+        .name("Best Cars")
+        .banner(Url::from_str("https://picsum.photos/seed/picsum/800/300")?)
+        .picture(Url::from_str("https://picsum.photos/seed/picsum/200/300")?)
+        .website(Url::from_str("https://picsum.photos/seed/picsum/200/300")?);
+
+    let event_id = client.new_channel(metadata).await?;
+
+    Ok(Event::ChannelCreated(event_id))
+}
+
+pub async fn send_contact_list_to(
+    // pool: &SqlitePool,
+    keys: &Keys,
+    client: &Client,
+    url: &Url,
+    list: &[DbContact],
+) -> Result<BackEndInput, Error> {
+    // let list = DbContact::fetch(pool).await?;
+    let c_list: Vec<Contact> = list.iter().map(|c| c.into()).collect();
+
+    let builder = EventBuilder::set_contact_list(c_list);
+    let event = builder.to_event(keys)?;
+
+    let _event_id = client.send_event_to(url.to_owned(), event.clone()).await?;
+
+    Ok(BackEndInput::StorePendingEvent(event))
+}
+pub fn build_dm(keys: &Keys, db_contact: &DbContact, content: &str) -> Result<BackEndInput, Error> {
+    let builder =
+        EventBuilder::new_encrypted_direct_msg(&keys, db_contact.pubkey().to_owned(), content)?;
+    let event = builder.to_event(keys)?;
+    Ok(BackEndInput::StorePendingEvent(event))
+}
+
+pub async fn add_relay(client: &Client, db_relay: DbRelay) -> Result<BackEndInput, Error> {
+    tracing::info!("Adding relay to client: {}", db_relay.url);
+    client.add_relay(db_relay.url.as_str(), None).await?;
+    Ok(BackEndInput::AddRelayToDb(db_relay))
+}
+
+pub async fn fetch_relay_server(client: &Client, url: &Url) -> Result<Event, Error> {
+    let relay = client.relays().await.get(url).cloned();
+    Ok(Event::GotRelayServer(relay))
+}
+
+pub async fn fetch_relay_servers(client: &Client) -> Result<Event, Error> {
+    let relays: Vec<nostr_sdk::Relay> = client.relays().await.values().cloned().collect();
+    Ok(Event::GotRelayServers(relays))
+}
+
+pub async fn add_relays_and_connect(
+    client: &Client,
+    keys: &Keys,
+    relays: &[DbRelay],
+    last_event: Option<DbEvent>,
+) -> Result<Event, Error> {
+    // Received from BackEndEvent::PrepareClient
+    tracing::info!("Adding relays to client");
+    for r in relays {
+        match client.add_relay(&r.url.to_string(), None).await {
+            Ok(_) => tracing::info!("Nostr Client Added Relay: {}", &r.url),
+            Err(e) => tracing::error!("{}", e),
+        }
+    }
+
+    tracing::info!("Connecting to relays");
+    let client_c = client.clone();
+    tokio::spawn(async move { client_c.connect().await });
+
+    request_events(&client, &keys.public_key(), last_event).await?;
+
+    Ok(Event::FinishedPreparing)
+}
+
+pub async fn connect_to_relay(
+    client: &Client,
+    _keys: &Keys,
+    db_relay: DbRelay,
+    _last_event: Option<DbEvent>,
+) -> Result<Event, Error> {
+    let event = if let Some(relay) = client
+        .relays()
+        .await
+        .values()
+        .find(|r| &r.url() == &db_relay.url)
+    {
+        if nostr_sdk::RelayStatus::Connected != relay.status().await {
+            tracing::info!("Trying to connect to relay: {}", db_relay.url);
+            let client = client.clone();
+            let db_relay_clone = db_relay.clone();
+            tokio::spawn(async move {
+                if let Err(e) = client.connect_relay(db_relay_clone.url.as_str()).await {
+                    tracing::error!("[client.connect_relay] ERROR: {}", e);
+                }
+            });
+            Event::RelayConnected(db_relay)
+        } else {
+            Event::None
+        }
+    } else {
+        tracing::warn!("Relay not found on client: {}", db_relay.url);
+        // add_relay(client, db_relay).await?
+        Event::None
+    };
+
+    Ok(event)
+}
+
+pub async fn request_events(
+    client: &Client,
+    public_key: &XOnlyPublicKey,
+    last_event: Option<DbEvent>,
+) -> Result<Event, Error> {
+    tracing::info!("Requesting events from relays");
+    let last_timestamp_secs: u64 = last_event
+        .map(|e| {
+            // syncronization problems with different machines
+            let earlier_time = e.created_at - chrono::Duration::minutes(10);
+            (earlier_time.timestamp_millis() / 1000) as u64
+        })
+        .unwrap_or(0);
+    tracing::info!("last timestamp: {}", last_timestamp_secs);
+
+    let client = client.clone();
+    let pk = public_key.clone();
+    tokio::spawn(async move {
+        // if has last_event, request events since last_event.timestamp
+        // else request events since 0
+        let sent_msgs_sub_past = Filter::new()
+            .author(pk.to_string())
+            .since(Timestamp::from(last_timestamp_secs))
+            .until(Timestamp::now());
+        let recv_msgs_sub_past = Filter::new()
+            .pubkey(pk.to_owned())
+            .since(Timestamp::from(last_timestamp_secs))
+            .until(Timestamp::now());
+        let timeout = Duration::from_secs(10);
+        client
+            .req_events_of(vec![sent_msgs_sub_past, recv_msgs_sub_past], Some(timeout))
+            .await;
+    });
+
+    Ok(Event::RequestedEvents)
+}
+
+pub async fn toggle_read_for_relay(
+    client: &Client,
+    db_relay: DbRelay,
+    read: bool,
+) -> Result<BackEndInput, Error> {
+    let mut relays = client.relays().await;
+    if let Some(relay) = relays.get_mut(&db_relay.url) {
+        relay.opts().set_read(read)
+    }
+    Ok(BackEndInput::ToggleRelayRead((db_relay, read)))
+}
+pub async fn toggle_write_for_relay(
+    client: &Client,
+    db_relay: DbRelay,
+    write: bool,
+) -> Result<BackEndInput, Error> {
+    let mut relays = client.relays().await;
+    if let Some(relay) = relays.get_mut(&db_relay.url) {
+        relay.opts().set_write(write)
+    }
+    Ok(BackEndInput::ToggleRelayWrite((db_relay, write)))
+}
+
+pub async fn delete_relay(client: &Client, db_relay: DbRelay) -> Result<BackEndInput, Error> {
+    client.remove_relay(db_relay.url.as_str()).await?;
+    Ok(BackEndInput::DeleteRelayFromDb(db_relay))
+}
