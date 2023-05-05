@@ -8,6 +8,13 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Errors that can occur in the nostrdome crate
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("Request error: {0}")]
+    ReqwestError(#[from] reqwest::Error),
+    #[error("Request failed. Status code: {0}")]
+    RequestFailed(reqwest::StatusCode),
+    #[error("Request failed. Tag name not found")]
+    RequestTagNameNotFound,
+
     #[error("Failed to send to nostr input channel: {0}")]
     FailedToSendNostrInput(String),
 

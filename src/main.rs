@@ -238,7 +238,7 @@ impl Application for App {
                 Event::Disconnected => {
                     tracing::warn!("Disconnected from backend");
                 }
-                Event::DatabaseClosed => {
+                Event::BackendClosed => {
                     tracing::warn!("Database closed");
                     if let State::App { keys, conn, .. } = &mut self.state {
                         self.state = State::logging_out(keys, conn);
@@ -262,6 +262,7 @@ impl Application for App {
                                 keys.to_owned(),
                             )));
                         }
+                        ready_conn.send(net::Message::FetchLatestVersion);
                         ready_conn.send(net::Message::QueryFirstLogin);
                         self.state = State::backend_loaded(keys, &mut ready_conn);
                     }

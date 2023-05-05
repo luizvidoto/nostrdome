@@ -9,6 +9,8 @@ use crate::{
 #[derive(Debug, Clone)]
 pub enum Message {
     Logout,
+    // -------- REQWEST MESSAGES
+    FetchLatestVersion,
     // -------- DATABASE MESSAGES
     QueryFirstLogin,
     StoreFirstLogin,

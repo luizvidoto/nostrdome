@@ -22,11 +22,14 @@ pub enum BackEndInput {
     StorePendingEvent(nostr_sdk::Event),
     StoreEvent((nostr_sdk::Url, nostr_sdk::Event)),
     StoreRelayMessage((nostr_sdk::Url, nostr_sdk::RelayMessage)),
+    LatestVersion(String),
     Shutdown,
 }
 
 pub async fn backend_processing(pool: &SqlitePool, keys: &Keys, input: BackEndInput) -> Event {
     match input {
+        // --- REQWEST ---
+        BackEndInput::LatestVersion(version) => Event::LatestVersion(version),
         BackEndInput::Shutdown => Event::None,
         // --- TO DATABASE ---
         BackEndInput::DeleteRelayFromDb(db_relay) => {

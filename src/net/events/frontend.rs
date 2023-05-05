@@ -6,6 +6,9 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub enum Event {
+    // --- REQWEST ---
+    LatestVersion(String),
+    FetchingLatestVersion,
     // --- Database ---
     ProfileCreated,
     LocalPendingEvent(DbEvent),
@@ -45,7 +48,7 @@ pub enum Event {
     FirstLoginStored,
     FinishedPreparing,
     // --- General ---
-    DatabaseClosed,
+    BackendClosed,
     LoggedOut,
     Error(String),
     None,

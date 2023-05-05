@@ -24,13 +24,14 @@ use self::events::backend::BackEndInput;
 use self::events::nostr::{NostrInput, NostrOutput};
 pub(crate) use messages::Message;
 
-pub struct DatabaseState {
+pub struct BackendState {
     keys: Keys,
     db_client: Option<Database>,
     sender: mpsc::Sender<BackEndInput>,
     receiver: mpsc::Receiver<BackEndInput>,
+    req_client: Option<reqwest::Client>,
 }
-impl DatabaseState {
+impl BackendState {
     pub fn new(keys: &Keys) -> Self {
         let (sender, receiver) = mpsc::channel(100);
         Self {
@@ -38,11 +39,16 @@ impl DatabaseState {
             receiver,
             keys: keys.to_owned(),
             db_client: None,
+            req_client: None,
         }
     }
 
-    fn with_client(mut self, db_client: Database) -> Self {
+    fn with_db(mut self, db_client: Database) -> Self {
         self.db_client = Some(db_client);
+        self
+    }
+    fn with_req(mut self, req_client: reqwest::Client) -> Self {
+        self.req_client = Some(req_client);
         self
     }
 
@@ -62,9 +68,28 @@ impl DatabaseState {
         client_sender: &mut mpsc::Sender<NostrInput>,
         message: Message,
     ) -> Event {
-        if let Some(db_client) = &mut self.db_client {
+        if let (Some(db_client), Some(req_client)) = (&mut self.db_client, &mut self.req_client) {
             let pool = &db_client.pool;
             match message {
+                // ---- REQWEST ----
+                Message::FetchLatestVersion => {
+                    tracing::info!("Fetching latest version");
+                    let req_client_clone = req_client.clone();
+                    let mut sender_clone = self.sender.clone();
+                    tokio::spawn(async move {
+                        match fetch_latest_version(req_client_clone).await {
+                            Ok(version) => {
+                                if let Err(e) =
+                                    sender_clone.try_send(BackEndInput::LatestVersion(version))
+                                {
+                                    tracing::error!("Error sending latest version: {}", e);
+                                }
+                            }
+                            Err(e) => tracing::error!("{}", e),
+                        }
+                    });
+                    Event::FetchingLatestVersion
+                }
                 // ---- CONFIG ----
                 Message::Logout => {
                     panic!("Logout should be processed outside here")
@@ -241,11 +266,11 @@ pub enum State {
     End,
     Start {
         keys: Keys,
-        database: DatabaseState,
+        backend: BackendState,
     },
     Connected {
         receiver: mpsc::UnboundedReceiver<Message>,
-        database: DatabaseState,
+        backend: BackendState,
         nostr: NostrState,
     },
     OnlyNostr {
@@ -255,8 +280,8 @@ pub enum State {
 }
 impl State {
     pub fn start(keys: Keys) -> Self {
-        let database = DatabaseState::new(&keys);
-        Self::Start { keys, database }
+        let backend = BackendState::new(&keys);
+        Self::Start { keys, backend }
     }
 }
 
@@ -264,10 +289,8 @@ pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
     struct Backend;
     let id = std::any::TypeId::of::<Backend>();
 
-    let database_sub = subscription::unfold(
-        id,
-        State::start(keys.to_owned()),
-        |state| async move {
+    let database_sub =
+        subscription::unfold(id, State::start(keys.to_owned()), |state| async move {
             match state {
                 State::End => iced::futures::future::pending().await,
                 State::OnlyNostr { receiver: _, nostr } => {
@@ -276,9 +299,10 @@ pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
                     }
                     (Event::LoggedOut, State::End)
                 }
-                State::Start { keys, database } => {
+                State::Start { keys, backend } => {
                     let (sender, receiver) = mpsc::unbounded();
                     let nostr = NostrState::new(&keys).await;
+                    let req_client = reqwest::Client::new();
                     let db_client = match Database::new(&keys.public_key().to_string()).await {
                         Ok(database) => database,
                         Err(e) => {
@@ -286,46 +310,49 @@ pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
                             tracing::error!("{}", e);
                             tracing::warn!("Trying again in 2 secs");
                             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                            return (Event::Disconnected, State::Start { keys, database });
+                            return (Event::Disconnected, State::Start { keys, backend });
                         }
                     };
+
+                    let backend = backend.with_db(db_client);
+                    let backend = backend.with_req(req_client);
 
                     (
                         Event::Connected(BackEndConnection::new(sender)),
                         State::Connected {
                             receiver,
-                            database: database.with_client(db_client),
+                            backend,
                             nostr,
                         },
                     )
                 }
                 State::Connected {
                     mut receiver,
-                    mut database,
+                    mut backend,
                     mut nostr,
                 } => {
                     let event: Event = futures::select! {
                         message = receiver.select_next_some() => {
                             if let Message::Logout = message {
-                                if let Err(e) = database.logout().await {
+                                if let Err(e) = backend.logout().await {
                                     tracing::error!("{}", e);
                                 }
-                                return (Event::DatabaseClosed, State::OnlyNostr { receiver, nostr });
+                                return (Event::BackendClosed, State::OnlyNostr { receiver, nostr });
                             } else {
-                                database.process_message(&mut nostr.in_sender, message).await
+                                backend.process_message(&mut nostr.in_sender, message).await
                             }
                         }
                         nostr_input = nostr.in_receiver.select_next_some() => {
                             nostr.process_in(nostr_input).await
                         }
                         nostr_output = nostr.out_receiver.select_next_some() => {
-                            nostr.process_out(nostr_output, &mut database.sender).await
+                            nostr.process_out(nostr_output, &mut backend.sender).await
                         }
-                        backend_input = database.receiver.select_next_some() => {
-                            database.process_in(backend_input).await
+                        backend_input = backend.receiver.select_next_some() => {
+                            backend.process_in(backend_input).await
                         }
                         notification = nostr.notifications_stream.select_next_some() => {
-                            database.process_notification(notification).await
+                            backend.process_notification(notification).await
                         },
                     };
 
@@ -333,14 +360,13 @@ pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
                         event,
                         State::Connected {
                             receiver,
-                            database,
+                            backend,
                             nostr,
                         },
                     )
                 }
             }
-        },
-    );
+        });
 
     vec![database_sub]
 }
@@ -413,5 +439,20 @@ async fn handle_first_login(
         Ok(Event::None)
     } else {
         Ok(Event::FirstLogin)
+    }
+}
+
+async fn fetch_latest_version(client: reqwest::Client) -> Result<String, Error> {
+    let url = "https://api.github.com/repos/luizvidoto/nostrdome/releases/latest";
+    let response = reqwest::get(url).await?;
+
+    if response.status().is_success() {
+        let json: serde_json::Value = response.json().await?;
+        let tag_name = json["tag_name"]
+            .as_str()
+            .ok_or_else(|| Error::RequestTagNameNotFound)?;
+        Ok(tag_name.to_string())
+    } else {
+        Err(Error::RequestFailed(response.status()))
     }
 }
