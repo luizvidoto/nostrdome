@@ -102,7 +102,7 @@ impl State {
         let view: Element<_> = match self.step {
             0 => {
                 let content = column![
-                    container(title(title_1))
+                    title(title_1)
                         .height(Length::FillPortion(1))
                         .width(Length::Fill)
                         .center_x()
@@ -148,7 +148,7 @@ impl State {
             }
             1 => {
                 let content = column![
-                    container(title(title_2))
+                    title(title_2)
                         .height(Length::FillPortion(1))
                         .width(Length::Fill)
                         .center_x()
@@ -206,7 +206,7 @@ impl State {
             }
             _ => {
                 let content = column![
-                    container(title(title_3))
+                    title(title_3)
                         .height(Length::FillPortion(1))
                         .width(Length::Fill)
                         .center_x()
