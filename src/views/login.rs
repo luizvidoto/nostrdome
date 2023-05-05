@@ -12,16 +12,34 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
+pub struct Profile {
+    pub name: String,
+    pub about: String,
+    pub profile_picture: String,
+}
+impl Profile {
+    pub fn new(name: String, about: String, profile_picture: String) -> Self {
+        Self {
+            name,
+            about,
+            profile_picture,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Message {
     SecretKeyInputChange(String),
     SubmitPress(String),
     ToCreateAccount,
     ToImportAccount,
     ToChooseAccount,
-    CreateAccountSubmit,
+    CreateAccountSubmit(Profile),
     NameInputChange(String),
     AboutInputChange(String),
     ProfilePictureInputChange(String),
+    // to main
+    CreateAccountSubmitSuccess((Profile, Keys)),
     LoginSuccess(Keys),
 }
 
@@ -30,9 +48,9 @@ pub enum Message {
 pub enum State {
     ChooseAccount,
     CreateAccount {
-        name_input: String,
-        about_input: String,
-        profile_picture_input: String,
+        name: String,
+        about: String,
+        profile_picture: String,
     },
     ImportAccount {
         secret_key_input: String,
@@ -52,9 +70,9 @@ impl State {
     }
     pub fn create_account() -> Self {
         Self::CreateAccount {
-            name_input: "".into(),
-            about_input: "".into(),
-            profile_picture_input: "".into(),
+            name: "".into(),
+            about: "".into(),
+            profile_picture: "".into(),
         }
     }
 
@@ -66,16 +84,17 @@ impl State {
                 _ => (),
             },
             State::CreateAccount {
-                name_input,
-                about_input,
-                profile_picture_input,
+                name: name_input,
+                about: about_input,
+                profile_picture: profile_picture_input,
             } => match message {
                 Message::NameInputChange(text) => *name_input = text,
                 Message::AboutInputChange(text) => *about_input = text,
                 Message::ProfilePictureInputChange(text) => *profile_picture_input = text,
                 Message::ToChooseAccount => *self = Self::new(),
-                Message::CreateAccountSubmit => {
-                    println!("name: {}", name_input);
+                Message::CreateAccountSubmit(profile) => {
+                    let keys = Keys::generate();
+                    return Some(Message::CreateAccountSubmitSuccess((profile, keys)));
                 }
                 _ => (),
             },
@@ -146,22 +165,23 @@ impl State {
                     .into()
             }
             State::CreateAccount {
-                name_input,
-                about_input,
-                profile_picture_input,
+                name,
+                about,
+                profile_picture,
             } => {
-                let name_input = TextInputGroup::new("Name", name_input, Message::NameInputChange);
-                let about_input =
-                    TextInputGroup::new("About", about_input, Message::AboutInputChange);
+                let name_input = TextInputGroup::new("Name", name, Message::NameInputChange);
+                let about_input = TextInputGroup::new("About", about, Message::AboutInputChange);
                 let profile_pic_input = TextInputGroup::new(
                     "Profile Picture",
-                    profile_picture_input,
+                    profile_picture,
                     Message::ProfilePictureInputChange,
                 );
                 let back_btn = button("Back")
                     .style(style::Button::Invisible)
                     .on_press(Message::ToChooseAccount);
-                let submit_btn = button("Submit").on_press(Message::CreateAccountSubmit);
+                let submit_btn = button("Submit").on_press(Message::CreateAccountSubmit(
+                    Profile::new(name.clone(), about.clone(), profile_picture.clone()),
+                ));
                 let buttons =
                     row![back_btn, Space::with_width(Length::Fill), submit_btn].spacing(10);
                 column![

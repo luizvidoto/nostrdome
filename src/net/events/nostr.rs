@@ -100,6 +100,11 @@ impl NostrSdkWrapper {
         let (client, notifications_stream) = client_with_stream(&keys).await;
         (Self { client }, notifications_stream)
     }
+    pub async fn logout(self) -> Result<(), Error> {
+        tracing::info!("Client Logging out");
+        self.client.shutdown().await?;
+        Ok(())
+    }
     pub async fn process_in(
         &self,
         channel: &mut mpsc::Sender<NostrOutput>,

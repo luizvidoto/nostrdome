@@ -8,6 +8,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Errors that can occur in the nostrdome crate
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("Failed to send to nostr input channel: {0}")]
+    FailedToSendNostrInput(String),
+
     // General errors
     #[error("Unable to update contact: message ID is required but not provided.")]
     MissingMessageIdForContactUpdate,

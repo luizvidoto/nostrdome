@@ -53,6 +53,10 @@ impl DatabaseState {
             Event::None
         }
     }
+    pub async fn logout(self) -> Result<(), Error> {
+        tracing::info!("Database Logging out");
+        Ok(())
+    }
     pub async fn process_message(
         &mut self,
         client_sender: &mut mpsc::Sender<NostrInput>,
@@ -62,7 +66,13 @@ impl DatabaseState {
             let pool = &db_client.pool;
             match message {
                 // ---- CONFIG ----
-                Message::Logout => Event::Logout,
+                Message::Logout => {
+                    panic!("Logout should be processed outside here")
+                }
+                Message::CreateAccount((profile, keys)) => {
+                    tracing::info!("Creating account");
+                    Event::ProfileCreated
+                }
                 Message::StoreFirstLogin => match store_first_login(pool).await {
                     Ok(_) => Event::FirstLoginStored,
                     Err(e) => Event::Error(e.to_string()),
@@ -205,6 +215,9 @@ impl NostrState {
             notifications_stream,
         }
     }
+    pub async fn logout(self) -> Result<(), Error> {
+        Ok(self.client.logout().await?)
+    }
     pub async fn process_out(
         &mut self,
         nostr_output: NostrOutput,
@@ -225,7 +238,8 @@ impl NostrState {
 }
 
 pub enum State {
-    Disconnected {
+    End,
+    Start {
         keys: Keys,
         database: DatabaseState,
     },
@@ -234,6 +248,16 @@ pub enum State {
         database: DatabaseState,
         nostr: NostrState,
     },
+    OnlyNostr {
+        receiver: mpsc::UnboundedReceiver<Message>,
+        nostr: NostrState,
+    },
+}
+impl State {
+    pub fn start(keys: Keys) -> Self {
+        let database = DatabaseState::new(&keys);
+        Self::Start { keys, database }
+    }
 }
 
 pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
@@ -242,13 +266,17 @@ pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
 
     let database_sub = subscription::unfold(
         id,
-        State::Disconnected {
-            keys: keys.clone(),
-            database: DatabaseState::new(&keys),
-        },
+        State::start(keys.to_owned()),
         |state| async move {
             match state {
-                State::Disconnected { keys, database } => {
+                State::End => iced::futures::future::pending().await,
+                State::OnlyNostr { receiver: _, nostr } => {
+                    if let Err(e) = nostr.logout().await {
+                        tracing::error!("{}", e);
+                    }
+                    (Event::LoggedOut, State::End)
+                }
+                State::Start { keys, database } => {
                     let (sender, receiver) = mpsc::unbounded();
                     let nostr = NostrState::new(&keys).await;
                     let db_client = match Database::new(&keys.public_key().to_string()).await {
@@ -258,7 +286,7 @@ pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
                             tracing::error!("{}", e);
                             tracing::warn!("Trying again in 2 secs");
                             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                            return (Event::Disconnected, State::Disconnected { keys, database });
+                            return (Event::Disconnected, State::Start { keys, database });
                         }
                     };
 
@@ -277,6 +305,16 @@ pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
                     mut nostr,
                 } => {
                     let event: Event = futures::select! {
+                        message = receiver.select_next_some() => {
+                            if let Message::Logout = message {
+                                if let Err(e) = database.logout().await {
+                                    tracing::error!("{}", e);
+                                }
+                                return (Event::DatabaseClosed, State::OnlyNostr { receiver, nostr });
+                            } else {
+                                database.process_message(&mut nostr.in_sender, message).await
+                            }
+                        }
                         nostr_input = nostr.in_receiver.select_next_some() => {
                             nostr.process_in(nostr_input).await
                         }
@@ -285,9 +323,6 @@ pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
                         }
                         backend_input = database.receiver.select_next_some() => {
                             database.process_in(backend_input).await
-                        }
-                        message = receiver.select_next_some() => {
-                            database.process_message(&mut nostr.in_sender, message).await
                         }
                         notification = nostr.notifications_stream.select_next_some() => {
                             database.process_notification(notification).await

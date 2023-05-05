@@ -1,6 +1,9 @@
+use nostr_sdk::Keys;
+
 use crate::{
     db::{DbContact, DbRelay},
     types::ChatMessage,
+    views::login::Profile,
 };
 
 #[derive(Debug, Clone)]
@@ -19,6 +22,7 @@ pub enum Message {
     ImportContacts(Vec<DbContact>),
     AddToUnseenCount(DbContact),
     FetchRelays,
+    CreateAccount((Profile, Keys)),
 
     // -------- NOSTR CLIENT MESSAGES
     RequestEvents,

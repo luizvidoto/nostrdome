@@ -23,7 +23,7 @@ use nostr_sdk::Keys;
 use tracing::metadata::LevelFilter;
 use tracing_subscriber::EnvFilter;
 use views::{
-    login,
+    login::{self, Profile},
     settings::{self, appearance},
     welcome, Router,
 };
@@ -43,8 +43,13 @@ pub enum State {
     Login {
         state: login::State,
     },
+    LoggingOut {
+        keys: Keys,
+        conn: BackEndConnection,
+    },
     LoadingBackend {
         keys: Keys,
+        new_profile: Option<Profile>,
     },
     BackendLoaded {
         keys: Keys,
@@ -70,22 +75,49 @@ impl State {
             state: login::State::new(),
         }
     }
-    pub fn welcome(keys: Keys, conn: BackEndConnection) -> Self {
-        Self::Welcome {
-            state: welcome::State::new(),
-            keys,
-            conn,
+    pub fn logging_out(keys: &mut Keys, conn: &mut BackEndConnection) -> Self {
+        Self::LoggingOut {
+            keys: keys.to_owned(),
+            conn: conn.to_owned(),
         }
     }
-    pub fn to_loading_backend(keys: Keys) -> Self {
-        Self::LoadingBackend { keys }
+    pub fn welcome(keys: &mut Keys, conn: &mut BackEndConnection) -> Self {
+        Self::Welcome {
+            state: welcome::State::new(),
+            keys: keys.to_owned(),
+            conn: conn.to_owned(),
+        }
     }
-    pub fn backend_loaded(keys: Keys, conn: BackEndConnection) -> Self {
-        Self::BackendLoaded { keys, conn }
+    pub fn load_back(keys: Keys) -> Self {
+        Self::LoadingBackend {
+            keys: keys,
+            new_profile: None,
+        }
     }
-    pub fn to_app(keys: Keys, mut conn: BackEndConnection) -> Self {
-        let router = Router::new(&mut conn);
-        Self::App { keys, conn, router }
+    pub fn load_back_with_profile(keys: Keys, profile: Profile) -> Self {
+        Self::LoadingBackend {
+            keys: keys,
+            new_profile: Some(profile),
+        }
+    }
+    pub fn backend_loaded(keys: &mut Keys, conn: &mut BackEndConnection) -> Self {
+        Self::BackendLoaded {
+            keys: keys.to_owned(),
+            conn: conn.to_owned(),
+        }
+    }
+    pub fn error(message: &str) -> Self {
+        Self::OutsideError {
+            message: message.into(),
+        }
+    }
+    pub fn to_app(keys: &mut Keys, conn: &mut BackEndConnection) -> Self {
+        let router = Router::new(conn);
+        Self::App {
+            keys: keys.to_owned(),
+            conn: conn.to_owned(),
+            router,
+        }
     }
 }
 
@@ -118,10 +150,11 @@ impl Application for App {
     fn subscription(&self) -> iced::Subscription<Self::Message> {
         let backend_subscription: Vec<_> = match &self.state {
             State::Login { .. } | State::OutsideError { .. } => vec![],
-            State::LoadingBackend { keys }
+            State::LoadingBackend { keys, .. }
             | State::Welcome { keys, .. }
             | State::BackendLoaded { keys, .. }
-            | State::App { keys, .. } => backend_connect(keys)
+            | State::App { keys, .. }
+            | State::LoggingOut { keys, .. } => backend_connect(keys)
                 .into_iter()
                 .map(|stream| stream.map(Message::BackEndEvent))
                 .collect(),
@@ -140,25 +173,18 @@ impl Application for App {
             State::Login { state } => state.view().map(Message::LoginMessage),
             State::Welcome { state, .. } => state.view().map(Message::WelcomeMessage),
             State::LoadingBackend { .. } | State::BackendLoaded { .. } => {
-                column![title("Loading App"), text("Please wait...")]
-                    .spacing(10)
-                    .into()
+                inform_card("Loading App", "Please wait...")
             }
             State::App { router, .. } => router.view().map(Message::RouterMessage),
             State::OutsideError { message } => {
                 let error_msg = text(message);
                 let back_btn = button("Login").on_press(Message::ToLogin);
-                column![title("Error"), error_msg, back_btn]
-                    .spacing(10)
-                    .into()
+                let content: Element<_> = column![error_msg, back_btn].spacing(10).into();
+                inform_card("Error", content)
             }
+            State::LoggingOut { .. } => inform_card("Logging out", "Please wait..."),
         };
-        container(content)
-            .height(Length::Fill)
-            .width(Length::Fill)
-            .center_x()
-            .center_y()
-            .into()
+        content.into()
     }
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
@@ -180,8 +206,14 @@ impl Application for App {
             Message::LoginMessage(login_msg) => {
                 if let State::Login { state } = &mut self.state {
                     if let Some(msg) = state.update(login_msg) {
-                        if let login::Message::LoginSuccess(keys) = msg {
-                            self.state = State::to_loading_backend(keys);
+                        match msg {
+                            login::Message::CreateAccountSubmitSuccess((profile, keys)) => {
+                                self.state = State::load_back_with_profile(keys, profile);
+                            }
+                            login::Message::LoginSuccess(keys) => {
+                                self.state = State::load_back(keys);
+                            }
+                            _ => (),
                         }
                     }
                 }
@@ -203,20 +235,35 @@ impl Application for App {
             }
             Message::BackEndEvent(event) => match event {
                 Event::None => (),
-                Event::Logout => {
+                Event::Disconnected => {
+                    tracing::warn!("Disconnected from backend");
+                }
+                Event::DatabaseClosed => {
+                    tracing::warn!("Database closed");
+                    if let State::App { keys, conn, .. } = &mut self.state {
+                        self.state = State::logging_out(keys, conn);
+                    }
+                }
+                Event::LoggedOut => {
                     self.state = State::login();
                 }
                 Event::FirstLogin => {
                     tracing::warn!("First login");
                     if let State::BackendLoaded { keys, conn } = &mut self.state {
-                        self.state = State::welcome(keys.to_owned(), conn.to_owned());
+                        self.state = State::welcome(keys, conn);
                     }
                 }
                 Event::Connected(mut ready_conn) => {
                     tracing::warn!("Connected to backend");
-                    if let State::LoadingBackend { keys } = &mut self.state {
+                    if let State::LoadingBackend { keys, new_profile } = &mut self.state {
+                        if let Some(profile) = new_profile {
+                            ready_conn.send(net::Message::CreateAccount((
+                                profile.to_owned(),
+                                keys.to_owned(),
+                            )));
+                        }
                         ready_conn.send(net::Message::QueryFirstLogin);
-                        self.state = State::backend_loaded(keys.to_owned(), ready_conn);
+                        self.state = State::backend_loaded(keys, &mut ready_conn);
                     }
                 }
                 Event::Error(e) => {
@@ -230,7 +277,7 @@ impl Application for App {
                             if let Ok(db_relay) = DbRelay::from_str("ws://192.168.85.151:8080") {
                                 conn.send(net::Message::AddRelay(db_relay));
                             }
-                            self.state = State::to_app(keys.to_owned(), conn.to_owned());
+                            self.state = State::to_app(keys, conn);
                         }
                         _ => (),
                     }
@@ -255,6 +302,24 @@ impl Application for App {
 
         Command::none()
     }
+}
+
+fn inform_card<'a>(
+    title_text: &str,
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let content = column![title(title_text).width(Length::Shrink), content.into()].spacing(10);
+    let inner = container(content)
+        .padding(30)
+        .style(style::Container::ContactList);
+
+    container(inner)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x()
+        .center_y()
+        .style(style::Container::ChatContainer)
+        .into()
 }
 
 #[tokio::main]

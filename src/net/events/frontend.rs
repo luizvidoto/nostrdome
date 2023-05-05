@@ -7,6 +7,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub enum Event {
     // --- Database ---
+    ProfileCreated,
     LocalPendingEvent(DbEvent),
     GotChatMessages((DbContact, Vec<ChatMessage>)),
     GotRelayResponses(Vec<DbRelayResponse>),
@@ -44,7 +45,8 @@ pub enum Event {
     FirstLoginStored,
     FinishedPreparing,
     // --- General ---
-    Logout,
+    DatabaseClosed,
+    LoggedOut,
     Error(String),
     None,
 }
