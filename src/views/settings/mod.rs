@@ -6,7 +6,7 @@ use nostr_sdk::{Metadata, Tag};
 
 use crate::components::text::title;
 use crate::components::text_input_group::TextInputGroup;
-use crate::components::{file_importer, relay_row, FileImporter, RelayRow};
+use crate::components::{common_scrollable, file_importer, relay_row, FileImporter, RelayRow};
 use crate::db::{DbContact, DbRelay};
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
@@ -372,6 +372,9 @@ impl ModalState {
     }
     pub fn backend_event(&mut self, event: Event, conn: &mut BackEndConnection) {
         if let ModalState::SendContactList { relays, .. } = self {
+            relays
+                .iter_mut()
+                .for_each(|r| r.backend_event(event.clone(), conn));
             match event {
                 Event::GotRelays(db_relays) => {
                     *relays = db_relays
@@ -381,19 +384,6 @@ impl ModalState {
                             RelayRow::new(idx as i32, db_relay, conn).with_mode()
                         })
                         .collect();
-                }
-                Event::UpdateWithRelayResponse { relay_response, .. } => {
-                    for r in relays {
-                        r.relay_response(relay_response.clone());
-                    }
-                }
-                Event::GotRelayServer(relay) => {
-                    if let Some(relay) = relay {
-                        if let Some(row) = relays.iter_mut().find(|r| r.db_relay.url == relay.url())
-                        {
-                            row.relay_server(relay);
-                        }
-                    }
                 }
                 _ => (),
             }
@@ -550,9 +540,7 @@ impl ModalState {
                     })
                     .into();
 
-                let modal_body = container(scrollable(relay_list))
-                    .width(Length::Fill)
-                    .style(style::Container::Default);
+                let modal_body = container(common_scrollable(relay_list)).width(Length::Fill);
 
                 Card::new(header, modal_body)
                     .foot(

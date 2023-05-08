@@ -4,7 +4,6 @@ use iced::{Command, Length, Subscription};
 use iced_aw::{Card, Modal};
 use nostr_sdk::Url;
 
-use crate::components::relay_row::MessageWrapper;
 use crate::components::text::title;
 use crate::components::text_input_group::TextInputGroup;
 use crate::components::{relay_row, RelayRow};
@@ -88,23 +87,6 @@ impl State {
                     self.relays
                         .push(RelayRow::new(self.relays.len() as i32, db_relay, conn))
                 }
-                Event::RelayUpdated(db_relay) => {
-                    if let Some(row) = self
-                        .relays
-                        .iter_mut()
-                        .find(|row| row.db_relay.url == db_relay.url)
-                    {
-                        return row
-                            .update(
-                                MessageWrapper::new(
-                                    row.id,
-                                    relay_row::Message::RelayUpdated(db_relay),
-                                ),
-                                conn,
-                            )
-                            .map(Message::RelayMessage);
-                    }
-                }
                 Event::RelayDeleted(db_relay) => {
                     self.relays.retain(|r| r.db_relay.url != db_relay.url);
                 }
@@ -116,18 +98,11 @@ impl State {
                         .map(|(idx, db_relay)| RelayRow::new(idx as i32, db_relay, conn))
                         .collect();
                 }
-                Event::GotRelayServer(relay) => {
-                    if let Some(relay) = relay {
-                        if let Some(row) = self
-                            .relays
-                            .iter_mut()
-                            .find(|r| r.db_relay.url == relay.url())
-                        {
-                            row.relay_server(relay);
-                        }
-                    }
+                other => {
+                    self.relays
+                        .iter_mut()
+                        .for_each(|r| r.backend_event(other.clone(), conn));
                 }
-                _ => (),
             },
         }
         Command::none()
@@ -185,7 +160,6 @@ impl State {
                     .width(Length::Fill),
                 )
                 .max_width(CARD_MAX_WIDTH)
-                //.width(Length::Shrink)
                 .on_close(Message::CloseModal)
                 .into()
         })

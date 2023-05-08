@@ -3,7 +3,7 @@ use iced::subscription::Subscription;
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
 use iced::{alignment, Command, Length};
 
-use crate::components::{contact_card, status_bar, StatusBar};
+use crate::components::{common_scrollable, contact_card, status_bar, StatusBar};
 use crate::db::DbContact;
 use crate::icon::{menu_bars_icon, send_icon};
 use crate::net::events::Event;
@@ -73,19 +73,13 @@ impl State {
                 .on_press(Message::AddContactPress)
                 .into()
         } else {
-            scrollable(
+            common_scrollable(
                 self.contacts
                     .iter()
                     .filter(|c| contact_matches_search(&c.contact, &self.search_contact_input))
                     .fold(column![].spacing(0), |col, contact| {
                         col.push(contact.view().map(Message::ContactCardMessage))
                     }),
-            )
-            .vertical_scroll(
-                scrollable::Properties::new()
-                    .width(6.0)
-                    .margin(0.0)
-                    .scroller_width(6.0),
             )
             // .id(CONTACTS_SCROLLABLE_ID.clone())
             .into()
@@ -373,14 +367,8 @@ fn create_chat_content<'a>(messages: &[ChatMessage]) -> Element<'a, Message> {
         );
 
         container(
-            scrollable(chat_content)
+            common_scrollable(chat_content)
                 .height(Length::Fill)
-                .vertical_scroll(
-                    scrollable::Properties::new()
-                        .width(6.0)
-                        .margin(0.0)
-                        .scroller_width(6.0),
-                )
                 .id(CHAT_SCROLLABLE_ID.clone())
                 .on_scroll(Message::Scrolled),
         )

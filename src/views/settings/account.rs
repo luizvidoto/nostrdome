@@ -2,6 +2,7 @@ use iced::widget::{button, column, container, row, scrollable, Space};
 use iced::Length;
 use nostr_sdk::Metadata;
 
+use crate::components::common_scrollable;
 use crate::components::text::title;
 use crate::components::text_input_group::TextInputGroup;
 use crate::net::BackEndConnection;
@@ -19,7 +20,6 @@ pub enum Message {
     LNURLChange(String),
     LNChange(String),
     NIP05Change(String),
-    SendPress,
     SavePress,
     BackEndEvent(Event),
 }
@@ -92,12 +92,6 @@ impl State {
             Message::LNURLChange(ln_url) => self.ln_url = ln_url,
             Message::LNChange(ln_addrs) => self.ln_addrs = ln_addrs,
             Message::NIP05Change(nostr_addrs) => self.nostr_addrs = nostr_addrs,
-            Message::SendPress => {
-                let meta = self.make_meta();
-                if self.all_valid() {
-                    conn.send(net::Message::SendProfile(meta))
-                }
-            }
             Message::SavePress => {
                 let meta = self.make_meta();
                 if self.all_valid() {
@@ -201,15 +195,13 @@ impl State {
         .placeholder("my-addrs@example.com")
         .build();
 
-        let mut submit_btn = button("Send");
         let mut save_btn = button("Save");
 
         if self.all_valid() {
-            submit_btn = submit_btn.on_press(Message::SendPress);
             save_btn = save_btn.on_press(Message::SavePress);
         }
 
-        container(scrollable(
+        container(common_scrollable(
             column![
                 title,
                 profile_name_input,
@@ -221,7 +213,7 @@ impl State {
                 ln_url_input,
                 ln_input,
                 nostr_addrs_input,
-                row![Space::with_width(Length::Fill), save_btn, submit_btn].spacing(10)
+                row![Space::with_width(Length::Fill), save_btn].spacing(10)
             ]
             .spacing(4),
         ))

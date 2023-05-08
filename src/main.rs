@@ -21,7 +21,6 @@ use iced::{
 };
 use net::{backend_connect, events::Event, BackEndConnection};
 use nostr_sdk::Keys;
-use tracing::{metadata::LevelFilter, Subscriber};
 use tracing_subscriber::{
     fmt::SubscriberBuilder, prelude::__tracing_subscriber_SubscriberExt, EnvFilter,
 };
@@ -164,6 +163,7 @@ impl Application for App {
         };
         let app_sub = match &self.state {
             State::App { router, .. } => router.subscription().map(Message::RouterMessage),
+            State::Welcome { state, .. } => state.subscription().map(Message::WelcomeMessage),
             _ => iced::Subscription::none(),
         };
         let mut subscriptions = backend_subscription;
@@ -200,9 +200,9 @@ impl Application for App {
                         welcome::Message::ToApp => {
                             conn.send(net::Message::StoreFirstLogin);
                             conn.send(net::Message::PrepareClient);
-                            state.update(welcome::Message::ToApp);
+                            state.update(welcome::Message::ToApp, conn);
                         }
-                        other => state.update(other),
+                        other => state.update(other, conn),
                     }
                 }
             }
@@ -276,32 +276,38 @@ impl Application for App {
                     match &mut self.state {
                         State::Welcome { keys, conn, .. } | State::BackendLoaded { conn, keys } => {
                             // only for testing
-                            if let Ok(db_relay) = DbRelay::from_str("ws://192.168.85.151:8080") {
-                                conn.send(net::Message::AddRelay(db_relay));
-                            }
-                            if let Ok(db_relay) = DbRelay::from_str("ws://192.168.15.151:8080") {
-                                conn.send(net::Message::AddRelay(db_relay));
-                            }
+                            // if let Ok(db_relay) = DbRelay::from_str("ws://192.168.85.151:8080") {
+                            //     conn.send(net::Message::AddRelay(db_relay));
+                            // }
+                            // if let Ok(db_relay) = DbRelay::from_str("ws://192.168.15.151:8080") {
+                            //     conn.send(net::Message::AddRelay(db_relay));
+                            // }
                             self.state = State::to_app(keys, conn);
                         }
                         _ => (),
                     }
                 }
-                Event::RelayCreated(db_relay) => {
-                    tracing::info!("Relay created: {:?}", db_relay);
-                    if let State::App { router, conn, .. } = &mut self.state {
-                        conn.send(net::Message::ConnectToRelay(db_relay.clone()));
-                        return router
-                            .backend_event(Event::RelayCreated(db_relay), conn)
-                            .map(Message::RouterMessage);
-                    }
-                }
+                // Event::RelayCreated(db_relay) => {
+                //     tracing::info!("Relay created: {:?}", db_relay);
+                //     if let State::App { router, conn, .. } = &mut self.state {
+                //         conn.send(net::Message::ConnectToRelay(db_relay.clone()));
+                //         return router
+                //             .backend_event(Event::RelayCreated(db_relay), conn)
+                //             .map(Message::RouterMessage);
+                //     }
+                // }
                 other => {
                     tracing::info!("Backend event: {:?}", other);
-                    if let State::App { router, conn, .. } = &mut self.state {
-                        return router
-                            .backend_event(other, conn)
-                            .map(Message::RouterMessage);
+                    match &mut self.state {
+                        State::App { router, conn, .. } => {
+                            return router
+                                .backend_event(other, conn)
+                                .map(Message::RouterMessage);
+                        }
+                        State::Welcome { conn, state, .. } => {
+                            state.backend_event(other, conn);
+                        }
+                        _ => (),
                     }
                 }
             },

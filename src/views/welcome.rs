@@ -1,61 +1,129 @@
+use iced::alignment::Horizontal;
 use iced::widget::{button, column, container, image, row, text};
-use iced::{Alignment, Length};
+use iced::{Alignment, Length, Subscription};
+use iced_aw::{Card, Modal};
 
+use crate::components::text_input_group::TextInputGroup;
+use crate::components::{common_scrollable, relay_row, RelayRow};
 use crate::consts::{CONTACTS_IMAGE, RELAYS_IMAGE, WELCOME_IMAGE};
+use crate::db::DbRelay;
 use crate::icon::{regular_circle_icon, solid_circle_icon};
+use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::{components::text::title, widget::Element};
 
+use rand::{thread_rng, Rng};
+use std::net::Ipv4Addr;
+
 #[derive(Debug, Clone)]
 pub enum Message {
+    RelayMessage(relay_row::MessageWrapper),
     ToNextStep,
     ToPreviousStep,
     ToApp,
-    AddRelay(String),
+    AddRelay(nostr_sdk::Url),
     ImportContactsRelays,
     ImportContactsFile,
-}
-pub struct State {
-    pub step: usize,
-    pub relays_added: Vec<String>,
-    pub loading_client: bool,
-}
-impl State {
-    pub fn new() -> Self {
-        Self {
-            loading_client: false,
-            step: 0,
-            relays_added: vec![],
-        }
-    }
-    pub fn update(&mut self, message: Message) {
-        match message {
-            Message::ToNextStep => self.step += 1,
-            Message::ToPreviousStep => self.step -= 1,
-            Message::ToApp => {
-                self.loading_client = true;
-            }
-            Message::AddRelay(relay_url) => {
-                self.relays_added.push(relay_url);
-            }
-            Message::ImportContactsRelays => {
-                tracing::info!("Importing contacts from relays");
-            }
-            Message::ImportContactsFile => {
-                tracing::info!("Importing contacts from a file");
-            }
-        }
-    }
-    pub fn view(&self) -> Element<Message> {
-        let title_1 = "NostrTalk";
-        let text_1a = "Secure, encrypted chats on the NOSTR network";
-        let title_2 = "Relays Setup";
-        let text_2 = "Add relays to connect";
-        let title_3 = "Contacts";
-        let text_3a = "Import from relays";
-        let text_3b = "Import from file";
+    AddOtherPress,
 
-        let relay_list = vec![
+    // Add Relay Modal
+    AddRelayInputChange(String),
+    AddRelaySubmit(String),
+    AddRelayCancelButtonPressed,
+    CloseAddRelayModal,
+}
+
+#[derive(Debug, Clone)]
+pub enum ModalState {
+    AddRelay { relay_url: String, is_invalid: bool },
+    Off,
+}
+
+impl ModalState {
+    pub fn view<'a>(&'a self, underlay: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+        match self {
+            ModalState::AddRelay {
+                relay_url,
+                is_invalid,
+            } => Modal::new(true, underlay.into(), move || {
+                let mut add_relay_input =
+                    TextInputGroup::new("Relay Address", &relay_url, Message::AddRelayInputChange)
+                        .placeholder("wss://my-relay.com")
+                        .on_submit(Message::AddRelaySubmit(relay_url.clone()));
+
+                if *is_invalid {
+                    add_relay_input = add_relay_input.invalid("Relay address is invalid");
+                }
+
+                let modal_body: Element<_> = container(add_relay_input.build()).into();
+                Card::new(text("Add Relay"), modal_body)
+                    .foot(
+                        row![
+                            button(text("Cancel").horizontal_alignment(Horizontal::Center),)
+                                .width(Length::Fill)
+                                .on_press(Message::AddRelayCancelButtonPressed),
+                            button(text("Ok").horizontal_alignment(Horizontal::Center),)
+                                .width(Length::Fill)
+                                .on_press(Message::AddRelaySubmit(relay_url.clone()))
+                        ]
+                        .spacing(10)
+                        .padding(5)
+                        .width(Length::Fill),
+                    )
+                    .max_width(CARD_MAX_WIDTH)
+                    .on_close(Message::CloseAddRelayModal)
+                    .into()
+            })
+            .backdrop(Message::CloseAddRelayModal)
+            .on_esc(Message::CloseAddRelayModal)
+            .into(),
+            ModalState::Off => underlay.into(),
+        }
+    }
+
+    fn open(&mut self) {
+        *self = Self::AddRelay {
+            relay_url: "".into(),
+            is_invalid: false,
+        }
+    }
+
+    fn close(&mut self) {
+        *self = Self::Off
+    }
+
+    fn input_change(&mut self, input: String) {
+        if let Self::AddRelay {
+            relay_url,
+            is_invalid,
+        } = self
+        {
+            *relay_url = input;
+            *is_invalid = false;
+        }
+    }
+
+    fn error(&mut self) {
+        if let Self::AddRelay { is_invalid, .. } = self {
+            *is_invalid = true;
+        }
+    }
+}
+
+pub enum StepView {
+    Welcome,
+    Relays {
+        relays_suggestion: Vec<nostr_sdk::Url>,
+        relays_added: Vec<RelayRow>,
+        add_relay_modal: ModalState,
+    },
+    Contacts,
+    LoadingClient,
+}
+impl StepView {
+    fn relays_view(conn: &mut BackEndConnection) -> Self {
+        conn.send(net::Message::FetchRelays);
+        let mut relays_suggestion: Vec<_> = vec![
             "wss://relay.plebstr.com",
             "wss://nostr.wine",
             "wss://relay.nostr.info",
@@ -63,44 +131,85 @@ impl State {
             "ws://192.168.15.151:8080",
         ]
         .iter()
-        .fold(column![].spacing(5), |column, relay| {
-            let relay_btn = if self.relays_added.contains(&relay.to_string()) {
-                button("Ok")
-            } else {
-                button("Add").on_press(Message::AddRelay(relay.to_string()))
-            };
-            column.push(
-                container(
-                    row![text(relay).size(20).width(Length::Fill), relay_btn]
-                        .align_items(Alignment::Center),
-                )
-                .width(Length::Fill)
-                .height(Length::Shrink),
-            )
-        });
-        let relays_sugestions = container(relay_list)
-            .padding(20)
-            .style(style::Container::Bordered)
-            .width(Length::Fill)
-            .height(Length::Fill);
+        .filter_map(|s| nostr_sdk::Url::parse(s).ok())
+        .collect();
 
+        let num_random_ips = 5; // Número de IPs aleatórios a serem gerados
+        for _ in 0..num_random_ips {
+            let random_ip = generate_random_ipv4();
+            let random_url = format!("ws://{}:8080", random_ip);
+            if let Ok(url) = nostr_sdk::Url::parse(&random_url) {
+                relays_suggestion.push(url);
+            }
+        }
+
+        Self::Relays {
+            relays_suggestion,
+            relays_added: vec![],
+            add_relay_modal: ModalState::Off,
+        }
+    }
+    fn get_step(&self) -> u8 {
+        match self {
+            StepView::Welcome => 0,
+            StepView::Relays { .. } => 1,
+            StepView::Contacts => 2,
+            StepView::LoadingClient => 3,
+        }
+    }
+    fn make_dots(&self) -> Element<'static, Message> {
+        let step = self.get_step();
+        let mut dot_row = row![].spacing(5);
+
+        for i in 0..3 {
+            if i < step + 1 {
+                dot_row = dot_row.push(solid_circle_icon().size(10));
+            } else {
+                dot_row = dot_row.push(regular_circle_icon().size(10));
+            }
+        }
+
+        dot_row.width(Length::Shrink).into()
+    }
+
+    fn make_btns(&self) -> Element<'static, Message> {
+        match self {
+            StepView::Welcome => row![button("Next").on_press(Message::ToNextStep)]
+                .spacing(10)
+                .into(),
+            StepView::Relays { .. } => row![
+                button("Back").on_press(Message::ToPreviousStep),
+                button("Next").on_press(Message::ToNextStep)
+            ]
+            .spacing(10)
+            .into(),
+            StepView::Contacts => row![
+                button("Back").on_press(Message::ToPreviousStep),
+                button("Start").on_press(Message::ToNextStep)
+            ]
+            .spacing(10)
+            .into(),
+            Self::LoadingClient => text("").into(),
+        }
+    }
+
+    fn make_step_buttons(&self) -> Element<'static, Message> {
+        column![
+            container(self.make_dots()).center_x().width(Length::Fill),
+            container(self.make_btns()).center_x().width(Length::Fill)
+        ]
+        .spacing(5)
+        .into()
+    }
+    pub fn view(&self) -> Element<Message> {
         let welcome_image = image::Image::new(image::Handle::from_memory(WELCOME_IMAGE));
         let relays_image = image::Image::new(image::Handle::from_memory(RELAYS_IMAGE));
         let contacts_image = image::Image::new(image::Handle::from_memory(CONTACTS_IMAGE));
 
-        let last_step_buttons: Element<_> = if self.loading_client {
-            text("Loading...").into()
-        } else {
-            row![
-                button("Back").on_press(Message::ToPreviousStep),
-                button("Start").on_press(Message::ToApp)
-            ]
-            .spacing(10)
-            .into()
-        };
-
-        let view: Element<_> = match self.step {
-            0 => {
+        match self {
+            StepView::Welcome => {
+                let title_1 = "NostrTalk";
+                let text_1a = "Secure, encrypted chats on the NOSTR network";
                 let content = column![
                     title(title_1)
                         .height(Length::FillPortion(1))
@@ -124,20 +233,10 @@ impl State {
                     .width(Length::Fill)
                     .center_y()
                     .center_x(),
-                    container(
-                        column![
-                            container(make_dots(self.step))
-                                .center_x()
-                                .width(Length::Fill),
-                            container(button("Next").on_press(Message::ToNextStep))
-                                .center_x()
-                                .width(Length::Fill)
-                        ]
-                        .spacing(5)
-                    )
-                    .height(Length::FillPortion(1))
+                    container(self.make_step_buttons()).height(Length::FillPortion(1))
                 ]
                 .spacing(30);
+
                 container(content)
                     .width(Length::Fill)
                     .height(Length::Fill)
@@ -146,7 +245,49 @@ impl State {
                     .style(style::Container::WelcomeBg1)
                     .into()
             }
-            1 => {
+            StepView::Relays {
+                relays_added,
+                relays_suggestion,
+                add_relay_modal,
+            } => {
+                let title_2 = "Relays Setup";
+                let text_2 = "Add relays to connect";
+                let relays_suggestion =
+                    relays_suggestion
+                        .iter()
+                        .fold(column![].spacing(5), |column, url| {
+                            column.push(
+                                container(
+                                    row![
+                                        text(url).size(20).width(Length::Fill),
+                                        button("Add").on_press(Message::AddRelay(url.clone()))
+                                    ]
+                                    .align_items(Alignment::Center),
+                                )
+                                .width(Length::Fill)
+                                .height(Length::Shrink),
+                            )
+                        });
+                let relay_rows = relays_added
+                    .iter()
+                    .fold(column![].spacing(5), |col, relay| {
+                        col.push(relay.relay_welcome().map(Message::RelayMessage))
+                    });
+                let add_other_btn = container(
+                    button("Add Other")
+                        .padding(10)
+                        .on_press(Message::AddOtherPress),
+                )
+                .width(Length::Fill)
+                .center_x()
+                .center_y();
+                let relays = container(common_scrollable(
+                    column![relays_suggestion, relay_rows, add_other_btn].spacing(10),
+                ))
+                .padding(20)
+                .style(style::Container::Bordered)
+                .width(Length::Fill)
+                .height(Length::Fill);
                 let content = column![
                     title(title_2)
                         .height(Length::FillPortion(1))
@@ -163,7 +304,7 @@ impl State {
                                     container(text(text_2).size(WELCOME_TEXT_SIZE))
                                         .width(Length::Fill)
                                         .center_x(),
-                                    relays_sugestions
+                                    relays
                                 ]
                                 .spacing(10)
                             )
@@ -176,35 +317,24 @@ impl State {
                     .width(Length::Fill)
                     .center_y()
                     .center_x(),
-                    container(
-                        column![
-                            container(make_dots(self.step))
-                                .center_x()
-                                .width(Length::Fill),
-                            container(
-                                row![
-                                    button("Back").on_press(Message::ToPreviousStep),
-                                    button("Next").on_press(Message::ToNextStep)
-                                ]
-                                .spacing(10)
-                            )
-                            .center_x()
-                            .width(Length::Fill)
-                        ]
-                        .spacing(5)
-                    )
-                    .height(Length::FillPortion(1))
+                    container(column![self.make_step_buttons()].spacing(5))
+                        .height(Length::FillPortion(1))
                 ]
                 .spacing(10);
-                container(content)
+
+                let underlay = container(content)
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .center_x()
                     .center_y()
-                    .style(style::Container::WelcomeBg2)
-                    .into()
+                    .style(style::Container::WelcomeBg2);
+
+                add_relay_modal.view(underlay).into()
             }
-            _ => {
+            StepView::Contacts => {
+                let title_3 = "Contacts";
+                let text_3a = "Import from relays";
+                let text_3b = "Import from file";
                 let content = column![
                     title(title_3)
                         .height(Length::FillPortion(1))
@@ -244,16 +374,7 @@ impl State {
                     .width(Length::Fill)
                     .center_y()
                     .center_x(),
-                    container(
-                        column![
-                            container(make_dots(self.step))
-                                .center_x()
-                                .width(Length::Fill),
-                            container(last_step_buttons).center_x().width(Length::Fill)
-                        ]
-                        .spacing(5)
-                    )
-                    .height(Length::FillPortion(1))
+                    container(self.make_step_buttons()).height(Length::FillPortion(1))
                 ]
                 .spacing(10);
 
@@ -265,26 +386,185 @@ impl State {
                     .style(style::Container::WelcomeBg3)
                     .into()
             }
-        };
 
-        view.into()
+            StepView::LoadingClient => text("Loading...").into(),
+        }
     }
 }
-
-fn make_dots(step: usize) -> Element<'static, Message> {
-    let mut dot_row = row![].spacing(5);
-
-    for i in 0..3 {
-        if i < step + 1 {
-            dot_row = dot_row.push(solid_circle_icon().size(10));
-        } else {
-            dot_row = dot_row.push(regular_circle_icon().size(10));
+pub struct State {
+    pub step_view: StepView,
+}
+impl State {
+    pub fn subscription(&self) -> Subscription<Message> {
+        match &self.step_view {
+            StepView::Relays { relays_added, .. } => {
+                let relay_subs: Vec<_> = relays_added
+                    .iter()
+                    .map(|r| r.subscription().map(Message::RelayMessage))
+                    .collect();
+                Subscription::batch(relay_subs)
+            }
+            _ => iced::Subscription::none(),
+        }
+    }
+    pub fn new() -> Self {
+        Self {
+            step_view: StepView::Welcome,
+        }
+    }
+    fn to_next_step(&mut self, conn: &mut BackEndConnection) {
+        match &self.step_view {
+            StepView::Welcome => {
+                self.step_view = StepView::relays_view(conn);
+            }
+            StepView::Relays { .. } => self.step_view = StepView::Contacts,
+            StepView::Contacts => self.step_view = StepView::LoadingClient,
+            StepView::LoadingClient => {}
+        }
+    }
+    fn to_previous_step(&mut self, conn: &mut BackEndConnection) {
+        match &self.step_view {
+            StepView::Welcome => {}
+            StepView::Relays { .. } => self.step_view = StepView::Welcome,
+            StepView::Contacts => {
+                self.step_view = StepView::relays_view(conn);
+            }
+            StepView::LoadingClient => self.step_view = StepView::Contacts,
         }
     }
 
-    dot_row.width(Length::Shrink).into()
+    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
+        match message {
+            Message::RelayMessage(msg) => {
+                if let StepView::Relays { relays_added, .. } = &mut self.step_view {
+                    if let Some(row) = relays_added.iter_mut().find(|r| r.id == msg.from) {
+                        let _ = row.update(msg, conn);
+                    }
+                }
+            }
+            Message::ToNextStep => self.to_next_step(conn),
+            Message::ToPreviousStep => self.to_previous_step(conn),
+            Message::ToApp => (),
+            Message::AddRelay(relay_url) => {
+                if let StepView::Relays { .. } = &mut self.step_view {
+                    let db_relay = DbRelay::new(relay_url);
+                    conn.send(net::Message::AddRelay(db_relay));
+                }
+            }
+            Message::ImportContactsRelays => {
+                tracing::info!("Importing contacts from relays");
+            }
+            Message::ImportContactsFile => {
+                tracing::info!("Importing contacts from a file");
+            }
+            Message::AddOtherPress => {
+                if let StepView::Relays {
+                    add_relay_modal, ..
+                } = &mut self.step_view
+                {
+                    tracing::info!("Add other pressed");
+                    add_relay_modal.open();
+                }
+            }
+            Message::AddRelayCancelButtonPressed => {
+                if let StepView::Relays {
+                    add_relay_modal, ..
+                } = &mut self.step_view
+                {
+                    add_relay_modal.close();
+                }
+            }
+            Message::AddRelayInputChange(input) => {
+                if let StepView::Relays {
+                    add_relay_modal, ..
+                } = &mut self.step_view
+                {
+                    add_relay_modal.input_change(input);
+                }
+            }
+            Message::AddRelaySubmit(relay_url) => {
+                if let StepView::Relays {
+                    add_relay_modal, ..
+                } = &mut self.step_view
+                {
+                    match nostr_sdk::Url::parse(&relay_url) {
+                        Ok(url) => {
+                            let db_relay = DbRelay::new(url);
+                            conn.send(net::Message::AddRelay(db_relay));
+                            add_relay_modal.close();
+                        }
+                        Err(_e) => add_relay_modal.error(),
+                    }
+                }
+            }
+            Message::CloseAddRelayModal => {
+                if let StepView::Relays {
+                    add_relay_modal, ..
+                } = &mut self.step_view
+                {
+                    add_relay_modal.close();
+                }
+            }
+        }
+    }
+    pub fn backend_event(&mut self, event: net::events::Event, conn: &mut BackEndConnection) {
+        if let StepView::Relays {
+            relays_added,
+            relays_suggestion,
+            add_relay_modal,
+        } = &mut self.step_view
+        {
+            match event {
+                net::events::Event::GotRelays(mut db_relays) => {
+                    for db_relay in db_relays.iter() {
+                        relays_suggestion.retain(|url| url != &db_relay.url);
+                    }
+                    db_relays.sort_by(|a, b| a.url.cmp(&b.url));
+                    *relays_added = db_relays
+                        .into_iter()
+                        .enumerate()
+                        .map(|(idx, db_relay)| RelayRow::new(idx as i32, db_relay, conn))
+                        .collect();
+                }
+                net::events::Event::RelayCreated(db_relay) => {
+                    relays_suggestion.sort_by(|a, b| a.cmp(&b));
+                    relays_added.sort_by(|a, b| a.db_relay.url.cmp(&b.db_relay.url));
+
+                    relays_suggestion.retain(|url| url != &db_relay.url);
+                    relays_added.push(RelayRow::new(relays_added.len() as i32, db_relay, conn));
+                }
+                net::events::Event::RelayDeleted(db_relay) => {
+                    relays_suggestion.sort_by(|a, b| a.cmp(&b));
+                    relays_added.sort_by(|a, b| a.db_relay.url.cmp(&b.db_relay.url));
+
+                    relays_added.retain(|row| &row.db_relay.url != &db_relay.url);
+                    relays_suggestion.push(db_relay.url);
+                }
+                other => {
+                    relays_added
+                        .iter_mut()
+                        .for_each(|r| r.backend_event(other.clone(), conn));
+                }
+            }
+        }
+    }
+    pub fn view(&self) -> Element<Message> {
+        self.step_view.view()
+    }
+}
+
+fn generate_random_ipv4() -> Ipv4Addr {
+    let mut rng = thread_rng();
+    let ip = Ipv4Addr::new(
+        rng.gen_range(1..=255),
+        rng.gen_range(0..=255),
+        rng.gen_range(0..=255),
+        rng.gen_range(0..=255),
+    );
+    ip
 }
 
 const WELCOME_IMAGE_MAX_WIDTH: f32 = 300.0;
 const WELCOME_TEXT_SIZE: u16 = 24;
 const WELCOME_TEXT_WIDTH: f32 = 400.0;
+const CARD_MAX_WIDTH: f32 = 300.0;

@@ -104,7 +104,10 @@ impl BackendState {
                     tracing::info!("Creating account");
                     let profile_meta = profile.into();
                     match update_user_meta(pool, &profile_meta).await {
-                        Ok(_) => Event::ProfileCreated,
+                        Ok(_) => {
+                            to_nostr_channel(client_sender, NostrInput::SendProfile(profile_meta));
+                            Event::ProfileCreated
+                        }
                         Err(e) => Event::Error(e.to_string()),
                     }
                 }
@@ -129,10 +132,16 @@ impl BackendState {
                         Err(e) => Event::Error(e.to_string()),
                     }
                 }
-                Message::UpdateUserProfileMeta(meta) => {
+                Message::UpdateUserProfileMeta(profile_meta) => {
                     tracing::info!("Updating user profile meta");
-                    match update_user_meta(pool, &meta).await {
-                        Ok(_) => Event::UpdatedUserProfileMeta(meta),
+                    match update_user_meta(pool, &profile_meta).await {
+                        Ok(_) => {
+                            to_nostr_channel(
+                                client_sender,
+                                NostrInput::SendProfile(profile_meta.clone()),
+                            );
+                            Event::UpdatedUserProfileMeta(profile_meta)
+                        }
                         Err(e) => Event::Error(e.to_string()),
                     }
                 }
@@ -170,9 +179,6 @@ impl BackendState {
                         .await
                 }
                 // --------- NOSTR MESSAGES ------------
-                Message::SendProfile(profile_meta) => {
-                    to_nostr_channel(client_sender, NostrInput::SendProfile(profile_meta))
-                }
                 Message::GetContactProfile(db_contact) => {
                     to_nostr_channel(client_sender, NostrInput::GetContactProfile(db_contact))
                 }

@@ -1,7 +1,7 @@
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
+use iced::widget::{button, column, container, row, text, text_input, Space};
 use iced::{alignment, Length};
 
-use crate::components::{contact_row, ContactRow};
+use crate::components::{common_scrollable, contact_row, ContactRow};
 use crate::icon::{import_icon, plus_icon, to_cloud_icon};
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
@@ -115,7 +115,7 @@ impl State {
                 col.push(contact.view().map(Message::ContactRowMessage))
             })
             .into();
-        let contact_list_scroller = column![ContactRow::header(), scrollable(contact_list)];
+        let contact_list_scroller = column![ContactRow::header(), common_scrollable(contact_list)];
         let content: Element<_> = column![title, utils_row, contact_list_scroller]
             .spacing(10)
             .width(Length::Fill)

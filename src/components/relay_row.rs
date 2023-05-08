@@ -1,5 +1,6 @@
 use crate::db::{DbRelay, DbRelayResponse};
 use crate::icon::{delete_icon, download_icon, solid_circle_icon};
+use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::utils::event_tt_to_naive;
@@ -54,7 +55,6 @@ impl Mode {
 #[derive(Debug, Clone)]
 pub enum Message {
     None,
-    RelayUpdated(DbRelay),
     ConnectToRelay(DbRelay),
     UpdateStatus((RelayStatus, Timestamp)),
     DeleteRelay(DbRelay),
@@ -167,6 +167,9 @@ impl RelayRow {
                         receiver,
                     } => {
                         let relay_status = channel_relay.status().await;
+                        if let RelayStatus::Initialized = &relay_status {
+                            channel_relay.connect(true).await
+                        }
                         (
                             MessageWrapper::new(
                                 id,
@@ -183,8 +186,28 @@ impl RelayRow {
         )
     }
 
-    pub fn relay_server(&mut self, relay: nostr_sdk::Relay) {
-        self.client_relay = Some(relay);
+    pub fn backend_event(&mut self, event: Event, conn: &mut BackEndConnection) {
+        match event {
+            Event::RelayUpdated(db_relay) => {
+                if self.db_relay.url == db_relay.url {
+                    tracing::info!("Relay updated: {:?}", db_relay);
+                    self.db_relay = db_relay;
+                }
+            }
+            Event::GotRelayServer(relay) => {
+                if let Some(relay) = relay {
+                    if self.db_relay.url == relay.url() {
+                        self.client_relay = Some(relay);
+                    }
+                }
+            }
+            Event::UpdateWithRelayResponse { relay_response, .. } => {
+                if relay_response.relay_url == self.db_relay.url {
+                    self.mode.success()
+                }
+            }
+            _ => (),
+        }
     }
 
     pub fn update(
@@ -200,10 +223,7 @@ impl RelayRow {
                     self.mode.loading();
                 }
             }
-            Message::RelayUpdated(db_relay) => {
-                tracing::info!("Relay updated: {:?}", db_relay);
-                self.db_relay = db_relay;
-            }
+
             Message::ConnectToRelay(db_relay) => {
                 conn.send(net::Message::ConnectToRelay(db_relay));
             }
@@ -399,11 +419,6 @@ impl RelayRow {
         (status_icon, status_text)
     }
 
-    pub fn relay_response(&mut self, relay_response: DbRelayResponse) {
-        if self.db_relay.url == relay_response.relay_url {
-            self.mode.success()
-        }
-    }
     pub fn modal_view(&self) -> Element<MessageWrapper> {
         if let Mode::ModalView { state } = &self.mode {
             let button_or_checkmark: Element<_> = match state {
@@ -444,6 +459,30 @@ impl RelayRow {
         } else {
             text("").into()
         }
+    }
+    pub fn relay_welcome(&self) -> Element<MessageWrapper> {
+        let (status_icon, status_text) = self.relay_status_icon();
+        container(
+            row![
+                tooltip(
+                    status_icon.width(Length::Fixed(RELAY_STATUS_ICON_WIDTH)),
+                    status_text,
+                    tooltip::Position::Top
+                )
+                .style(style::Container::TooltipBg),
+                text(&self.db_relay.url),
+                Space::with_width(Length::Fill),
+                button(delete_icon())
+                    .on_press(MessageWrapper::new(
+                        self.id,
+                        Message::DeleteRelay(self.db_relay.clone())
+                    ))
+                    .style(style::Button::Danger)
+            ]
+            .align_items(alignment::Alignment::Center),
+        )
+        .center_y()
+        .into()
     }
 }
 
