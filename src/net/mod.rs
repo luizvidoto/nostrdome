@@ -492,7 +492,7 @@ pub struct GitHubRelease {
 
 async fn fetch_latest_version(client: reqwest::Client) -> Result<String, Error> {
     let token = env::var("GITHUB_TOKEN").map_err(|_| Error::GitHubTokenNotFound)?;
-    let url = "https://api.github.com/repos/luizvidoto/nostrdome/releases";
+    let url = "https://api.github.com/repos/luizvidoto/nostrtalk/releases";
     let response = client
         .get(url)
         .header("Accept", "application/vnd.github+json")

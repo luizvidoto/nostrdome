@@ -2685,7 +2685,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "nostrdome"
+name = "nostrtalk"
 version = "0.4.0-alpha"
 dependencies = [
  "aes-gcm",

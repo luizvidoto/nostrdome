@@ -161,7 +161,7 @@ impl StatusBar {
         )
     }
     pub fn view(&self) -> Element<'static, Message> {
-        let about = button(text(format!("Nostrdome v{}", NOSTRDOME_VERSION)).size(18))
+        let about = button(text(format!("NostrTalk v{}", NOSTRTALK_VERSION)).size(18))
             .padding([0, 2])
             .height(Length::Fill)
             .on_press(Message::GoToAbout)
@@ -186,4 +186,4 @@ impl StatusBar {
     }
 }
 
-const NOSTRDOME_VERSION: &str = env!("CARGO_PKG_VERSION");
+const NOSTRTALK_VERSION: &str = env!("CARGO_PKG_VERSION");

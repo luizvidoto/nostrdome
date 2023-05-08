@@ -13,7 +13,7 @@ impl Database {
     pub async fn new(pubkey: &str) -> Result<Self, Error> {
         tracing::info!("NEW DATABASE_pubkey {:?}", pubkey);
 
-        if let Some(dirs) = ProjectDirs::from("com", "NostrDome", "NostrDome") {
+        if let Some(dirs) = ProjectDirs::from("com", "NostrTalk", "NostrTalk") {
             tracing::debug!("Creating project directory");
             let project_dir = dirs.config_dir();
             std::fs::create_dir_all(project_dir)?;

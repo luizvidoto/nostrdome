@@ -47,7 +47,7 @@ impl State {
         }
     }
     pub fn view(&self) -> Element<Message> {
-        let title_1 = "NostrDome";
+        let title_1 = "NostrTalk";
         let text_1a = "Secure, encrypted chats on the NOSTR network";
         let title_2 = "Relays Setup";
         let text_2 = "Add relays to connect";

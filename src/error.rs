@@ -5,7 +5,7 @@ use crate::db::DbContactError;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Errors that can occur in the nostrdome crate
+/// Errors that can occur in the nostrtalk crate
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("GITHUB_TOKEN not found")]
@@ -101,7 +101,7 @@ pub enum Error {
     #[error("TagKind is not P: {0}")]
     TagKindToContactError(TagKind),
 
-    // Nostrdome specific errors
+    // Nostrtalk specific errors
     #[error("Not allowed to insert own pubkey as a contact")]
     SameContactInsert,
     #[error("Not allowed to update to own pubkey as a contact")]

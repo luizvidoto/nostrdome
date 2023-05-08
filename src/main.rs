@@ -148,7 +148,7 @@ impl Application for App {
         self.color_theme.unwrap()
     }
     fn title(&self) -> String {
-        String::from("NostrDome")
+        String::from("NostrTalk")
     }
     fn subscription(&self) -> iced::Subscription<Self::Message> {
         let backend_subscription: Vec<_> = match &self.state {
@@ -339,7 +339,7 @@ async fn main() {
 
     // Cria um filtro de ambiente que define o nível de log padrão para todas as bibliotecas como ERROR e o nível de log do seu aplicativo como INFO
     let filter = EnvFilter::from_default_env()
-        .add_directive("nostrdome=info".parse().unwrap())
+        .add_directive("nostrtalk=info".parse().unwrap())
         .add_directive("warn".parse().unwrap());
 
     let subscriber = SubscriberBuilder::default()
@@ -357,7 +357,7 @@ async fn main() {
     tracing::info!("Starting up");
 
     App::run(Settings {
-        id: Some(String::from("nostrdome")),
+        id: Some(String::from("nostrtalk")),
         window: window::Settings {
             size: (APP_WIDTH, APP_HEIGHT),
             min_size: Some((APP_MIN_WIDTH, APP_MIN_HEIGHT)),
