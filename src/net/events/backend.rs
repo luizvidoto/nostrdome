@@ -1,13 +1,14 @@
 use futures::channel::mpsc;
-use nostr_sdk::{Keys, RelayMessage, Url};
+use nostr_sdk::{Keys, Metadata, RelayMessage, Url};
 use sqlx::SqlitePool;
 
 use crate::{
-    db::{DbChat, DbContact, DbEvent, DbMessage, DbRelay, DbRelayResponse, MessageStatus},
-    error::Error,
-    net::{
-        events::nostr::NostrInput, process_async_fn, process_async_with_event, try_send_to_channel,
+    db::{
+        update_user_meta, DbChat, DbContact, DbEvent, DbMessage, DbRelay, DbRelayResponse,
+        MessageStatus,
     },
+    error::Error,
+    net::{events::nostr::NostrInput, process_async_fn, process_async_with_event},
     types::ChatMessage,
 };
 
@@ -24,7 +25,6 @@ pub enum BackEndInput {
     StoreEvent((nostr_sdk::Url, nostr_sdk::Event)),
     StoreRelayMessage((nostr_sdk::Url, nostr_sdk::RelayMessage)),
     LatestVersion(String),
-    GotProfile((DbContact, nostr_sdk::Metadata)),
     Shutdown,
     None,
 }
@@ -33,7 +33,7 @@ pub async fn backend_processing(
     pool: &SqlitePool,
     keys: &Keys,
     input: BackEndInput,
-    sender: &mut mpsc::Sender<BackEndInput>,
+    _sender: &mut mpsc::Sender<BackEndInput>,
 ) -> Event {
     match input {
         BackEndInput::Ok(event) => event,
@@ -44,13 +44,6 @@ pub async fn backend_processing(
         // --- TO DATABASE ---
         BackEndInput::DeleteRelayFromDb(db_relay) => {
             process_async_with_event(db_delete_relay(&pool, db_relay)).await
-        }
-        BackEndInput::GotProfile((mut db_contact, metadata)) => {
-            db_contact = db_contact.with_profile_meta(&metadata);
-            match DbContact::update(&pool, &db_contact).await {
-                Ok(_) => Event::ContactUpdated(db_contact.clone()),
-                Err(e) => Event::Error(e.to_string()),
-            }
         }
         BackEndInput::ToggleRelayRead((mut db_relay, read)) => {
             db_relay.read = read;
@@ -126,6 +119,30 @@ pub async fn insert_specific_kind(
     db_event: &DbEvent,
 ) -> Result<Option<SpecificEvent>, Error> {
     let event = match db_event.kind {
+        nostr_sdk::Kind::Metadata => {
+            tracing::info!(
+                "Received metadata event for public key: {}",
+                db_event.pubkey
+            );
+            let metadata = Metadata::from_json(&db_event.content)
+                .map_err(|_| Error::JsonToMetadata(db_event.content.to_string()))?;
+
+            if db_event.pubkey == keys.public_key() {
+                update_user_meta(pool, &metadata).await?;
+                Some(SpecificEvent::UpdatedUserProfileMeta(metadata))
+            } else {
+                if let Some(mut db_contact) = DbContact::fetch_one(pool, &db_event.pubkey).await? {
+                    db_contact = db_contact.with_profile_meta(&metadata);
+                    DbContact::update(&pool, &db_contact).await?;
+                    tracing::info!("Updated contact with profile metadata: {:?}", db_contact);
+                    Some(SpecificEvent::UpdatedContactMetadata((
+                        db_contact, metadata,
+                    )))
+                } else {
+                    None
+                }
+            }
+        }
         nostr_sdk::Kind::EncryptedDirectMessage => {
             // Convert DbEvent to DbMessage
             let db_message = DbMessage::from_db_event(db_event, relay_url)?;

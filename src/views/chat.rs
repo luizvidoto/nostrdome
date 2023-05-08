@@ -35,7 +35,7 @@ pub enum Message {
 
 pub struct State {
     ver_divider_position: Option<u16>,
-    contacts: Vec<contact_card::State>,
+    contacts: Vec<contact_card::ContactCard>,
     active_contact: Option<DbContact>,
     dm_msg: String,
     messages: Vec<ChatMessage>,
@@ -174,7 +174,7 @@ impl State {
             Event::GotContacts(db_contacts) => {
                 self.contacts = db_contacts
                     .iter()
-                    .map(|c| contact_card::State::from_db_contact(c))
+                    .map(|c| contact_card::ContactCard::from_db_contact(c))
                     .collect();
                 Command::none()
             }
@@ -235,7 +235,7 @@ impl State {
                     }
                     Some(SpecificEvent::NewDMAndContact((db_contact, _))) => {
                         self.contacts
-                            .push(contact_card::State::from_db_contact(&db_contact));
+                            .push(contact_card::ContactCard::from_db_contact(&db_contact));
                         // não estou na conversa
                         conn.send(net::Message::AddToUnseenCount(db_contact));
                         Command::none()

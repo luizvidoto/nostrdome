@@ -56,6 +56,8 @@ pub struct DbContact {
     last_message_content: Option<String>,
     last_message_date: Option<NaiveDateTime>,
     profile_meta: Option<nostr_sdk::Metadata>,
+    local_profile_image: Option<String>,
+    local_banner_image: Option<String>,
 }
 
 impl From<&DbContact> for nostr_sdk::Contact {
@@ -89,6 +91,8 @@ impl DbContact {
             last_message_content: None,
             last_message_date: None,
             profile_meta: None,
+            local_banner_image: None,
+            local_profile_image: None,
         }
     }
 
@@ -156,8 +160,17 @@ impl DbContact {
     pub fn unseen_messages(&self) -> u8 {
         self.unseen_messages
     }
+
     pub fn with_profile_meta(mut self, meta: &nostr_sdk::Metadata) -> Self {
         self.profile_meta = Some(meta.clone());
+        self
+    }
+    pub fn with_local_profile_image(mut self, path: &str) -> Self {
+        self.local_profile_image = Some(path.to_string());
+        self
+    }
+    pub fn with_local_banner_image(mut self, path: &str) -> Self {
+        self.local_banner_image = Some(path.to_string());
         self
     }
 
@@ -285,8 +298,10 @@ impl DbContact {
         let sql = r#"
             INSERT OR IGNORE INTO contact 
                 (pubkey, relay_url, petname, status, 
-                    unseen_messages, created_at, updated_at, last_message_content, last_message_date, profile_meta) 
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                unseen_messages, created_at, updated_at, last_message_content, 
+                last_message_date, profile_meta, 
+                local_profile_image, local_banner_image) 
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
         "#;
 
         sqlx::query(sql)
@@ -305,6 +320,8 @@ impl DbContact {
                     .map(|date| date.timestamp_millis()),
             )
             .bind(&contact.profile_meta.as_ref().map(|meta| meta.as_json()))
+            .bind(&contact.local_profile_image)
+            .bind(&contact.local_banner_image)
             .execute(tx)
             .await?;
 
@@ -372,7 +389,7 @@ impl DbContact {
             SET relay_url=?, petname=?, 
                 status=?, unseen_messages=?,  
                 last_message_content=?, last_message_date=?,
-                profile_meta=?, updated_at=? 
+                profile_meta=?, updated_at=?, local_profile_image=?, local_banner_image=?
             WHERE pubkey=?
         "#;
 
@@ -390,6 +407,8 @@ impl DbContact {
             )
             .bind(&contact.profile_meta.as_ref().map(|meta| meta.as_json()))
             .bind(Utc::now().timestamp_millis())
+            .bind(&contact.local_profile_image)
+            .bind(&contact.local_banner_image)
             .bind(&contact.pubkey.to_string())
             .execute(pool)
             .await?;
@@ -430,6 +449,8 @@ impl sqlx::FromRow<'_, SqliteRow> for DbContact {
 
         Ok(DbContact {
             profile_meta,
+            local_banner_image: row.get::<Option<String>, &str>("local_banner_image"),
+            local_profile_image: row.get::<Option<String>, &str>("local_profile_image"),
             pubkey: XOnlyPublicKey::from_str(&pubkey).map_err(|e| sqlx::Error::ColumnDecode {
                 index: "pubkey".into(),
                 source: Box::new(e),

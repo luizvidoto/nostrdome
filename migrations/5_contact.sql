@@ -8,7 +8,9 @@ CREATE TABLE contact (
     updated_at INTEGER NOT NULL,
     unseen_messages INTEGER NOT NULL DEFAULT 0,
     last_message_content TEXT,
-    last_message_date INTEGER
+    last_message_date INTEGER,
+    local_profile_image TEXT,
+    local_banner_image TEXT
 );
 
 CREATE INDEX contact_created_at ON contact (created_at);

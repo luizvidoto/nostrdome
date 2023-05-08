@@ -98,8 +98,9 @@ impl NostrSdkWrapper {
             }
             NostrInput::SendProfile(metadata) => {
                 tracing::info!("SendProfile");
+                let keys_1 = keys.clone();
                 tokio::spawn(async move {
-                    run_and_send(send_profile(&client, metadata), &mut channel).await;
+                    run_and_send(send_profile(&client, &keys_1, metadata), &mut channel).await;
                 });
             }
             NostrInput::GetContactProfile(db_contact) => {
@@ -268,28 +269,21 @@ async fn send_dm_to_relays(client: &Client, event: DbEvent) -> Result<Event, Err
     Ok(Event::SentDirectMessage(event_id))
 }
 
-async fn get_contact_profile(
-    client: &Client,
-    db_contact: DbContact,
-) -> Result<BackEndInput, Error> {
+async fn get_contact_profile(client: &Client, db_contact: DbContact) -> Result<Event, Error> {
     let filter = Filter::new()
         .author(db_contact.pubkey().to_string())
         .kind(Kind::Metadata)
         .limit(1);
     let timeout = Some(Duration::from_secs(30));
-    let events: Vec<nostr_sdk::Event> = client.get_events_of(vec![filter], timeout).await?;
-    if let Some(event) = events.get(0) {
-        let metadata = Metadata::from_json(&event.content)
-            .map_err(|_| Error::JsonToMetadata(event.content.to_string()))?;
-        Ok(BackEndInput::GotProfile((db_contact, metadata)))
-    } else {
-        Ok(BackEndInput::None)
-    }
+    client.get_events_of(vec![filter], timeout).await?;
+    Ok(Event::RequestedMetadata(db_contact))
 }
 
-async fn send_profile(client: &Client, meta: Metadata) -> Result<Event, Error> {
-    let event_id = client.set_metadata(meta.clone()).await?;
-    Ok(Event::SentProfileMeta((meta, event_id)))
+async fn send_profile(client: &Client, keys: &Keys, meta: Metadata) -> Result<BackEndInput, Error> {
+    let builder = EventBuilder::set_metadata(meta);
+    let event = builder.to_event(keys)?;
+    client.send_event(event.clone()).await?;
+    Ok(BackEndInput::StorePendingEvent(event))
 }
 
 pub async fn create_channel(client: &Client) -> Result<Event, Error> {
@@ -323,6 +317,7 @@ pub async fn send_contact_list_to(
 
     Ok(BackEndInput::StorePendingEvent(event))
 }
+
 pub fn build_dm(keys: &Keys, db_contact: &DbContact, content: &str) -> Result<BackEndInput, Error> {
     let builder =
         EventBuilder::new_encrypted_direct_msg(&keys, db_contact.pubkey().to_owned(), content)?;
@@ -412,6 +407,7 @@ async fn request_events_of(
     if let Some(relay) = client.relays().await.get(&db_relay.url) {
         let from_me = Filter::new()
             .kinds(vec![
+                Kind::Metadata,
                 Kind::EncryptedDirectMessage,
                 Kind::RecommendRelay,
                 Kind::ContactList,
@@ -420,6 +416,7 @@ async fn request_events_of(
             .until(Timestamp::now());
         let to_me = Filter::new()
             .kinds(vec![
+                Kind::Metadata,
                 Kind::EncryptedDirectMessage,
                 Kind::RecommendRelay,
                 Kind::ContactList,

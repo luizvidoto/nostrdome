@@ -135,16 +135,7 @@ impl BackendState {
                 }
                 Message::UpdateUserProfileMeta(profile_meta) => {
                     tracing::info!("Updating user profile meta");
-                    match update_user_meta(pool, &profile_meta).await {
-                        Ok(_) => {
-                            to_nostr_channel(
-                                client_sender,
-                                NostrInput::SendProfile(profile_meta.clone()),
-                            );
-                            Event::UpdatedUserProfileMeta(profile_meta)
-                        }
-                        Err(e) => Event::Error(e.to_string()),
-                    }
+                    to_nostr_channel(client_sender, NostrInput::SendProfile(profile_meta.clone()))
                 }
                 Message::RequestEvents => match DbEvent::fetch_last(pool).await {
                     Ok(last_event) => {

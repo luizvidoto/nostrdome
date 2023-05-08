@@ -299,12 +299,15 @@ impl StepView {
                 .center_x()
                 .center_y();
                 let relays = container(common_scrollable(
-                    column![relay_rows, relays_suggestion, add_other_btn].spacing(10),
+                    column![relay_rows, relays_suggestion, add_other_btn]
+                        .spacing(10)
+                        .padding(20),
                 ))
-                .padding(20)
+                .padding(5)
                 .style(style::Container::Bordered)
                 .width(Length::Fill)
                 .height(Length::Fill);
+
                 let content = column![
                     title(title_2)
                         .height(Length::FillPortion(1))

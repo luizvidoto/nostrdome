@@ -17,13 +17,13 @@ pub enum Message {
 }
 
 #[derive(Debug, Clone)]
-pub struct State {
+pub struct ContactCard {
     active_contact: Option<DbContact>,
     only_profile: bool,
     pub contact: DbContact,
 }
 
-impl State {
+impl ContactCard {
     pub fn from_db_contact(db_contact: &DbContact) -> Self {
         Self {
             active_contact: None,

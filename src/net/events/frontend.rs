@@ -30,12 +30,11 @@ pub enum Event {
         db_message: Option<DbMessage>,
     },
     GotUserProfileMeta(nostr_sdk::Metadata),
-    UpdatedUserProfileMeta(nostr_sdk::Metadata),
     FileContactsImported(Vec<DbContact>),
     // --- Nostr ---
-    SentProfileMeta((nostr_sdk::Metadata, nostr_sdk::EventId)),
     EndOfStoredEvents((nostr_sdk::Url, nostr_sdk::SubscriptionId)),
     RequestedEventsOf(DbRelay),
+    RequestedMetadata(DbContact),
     GotRelayServer(Option<nostr_sdk::Relay>),
     GotRelayServers(Vec<nostr_sdk::Relay>),
     RelayMessage(nostr_sdk::RelayMessage),
@@ -66,6 +65,9 @@ impl std::fmt::Display for Event {
                     "End of stored events: {} --- Subscription ID: {}",
                     relay_url, subscription_id
                 )
+            }
+            Event::RequestedMetadata(contact) => {
+                write!(f, "Requested Metadata for public key: {}", contact.pubkey())
             }
 
             Event::RequestedEventsOf(db_relay) => {
@@ -106,12 +108,6 @@ impl std::fmt::Display for Event {
             Event::GotUserProfileMeta(metadata) => {
                 write!(f, "Got User Profile Metadata: {:?}", metadata)
             }
-            Event::UpdatedUserProfileMeta(metadata) => {
-                write!(f, "Updated User Profile Metadata: {:?}", metadata)
-            }
-            Event::SentProfileMeta((_metadata, event_id)) => {
-                write!(f, "Sent Profile Metadata, Event ID: {:?}", event_id)
-            }
             Event::GotRelayServer(_server) => write!(f, "Got Relay Server"),
             Event::GotRelayServers(_servers) => write!(f, "Got Relay Servers"),
             Event::RelayMessage(message) => write!(f, "Relay Message: {:?}", message),
@@ -143,11 +139,24 @@ pub enum SpecificEvent {
     ReceivedDM((DbContact, ChatMessage)),
     NewDMAndContact((DbContact, ChatMessage)),
     RelayContactsImported(Vec<DbContact>),
+    UpdatedContactMetadata((DbContact, nostr_sdk::Metadata)),
+    UpdatedUserProfileMeta(nostr_sdk::Metadata),
 }
 
 impl std::fmt::Display for SpecificEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            SpecificEvent::UpdatedUserProfileMeta(_metadata) => {
+                write!(f, "Updated User Profile Metadata")
+            }
+            SpecificEvent::UpdatedContactMetadata((contact, metadata)) => {
+                write!(
+                    f,
+                    "Updated Contact Metadata: Contact public key: {}, Metadata: {:?}",
+                    contact.pubkey(),
+                    metadata
+                )
+            }
             SpecificEvent::RelayContactsImported(contacts) => {
                 write!(f, "Relay Contacts Imported: {}", contacts.len())
             }
