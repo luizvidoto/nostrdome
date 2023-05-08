@@ -4,15 +4,17 @@ use iced::{Alignment, Length, Subscription};
 use iced_aw::{Card, Modal};
 
 use crate::components::text_input_group::TextInputGroup;
-use crate::components::{common_scrollable, relay_row, RelayRow};
+use crate::components::{common_scrollable, inform_card, relay_row, RelayRow};
 use crate::consts::{CONTACTS_IMAGE, RELAYS_IMAGE, WELCOME_IMAGE};
 use crate::db::DbRelay;
 use crate::icon::{regular_circle_icon, solid_circle_icon};
 use crate::net::{self, BackEndConnection};
 use crate::style;
+use crate::utils::add_ellipsis_trunc;
 use crate::{components::text::title, widget::Element};
 
 use rand::{thread_rng, Rng};
+use std::collections::HashMap;
 use std::net::Ipv4Addr;
 
 #[derive(Debug, Clone)]
@@ -117,7 +119,10 @@ pub enum StepView {
         relays_added: Vec<RelayRow>,
         add_relay_modal: ModalState,
     },
-    Contacts,
+    DownloadEvents {
+        relays: HashMap<nostr_sdk::Url, EventData>,
+    },
+    // Contacts,
     LoadingClient,
 }
 impl StepView {
@@ -149,20 +154,31 @@ impl StepView {
             add_relay_modal: ModalState::Off,
         }
     }
-    fn get_step(&self) -> u8 {
-        match self {
-            StepView::Welcome => 0,
-            StepView::Relays { .. } => 1,
-            StepView::Contacts => 2,
-            StepView::LoadingClient => 3,
+    fn download_events_view(conn: &mut BackEndConnection) -> Self {
+        conn.send(net::Message::FetchRelays);
+        Self::DownloadEvents {
+            relays: HashMap::new(),
         }
     }
+    fn loading_client(conn: &mut BackEndConnection) -> StepView {
+        conn.send(net::Message::PrepareClient);
+        Self::LoadingClient
+    }
+    fn get_step(&self) -> u8 {
+        match self {
+            StepView::Welcome => 1,
+            StepView::Relays { .. } => 2,
+            StepView::DownloadEvents { .. } => 3,
+            StepView::LoadingClient => 4,
+        }
+    }
+    const MAX_STEP: u8 = 3;
     fn make_dots(&self) -> Element<'static, Message> {
         let step = self.get_step();
         let mut dot_row = row![].spacing(5);
 
-        for i in 0..3 {
-            if i < step + 1 {
+        for i in 0..Self::MAX_STEP {
+            if i < step {
                 dot_row = dot_row.push(solid_circle_icon().size(10));
             } else {
                 dot_row = dot_row.push(regular_circle_icon().size(10));
@@ -183,12 +199,13 @@ impl StepView {
             ]
             .spacing(10)
             .into(),
-            StepView::Contacts => row![
-                button("Back").on_press(Message::ToPreviousStep),
-                button("Start").on_press(Message::ToNextStep)
-            ]
-            .spacing(10)
-            .into(),
+            StepView::DownloadEvents { .. } => button("Start").on_press(Message::ToApp).into(),
+            // StepView::Contacts => row![
+            //     button("Back").on_press(Message::ToPreviousStep),
+            //     button("Start").on_press(Message::ToNextStep)
+            // ]
+            // .spacing(10)
+            // .into(),
             Self::LoadingClient => text("").into(),
         }
     }
@@ -204,7 +221,7 @@ impl StepView {
     pub fn view(&self) -> Element<Message> {
         let welcome_image = image::Image::new(image::Handle::from_memory(WELCOME_IMAGE));
         let relays_image = image::Image::new(image::Handle::from_memory(RELAYS_IMAGE));
-        let contacts_image = image::Image::new(image::Handle::from_memory(CONTACTS_IMAGE));
+        // let contacts_image = image::Image::new(image::Handle::from_memory(CONTACTS_IMAGE));
 
         match self {
             StepView::Welcome => {
@@ -282,7 +299,7 @@ impl StepView {
                 .center_x()
                 .center_y();
                 let relays = container(common_scrollable(
-                    column![relays_suggestion, relay_rows, add_other_btn].spacing(10),
+                    column![relay_rows, relays_suggestion, add_other_btn].spacing(10),
                 ))
                 .padding(20)
                 .style(style::Container::Bordered)
@@ -331,49 +348,30 @@ impl StepView {
 
                 add_relay_modal.view(underlay).into()
             }
-            StepView::Contacts => {
-                let title_3 = "Contacts";
-                let text_3a = "Import from relays";
-                let text_3b = "Import from file";
+            StepView::DownloadEvents { relays } => {
+                let title_1 = "Downloading events";
+
+                let relays = relays
+                    .iter()
+                    .fold(column![].spacing(5), |col, (_url, ev_data)| {
+                        col.push(ev_data.view())
+                    });
+
+                let relays_ct =
+                    container(column![EventData::header(), common_scrollable(relays)].spacing(5))
+                        .padding(10);
+
                 let content = column![
-                    title(title_3)
+                    title(title_1)
                         .height(Length::FillPortion(1))
                         .width(Length::Fill)
                         .center_x()
                         .center_y(),
-                    container(
-                        row![
-                            container(contacts_image)
-                                .max_width(WELCOME_IMAGE_MAX_WIDTH)
-                                .height(Length::Fill),
-                            container(
-                                column![
-                                    button(
-                                        container(text(text_3a).size(WELCOME_TEXT_SIZE))
-                                            .padding(30)
-                                    )
-                                    .style(style::Button::Bordered)
-                                    .on_press(Message::ImportContactsRelays),
-                                    button(
-                                        container(text(text_3b).size(WELCOME_TEXT_SIZE))
-                                            .padding(30)
-                                    )
-                                    .style(style::Button::Bordered)
-                                    .on_press(Message::ImportContactsFile),
-                                ]
-                                .spacing(10)
-                            )
-                            .width(Length::Fixed(WELCOME_TEXT_WIDTH))
-                            .height(Length::Fill)
-                            .center_x()
-                            .center_y(),
-                        ]
-                        .spacing(20)
-                    )
-                    .height(Length::FillPortion(4))
-                    .width(Length::Fill)
-                    .center_y()
-                    .center_x(),
+                    container(relays_ct)
+                        .width(Length::Fill)
+                        .height(Length::FillPortion(4))
+                        .center_y()
+                        .center_x(),
                     container(self.make_step_buttons()).height(Length::FillPortion(1))
                 ]
                 .spacing(10);
@@ -386,8 +384,62 @@ impl StepView {
                     .style(style::Container::WelcomeBg3)
                     .into()
             }
+            // StepView::Contacts => {
+            //     let title_3 = "Contacts";
+            //     let text_3a = "Import from relays";
+            //     let text_3b = "Import from file";
+            //     let content = column![
+            //         title(title_3)
+            //             .height(Length::FillPortion(1))
+            //             .width(Length::Fill)
+            //             .center_x()
+            //             .center_y(),
+            //         container(
+            //             row![
+            //                 container(contacts_image)
+            //                     .max_width(WELCOME_IMAGE_MAX_WIDTH)
+            //                     .height(Length::Fill),
+            //                 container(
+            //                     column![
+            //                         button(
+            //                             container(text(text_3a).size(WELCOME_TEXT_SIZE))
+            //                                 .padding(30)
+            //                         )
+            //                         .style(style::Button::Bordered)
+            //                         .on_press(Message::ImportContactsRelays),
+            //                         button(
+            //                             container(text(text_3b).size(WELCOME_TEXT_SIZE))
+            //                                 .padding(30)
+            //                         )
+            //                         .style(style::Button::Bordered)
+            //                         .on_press(Message::ImportContactsFile),
+            //                     ]
+            //                     .spacing(10)
+            //                 )
+            //                 .width(Length::Fixed(WELCOME_TEXT_WIDTH))
+            //                 .height(Length::Fill)
+            //                 .center_x()
+            //                 .center_y(),
+            //             ]
+            //             .spacing(20)
+            //         )
+            //         .height(Length::FillPortion(4))
+            //         .width(Length::Fill)
+            //         .center_y()
+            //         .center_x(),
+            //         container(self.make_step_buttons()).height(Length::FillPortion(1))
+            //     ]
+            //     .spacing(10);
 
-            StepView::LoadingClient => text("Loading...").into(),
+            //     container(content)
+            //         .width(Length::Fill)
+            //         .height(Length::Fill)
+            //         .center_x()
+            //         .center_y()
+            //         .style(style::Container::WelcomeBg3)
+            //         .into()
+            // }
+            StepView::LoadingClient => inform_card("Loading", "Please wait...").into(),
         }
     }
 }
@@ -417,19 +469,23 @@ impl State {
             StepView::Welcome => {
                 self.step_view = StepView::relays_view(conn);
             }
-            StepView::Relays { .. } => self.step_view = StepView::Contacts,
-            StepView::Contacts => self.step_view = StepView::LoadingClient,
+            StepView::Relays { relays_added, .. } => {
+                if relays_added.is_empty() {
+                    self.step_view = StepView::loading_client(conn)
+                } else {
+                    self.step_view = StepView::download_events_view(conn)
+                }
+            }
+            StepView::DownloadEvents { .. } => {}
             StepView::LoadingClient => {}
         }
     }
-    fn to_previous_step(&mut self, conn: &mut BackEndConnection) {
+    fn to_previous_step(&mut self, _conn: &mut BackEndConnection) {
         match &self.step_view {
             StepView::Welcome => {}
             StepView::Relays { .. } => self.step_view = StepView::Welcome,
-            StepView::Contacts => {
-                self.step_view = StepView::relays_view(conn);
-            }
-            StepView::LoadingClient => self.step_view = StepView::Contacts,
+            StepView::DownloadEvents { .. } => {}
+            StepView::LoadingClient => {}
         }
     }
 
@@ -462,7 +518,6 @@ impl State {
                     add_relay_modal, ..
                 } = &mut self.step_view
                 {
-                    tracing::info!("Add other pressed");
                     add_relay_modal.open();
                 }
             }
@@ -508,13 +563,39 @@ impl State {
         }
     }
     pub fn backend_event(&mut self, event: net::events::Event, conn: &mut BackEndConnection) {
-        if let StepView::Relays {
-            relays_added,
-            relays_suggestion,
-            add_relay_modal,
-        } = &mut self.step_view
-        {
-            match event {
+        match &mut self.step_view {
+            StepView::DownloadEvents { relays } => match event {
+                net::events::Event::GotRelays(db_relays) => {
+                    for db_r in &db_relays {
+                        conn.send(net::Message::RequestEventsOf(db_r.clone()));
+                    }
+                }
+                net::events::Event::RequestedEventsOf(db_relay) => {
+                    relays.insert(db_relay.url.clone(), EventData::new(&db_relay.url));
+                }
+                net::events::Event::EndOfStoredEvents((relay_url, _sub_id)) => {
+                    if let Some(ev_data) = relays.get_mut(&relay_url) {
+                        ev_data.done();
+                    }
+                }
+                net::events::Event::EventInserted((ev, specific)) => {
+                    match (ev.from_relay, specific) {
+                        (Some(relay_url), Some(specific)) => {
+                            if let Some(ev_data) = relays.get_mut(&relay_url) {
+                                let event_str = format!("{}", specific.to_string());
+                                ev_data.add_event(&event_str);
+                            }
+                        }
+                        _ => (),
+                    }
+                }
+                _ => (),
+            },
+            StepView::Relays {
+                relays_added,
+                relays_suggestion,
+                ..
+            } => match event {
                 net::events::Event::GotRelays(mut db_relays) => {
                     for db_relay in db_relays.iter() {
                         relays_suggestion.retain(|url| url != &db_relay.url);
@@ -545,11 +626,75 @@ impl State {
                         .iter_mut()
                         .for_each(|r| r.backend_event(other.clone(), conn));
                 }
-            }
+            },
+            _ => (),
         }
     }
     pub fn view(&self) -> Element<Message> {
         self.step_view.view()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EventData {
+    pub relay_url: nostr_sdk::Url,
+    pub count: usize,
+    pub last_event: String,
+    pub is_done: bool,
+}
+impl EventData {
+    pub fn get_description(&self) -> String {
+        if self.is_done {
+            format!("Got {} events", self.count)
+        } else {
+            format!("{}", self.last_event)
+        }
+    }
+    pub fn new(relay_url: &nostr_sdk::Url) -> EventData {
+        Self {
+            relay_url: relay_url.to_owned(),
+            count: 0,
+            last_event: "".into(),
+            is_done: false,
+        }
+    }
+    pub fn add_event(&mut self, last_event: &str) {
+        if !self.is_done {
+            self.count += 1;
+            self.last_event = last_event.into();
+        }
+    }
+    pub fn done(&mut self) {
+        self.is_done = true;
+        self.last_event = "End of events".into();
+    }
+    pub fn header<Message: 'static>() -> Element<'static, Message> {
+        container(
+            row![
+                text("Relay Url").size(24).width(Length::Fill),
+                text("Last Event").size(24).width(Length::Fill),
+                text("Events Added").size(24).width(Length::Fill),
+            ]
+            .align_items(Alignment::Center)
+            .spacing(10),
+        )
+        .center_y()
+        .into()
+    }
+    pub fn view<'a, Message: 'a>(&'a self) -> Element<'a, Message> {
+        container(
+            row![
+                text(&self.relay_url).size(20).width(Length::Fill),
+                text(&add_ellipsis_trunc(&self.last_event, 20))
+                    .size(16)
+                    .width(Length::Fill),
+                text(self.count).size(20).width(Length::Fill),
+            ]
+            .align_items(Alignment::Center)
+            .spacing(10),
+        )
+        .center_y()
+        .into()
     }
 }
 

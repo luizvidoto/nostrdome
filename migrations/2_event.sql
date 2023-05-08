@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS event (
     sig TEXT NOT NULL,
     --
     --
+    from_relay TEXT,
     confirmed INTEGER NOT NULL DEFAULT 0,
     --
     confirmed_at INTEGER

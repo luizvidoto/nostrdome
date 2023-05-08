@@ -5,7 +5,7 @@ use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
 use crate::{
     error::{Error, FromDbEventError},
-    utils::{event_tt_to_naive, handle_decode_error, millis_to_naive_or_err},
+    utils::{event_tt_to_naive, handle_decode_error, millis_to_naive_or_err, url_or_err},
 };
 use nostr_sdk::{
     secp256k1::{schnorr::Signature, XOnlyPublicKey},
@@ -20,6 +20,7 @@ pub struct DbEvent {
     pub created_at: NaiveDateTime,
     pub confirmed_at: Option<NaiveDateTime>,
     created_at_from_relay: NaiveDateTime,
+    pub from_relay: Option<nostr_sdk::Url>,
     pub tags: Vec<nostr_sdk::Tag>,
     pub kind: Kind,
     pub content: String,
@@ -45,7 +46,7 @@ impl From<DbEvent> for Event {
 
 impl DbEvent {
     const FETCH_QUERY: &'static str =
-        "SELECT event_id, event_hash, pubkey, created_at, kind, content, sig, tags, confirmed, confirmed_at FROM event";
+        "SELECT event_id, event_hash, pubkey, created_at, kind, content, sig, tags, confirmed, confirmed_at, from_relay FROM event";
 
     fn from_event(event: Event, confirmed: bool) -> Result<Self, Error> {
         let created_at_from_relay = event_tt_to_naive(event.created_at)?;
@@ -60,6 +61,7 @@ impl DbEvent {
             } else {
                 None
             },
+            from_relay: None,
             created_at_from_relay,
             kind: event.kind,
             content: event.content,
@@ -84,6 +86,11 @@ impl DbEvent {
 
     pub fn with_id(mut self, id: i64) -> Self {
         self.event_id = Some(id);
+        self
+    }
+
+    pub fn with_relay(mut self, url: &nostr_sdk::Url) -> Self {
+        self.from_relay = Some(url.to_owned());
         self
     }
 
@@ -119,8 +126,8 @@ impl DbEvent {
 
     pub async fn insert(pool: &SqlitePool, db_event: &DbEvent) -> Result<(i64, u8), Error> {
         let sql =
-            "INSERT OR IGNORE INTO event (event_hash, pubkey, created_at, kind, content, sig, tags, created_at_from_relay, confirmed, confirmed_at) \
-                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)";
+            "INSERT OR IGNORE INTO event (event_hash, pubkey, created_at, kind, content, sig, tags, from_relay, created_at_from_relay, confirmed, confirmed_at) \
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)";
 
         let inserted = sqlx::query(sql)
             .bind(&db_event.event_hash.to_hex())
@@ -130,6 +137,7 @@ impl DbEvent {
             .bind(&db_event.content)
             .bind(&db_event.sig.to_string())
             .bind(&serde_json::to_string(&db_event.tags)?)
+            .bind(&db_event.from_relay.as_ref().map(|url| url.to_string()))
             .bind(&db_event.created_at_from_relay.timestamp_millis())
             .bind(&db_event.confirmed)
             .bind(
@@ -147,11 +155,16 @@ impl DbEvent {
         ))
     }
 
-    pub async fn confirm_event(pool: &SqlitePool, mut db_event: DbEvent) -> Result<DbEvent, Error> {
-        let sql = "UPDATE event SET confirmed_at=?, confirmed = 1 WHERE event_id=?";
+    pub async fn confirm_event(
+        pool: &SqlitePool,
+        from_relay: &nostr_sdk::Url,
+        mut db_event: DbEvent,
+    ) -> Result<DbEvent, Error> {
+        let sql = "UPDATE event SET confirmed_at=?, from_relay=?, confirmed = 1 WHERE event_id=?";
 
         let event_id = db_event.event_id()?;
         db_event.confirmed_at = Some(Utc::now().naive_utc());
+        db_event = db_event.with_relay(from_relay);
 
         sqlx::query(sql)
             .bind(
@@ -160,6 +173,7 @@ impl DbEvent {
                     .as_ref()
                     .map(|date| date.timestamp_millis()),
             )
+            .bind(&from_relay.to_string())
             .bind(&event_id)
             .execute(pool)
             .await?;
@@ -209,6 +223,10 @@ impl sqlx::FromRow<'_, SqliteRow> for DbEvent {
             created_at: NaiveDateTime::from_timestamp_millis(created_at).ok_or(
                 handle_decode_error(Box::new(Error::DbEventTimestampError), "created_at"),
             )?,
+            from_relay: row
+                .get::<Option<String>, &str>("from_relay")
+                .map(|s| url_or_err(&s, "from_relay"))
+                .transpose()?,
             created_at_from_relay: NaiveDateTime::from_timestamp_millis(created_at).ok_or(
                 handle_decode_error(Box::new(Error::DbEventTimestampError), "relay_created_at"),
             )?,

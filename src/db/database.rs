@@ -147,4 +147,4 @@ const INITIAL_SETUP: [&str; 8] = [
     include_str!("../../migrations/8_relay_response.sql"),
 ];
 
-const IN_MEMORY: bool = false;
+const IN_MEMORY: bool = true;

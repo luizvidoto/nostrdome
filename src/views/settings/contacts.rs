@@ -3,6 +3,7 @@ use iced::{alignment, Length};
 
 use crate::components::{common_scrollable, contact_row, ContactRow};
 use crate::icon::{import_icon, plus_icon, to_cloud_icon};
+use crate::net::events::frontend::SpecificEvent;
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
 use crate::style;
@@ -62,7 +63,13 @@ impl State {
                 Event::GotContacts(db_contacts) => {
                     self.contacts = db_contacts;
                 }
-                Event::ContactsImported(_)
+                Event::EventInserted((_ev, specific)) => match specific {
+                    Some(SpecificEvent::RelayContactsImported(_)) => {
+                        conn.send(net::Message::FetchContacts)
+                    }
+                    _ => (),
+                },
+                Event::FileContactsImported(_)
                 | Event::ContactCreated(_)
                 | Event::ContactUpdated(_)
                 | Event::ContactDeleted(_) => {

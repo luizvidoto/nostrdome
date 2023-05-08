@@ -128,3 +128,12 @@ pub fn contact_matches_search(contact: &DbContact, search: &str) -> bool {
 
     pubkey_matches || petname_matches
 }
+
+pub fn add_ellipsis_trunc(s: &str, max_length: usize) -> String {
+    if s.chars().count() > max_length {
+        let truncated = s.chars().take(max_length).collect::<String>();
+        format!("{}...", truncated)
+    } else {
+        s.to_string()
+    }
+}

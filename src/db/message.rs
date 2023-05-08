@@ -74,7 +74,7 @@ impl DbMessage {
         self
     }
 
-    pub fn from_db_event(db_event: DbEvent, relay_url: Option<&Url>) -> Result<Self, Error> {
+    pub fn from_db_event(db_event: &DbEvent, relay_url: Option<&Url>) -> Result<Self, Error> {
         let (to_pub, event_id, event_hash) = Self::info_from_tags(&db_event)?;
         Ok(Self {
             id: None,

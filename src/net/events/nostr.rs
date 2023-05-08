@@ -242,16 +242,15 @@ pub async fn client_with_stream(
     tracing::info!("Creating Nostr Client");
     let nostr_client = Client::new(keys);
 
-    let sent_msgs_sub_future = Filter::new()
-        .author(keys.public_key().to_string())
-        .since(Timestamp::now());
-    let recv_msgs_sub_future = Filter::new()
-        .pubkey(keys.public_key().to_owned())
-        .since(Timestamp::now());
-
-    nostr_client
-        .subscribe(vec![sent_msgs_sub_future, recv_msgs_sub_future])
-        .await;
+    // let sent_msgs_sub_future = Filter::new()
+    //     .author(keys.public_key().to_string())
+    //     .since(Timestamp::now());
+    // let recv_msgs_sub_future = Filter::new()
+    //     .pubkey(keys.public_key().to_owned())
+    //     .since(Timestamp::now());
+    // nostr_client
+    //     .subscribe(vec![sent_msgs_sub_future, recv_msgs_sub_future])
+    //     .await;
 
     let mut notifications = nostr_client.notifications();
     let notifications_stream = stream! {
@@ -291,40 +290,6 @@ async fn get_contact_profile(
 async fn send_profile(client: &Client, meta: Metadata) -> Result<Event, Error> {
     let event_id = client.set_metadata(meta.clone()).await?;
     Ok(Event::SentProfileMeta((meta, event_id)))
-}
-
-async fn request_events_of(
-    client: &Client,
-    db_relay: DbRelay,
-    own_public_key: &XOnlyPublicKey,
-) -> Result<BackEndInput, Error> {
-    if let Some(relay) = client.relays().await.get(&db_relay.url) {
-        let from_me = Filter::new()
-            .author(own_public_key.to_string())
-            .until(Timestamp::now());
-        let to_me = Filter::new()
-            .pubkey(own_public_key.to_owned())
-            .until(Timestamp::now());
-        let timeout = Some(Duration::from_secs(10));
-        let events = relay.get_events_of(vec![from_me, to_me], timeout).await?;
-        Ok(BackEndInput::StoreEvents((db_relay.url.to_owned(), events)))
-    } else {
-        Ok(BackEndInput::None)
-    }
-}
-
-pub async fn _fetch_contacts_from_relays(client: &Client) -> Result<Vec<Contact>, Error> {
-    let contacts = client
-        .get_contact_list(Some(Duration::from_secs(10)))
-        .await?;
-    Ok(contacts)
-}
-
-async fn _send_contact_list(client: &Client, list: &[DbContact]) -> Result<Event, Error> {
-    let c_list: Vec<_> = list.iter().map(|c| c.into()).collect();
-    let _event_id = client.set_contact_list(c_list).await?;
-
-    Ok(Event::None)
 }
 
 pub async fn create_channel(client: &Client) -> Result<Event, Error> {
@@ -437,6 +402,36 @@ pub async fn connect_to_relay(
     };
 
     Ok(event)
+}
+
+async fn request_events_of(
+    client: &Client,
+    db_relay: DbRelay,
+    own_public_key: &XOnlyPublicKey,
+) -> Result<Event, Error> {
+    if let Some(relay) = client.relays().await.get(&db_relay.url) {
+        let from_me = Filter::new()
+            .kinds(vec![
+                Kind::EncryptedDirectMessage,
+                Kind::RecommendRelay,
+                Kind::ContactList,
+            ])
+            .author(own_public_key.to_string())
+            .until(Timestamp::now());
+        let to_me = Filter::new()
+            .kinds(vec![
+                Kind::EncryptedDirectMessage,
+                Kind::RecommendRelay,
+                Kind::ContactList,
+            ])
+            .pubkey(own_public_key.to_owned())
+            .until(Timestamp::now());
+        let timeout = Some(Duration::from_secs(10));
+        relay.req_events_of(vec![from_me, to_me], timeout);
+        Ok(Event::RequestedEventsOf(db_relay))
+    } else {
+        Ok(Event::None)
+    }
 }
 
 pub async fn request_events(

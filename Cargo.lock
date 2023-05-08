@@ -1939,9 +1939,8 @@ dependencies = [
 
 [[package]]
 name = "iced_aw"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d26431730a62320aea26246b1cf943703d4f64d11054cc4e0382da01b27182a"
+version = "0.5.2"
+source = "git+https://github.com/iced-rs/iced_aw.git?branch=main#3b73f96f37a7de9998d17bfe18250745851c41f7"
 dependencies = [
  "chrono",
  "iced_graphics",

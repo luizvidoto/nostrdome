@@ -12,7 +12,7 @@ pub(crate) mod utils;
 pub(crate) mod views;
 pub(crate) mod widget;
 
-use components::text::title;
+use components::{inform_card, text::title};
 use dotenv::dotenv;
 use iced::{
     executor,
@@ -30,8 +30,6 @@ use views::{
     welcome, Router,
 };
 use widget::Element;
-
-use crate::db::DbRelay;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -287,17 +285,8 @@ impl Application for App {
                         _ => (),
                     }
                 }
-                // Event::RelayCreated(db_relay) => {
-                //     tracing::info!("Relay created: {:?}", db_relay);
-                //     if let State::App { router, conn, .. } = &mut self.state {
-                //         conn.send(net::Message::ConnectToRelay(db_relay.clone()));
-                //         return router
-                //             .backend_event(Event::RelayCreated(db_relay), conn)
-                //             .map(Message::RouterMessage);
-                //     }
-                // }
                 other => {
-                    tracing::info!("Backend event: {:?}", other);
+                    tracing::debug!("Backend event: {:?}", other);
                     match &mut self.state {
                         State::App { router, conn, .. } => {
                             return router
@@ -315,24 +304,6 @@ impl Application for App {
 
         Command::none()
     }
-}
-
-fn inform_card<'a>(
-    title_text: &str,
-    content: impl Into<Element<'a, Message>>,
-) -> Element<'a, Message> {
-    let content = column![title(title_text).width(Length::Shrink), content.into()].spacing(10);
-    let inner = container(content)
-        .padding(30)
-        .style(style::Container::ContactList);
-
-    container(inner)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x()
-        .center_y()
-        .style(style::Container::ChatContainer)
-        .into()
 }
 
 #[tokio::main]

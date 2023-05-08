@@ -186,11 +186,12 @@ impl RelayRow {
         )
     }
 
-    pub fn backend_event(&mut self, event: Event, conn: &mut BackEndConnection) {
+    pub fn backend_event(&mut self, event: Event, _conn: &mut BackEndConnection) {
         match event {
             Event::RelayUpdated(db_relay) => {
                 if self.db_relay.url == db_relay.url {
-                    tracing::info!("Relay updated: {:?}", db_relay);
+                    tracing::info!("Relay updated");
+                    tracing::debug!("{:?}", db_relay);
                     self.db_relay = db_relay;
                 }
             }
@@ -291,7 +292,6 @@ impl RelayRow {
 
     fn seconds_since_last_conn(&self) -> Element<'static, MessageWrapper> {
         if let Some(last_connected_at) = self.db_relay.last_connected_at {
-            // tracing::warn!("last_connected_at: {:?}", last_connected_at);
             let now = Utc::now().naive_utc();
             let dif_secs = (now - last_connected_at).num_seconds();
             text(format!("{}s", &dif_secs)).into()

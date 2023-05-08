@@ -6,27 +6,28 @@ use crate::error::Error;
 use crate::net::events::backend::{self, backend_processing};
 use crate::net::events::frontend::Event;
 use crate::net::events::nostr::NostrSdkWrapper;
-use crate::net::logic::{delete_contact, import_contacts, insert_contact, update_contact};
 use chrono::{DateTime, Utc};
 use futures::channel::mpsc;
 use futures::{Future, StreamExt};
 use iced::futures::stream::Fuse;
 use iced::subscription;
 use iced::Subscription;
-use logic::*;
 use nostr_sdk::{Keys, RelayPoolNotification};
 use serde::Deserialize;
 use sqlx::SqlitePool;
 use std::env;
 use std::pin::Pin;
+use std::time::Duration;
 
 mod back_channel;
 pub(crate) mod events;
-mod logic;
 mod messages;
 
 pub(crate) use self::back_channel::BackEndConnection;
-use self::events::backend::BackEndInput;
+use self::events::backend::{
+    add_to_unseen_count, delete_contact, fetch_and_decrypt_chat, fetch_contacts, fetch_relays,
+    fetch_relays_responses, insert_contact, prepare_client, update_contact, BackEndInput,
+};
 use self::events::nostr::{build_dm, NostrInput, NostrOutput};
 pub(crate) use messages::Message;
 
@@ -60,7 +61,7 @@ impl BackendState {
 
     pub async fn process_in(&mut self, backend_input: BackEndInput) -> Event {
         if let Some(db_client) = &mut self.db_client {
-            backend_processing(&db_client.pool, &self.keys, backend_input).await
+            backend_processing(&db_client.pool, &self.keys, backend_input, &mut self.sender).await
         } else {
             Event::None
         }
@@ -161,7 +162,12 @@ impl BackendState {
                     process_async_with_event(add_to_unseen_count(pool, db_contact)).await
                 }
                 Message::ImportContacts(db_contacts) => {
-                    process_async_with_event(import_contacts(&self.keys, pool, &db_contacts)).await
+                    for db_contact in &db_contacts {
+                        if let Err(e) = insert_contact(&self.keys, pool, db_contact).await {
+                            tracing::error!("{}", e);
+                        }
+                    }
+                    Event::FileContactsImported(db_contacts)
                 }
                 Message::AddContact(db_contact) => {
                     process_async_with_event(insert_contact(&self.keys, pool, &db_contact)).await
@@ -244,6 +250,7 @@ impl BackendState {
         // Cria uma tarefa separada para processar a notificação
         let backend_input = match notification {
             RelayPoolNotification::Event(relay_url, event) => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
                 backend::BackEndInput::StoreEvent((relay_url, event))
             }
             RelayPoolNotification::Message(relay_url, msg) => {
@@ -439,7 +446,7 @@ where
     }
 }
 
-fn try_send_to_channel<T>(
+pub fn try_send_to_channel<T>(
     channel: &mut mpsc::Sender<T>,
     input: T,
     ok_event: Event,

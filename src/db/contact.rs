@@ -182,7 +182,7 @@ impl DbContact {
                 .execute(pool)
                 .await?;
         } else {
-            tracing::info!("Can't update last_message with an older message.");
+            tracing::debug!("Can't update last_message with an older message.");
         }
 
         let db_contact_updated = Self::fetch_one(pool, &db_contact.pubkey).await?.ok_or(
@@ -333,7 +333,8 @@ impl DbContact {
     }
 
     pub async fn insert(pool: &SqlitePool, contact: &DbContact) -> Result<()> {
-        tracing::info!("Inserting Contact: {:?}", contact);
+        tracing::info!("Inserting Contact");
+        tracing::debug!("{:?}", contact);
 
         // Iniciar a transação
         let mut tx = pool.begin().await?;
