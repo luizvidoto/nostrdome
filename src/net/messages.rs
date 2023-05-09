@@ -29,6 +29,7 @@ pub enum Message {
     UpdateUserProfileMeta(nostr_sdk::Metadata),
 
     // -------- NOSTR CLIENT MESSAGES
+    RefreshContactsMetadata,
     GetContactProfile(DbContact),
     RequestEventsOf(DbRelay),
     RequestEvents,

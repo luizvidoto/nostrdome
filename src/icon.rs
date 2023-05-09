@@ -20,6 +20,23 @@ fn regular_icon(unicode: char) -> Text<'static> {
         .size(20)
 }
 
+pub fn refresh_icon() -> Text<'static> {
+    solid_icon('\u{F021}')
+}
+
+pub fn retweet_icon() -> Text<'static> {
+    solid_icon('\u{F079}')
+}
+pub fn circle_up_icon() -> Text<'static> {
+    solid_icon('\u{F35B}')
+}
+pub fn file_icon_solid() -> Text<'static> {
+    solid_icon('\u{F15B}')
+}
+pub fn file_icon_regular() -> Text<'static> {
+    regular_icon('\u{F15B}')
+}
+
 pub fn edit_icon() -> Text<'static> {
     solid_icon('\u{F303}')
 }

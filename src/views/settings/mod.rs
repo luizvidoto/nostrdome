@@ -7,7 +7,7 @@ use nostr_sdk::{Metadata, Tag};
 use crate::components::text::title;
 use crate::components::text_input_group::TextInputGroup;
 use crate::components::{common_scrollable, file_importer, relay_row, FileImporter, RelayRow};
-use crate::db::{DbContact, DbRelay};
+use crate::db::{DbContact, DbContactError, DbRelay};
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
 use crate::style;
@@ -48,10 +48,8 @@ pub enum Message {
     SubmitContact,
     SaveImportedContacts(Vec<DbContact>),
     FileImporterMessage(file_importer::Message),
-    CloseImportContactModal,
-    CloseAddContactModal,
-    CloseSendContactsModal,
     SendContactListToAll,
+    CloseModal,
 }
 
 #[derive(Debug)]
@@ -215,31 +213,7 @@ impl Settings {
                     state.update(msg);
                 }
             }
-            Message::ContactsMessage(msg) => {
-                if let MenuState::Contacts { state } = &mut self.menu_state {
-                    match msg {
-                        contacts::Message::OpenAddContactModal => {
-                            self.modal_state = ModalState::add_contact(None);
-                        }
-                        contacts::Message::OpenImportContactModal => {
-                            self.modal_state = ModalState::import_contacts();
-                        }
-                        contacts::Message::OpenSendContactModal => {
-                            self.modal_state = ModalState::load_send_contacts(conn);
-                        }
-                        other => {
-                            if let Some(received_msg) = state.update(other, conn) {
-                                match received_msg {
-                                    contacts::Message::OpenEditContactModal(contact) => {
-                                        self.modal_state = ModalState::add_contact(Some(contact))
-                                    }
-                                    _ => (),
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            Message::ContactsMessage(msg) => self.handle_contacts_message(msg, conn),
             Message::NavEscPress => (),
             Message::MenuAccountPress => match self.menu_state {
                 MenuState::Account { .. } => (),
@@ -271,6 +245,36 @@ impl Settings {
             other => return self.modal_state.update(other, conn),
         }
         Command::none()
+    }
+
+    fn handle_contacts_message(&mut self, msg: contacts::Message, conn: &mut BackEndConnection) {
+        // TODO: make it better
+        if let MenuState::Contacts { state } = &mut self.menu_state {
+            match msg {
+                contacts::Message::OpenAddContactModal => {
+                    self.modal_state = ModalState::add_contact(None);
+                }
+                contacts::Message::OpenImportContactModal => {
+                    self.modal_state = ModalState::import_contacts();
+                }
+                contacts::Message::OpenSendContactModal => {
+                    self.modal_state = ModalState::load_send_contacts(conn);
+                }
+                other => {
+                    if let Some(received_msg) = state.update(other, conn) {
+                        match received_msg {
+                            contacts::Message::OpenEditContactModal(contact) => {
+                                self.modal_state = ModalState::add_contact(Some(contact))
+                            }
+                            contacts::Message::OpenProfileModal(contact) => {
+                                self.modal_state = ModalState::profile(contact);
+                            }
+                            _ => (),
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub fn view(&self) -> Element<Message> {
@@ -314,7 +318,7 @@ impl Settings {
             .spacing(3),
         )
         .height(Length::Fill)
-        .width(Length::FillPortion(1))
+        .width(Length::Fixed(MENU_WIDTH))
         .padding([10, 5]);
 
         let view_ct = container(self.menu_state.view())
@@ -339,7 +343,11 @@ impl Settings {
 
 #[derive(Debug, Clone)]
 enum ModalState {
+    Profile {
+        contact: DbContact,
+    },
     ContactDetails {
+        db_contact: Option<DbContact>,
         modal_petname_input: String,
         modal_pubkey_input: String,
         modal_rec_relay_input: String,
@@ -389,12 +397,15 @@ impl ModalState {
             }
         }
     }
+    fn profile(contact: DbContact) -> Self {
+        Self::Profile { contact }
+    }
     pub fn load_send_contacts(db_conn: &mut BackEndConnection) -> Self {
         db_conn.send(net::Message::FetchRelays);
         Self::SendContactList { relays: vec![] }
     }
-    pub fn add_contact(contact: Option<DbContact>) -> Self {
-        let (petname, pubkey, rec_relay, is_edit) = match contact {
+    pub fn add_contact(db_contact: Option<DbContact>) -> Self {
+        let (petname, pubkey, rec_relay, is_edit) = match &db_contact {
             Some(c) => (
                 c.get_petname().unwrap_or_else(|| "".into()),
                 c.pubkey().to_string(),
@@ -407,6 +418,7 @@ impl ModalState {
         };
 
         Self::ContactDetails {
+            db_contact,
             modal_petname_input: petname,
             modal_pubkey_input: pubkey,
             modal_rec_relay_input: rec_relay,
@@ -424,9 +436,7 @@ impl ModalState {
     }
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Command<Message> {
         match message {
-            Message::CloseSendContactsModal => *self = Self::Off,
-            Message::CloseAddContactModal => *self = Self::Off,
-            Message::CloseImportContactModal => *self = Self::Off,
+            Message::CloseModal => *self = Self::Off,
             Message::SendContactListToAll => {
                 println!("Send contacts to all relays");
             }
@@ -437,39 +447,7 @@ impl ModalState {
                     }
                 }
             }
-            Message::SubmitContact => {
-                if let ModalState::ContactDetails {
-                    is_pub_invalid,
-                    is_relay_invalid,
-                    modal_petname_input: petname,
-                    modal_pubkey_input: pubkey,
-                    modal_rec_relay_input: rec_relay,
-                    is_edit,
-                } = self
-                {
-                    match DbContact::from_submit(&pubkey, &petname, &rec_relay) {
-                        Ok(db_contact) => {
-                            conn.send(match is_edit {
-                                true => net::Message::UpdateContact(db_contact),
-                                false => net::Message::AddContact(db_contact),
-                            });
-                            *self = ModalState::Off;
-                        }
-                        Err(e) => {
-                            tracing::error!("Error: {:?}", e);
-                            match e {
-                                crate::db::DbContactError::InvalidPublicKey => {
-                                    *is_pub_invalid = true;
-                                }
-                                crate::db::DbContactError::InvalidRelayUrl(_) => {
-                                    *is_relay_invalid = true;
-                                }
-                                _ => (),
-                            }
-                        }
-                    }
-                }
-            }
+            Message::SubmitContact => self.handle_submit_contact(conn),
             Message::SaveImportedContacts(imported_contacts) => {
                 conn.send(net::Message::ImportContacts(imported_contacts));
                 *self = ModalState::Off;
@@ -521,8 +499,114 @@ impl ModalState {
 
         Command::none()
     }
+
+    fn handle_submit_contact(&mut self, conn: &mut BackEndConnection) {
+        if let ModalState::ContactDetails {
+            db_contact,
+            is_pub_invalid,
+            is_relay_invalid,
+            modal_petname_input: petname,
+            modal_pubkey_input: pubkey,
+            modal_rec_relay_input: rec_relay,
+            is_edit,
+        } = self
+        {
+            let submit_result = match db_contact {
+                Some(db_contact) => {
+                    DbContact::edit_contact(db_contact.to_owned(), &petname, &rec_relay)
+                }
+                None => DbContact::new_from_submit(&pubkey, &petname, &rec_relay),
+            };
+
+            match submit_result {
+                Ok(db_contact) => {
+                    match is_edit {
+                        true => conn.send(net::Message::UpdateContact(db_contact)),
+                        false => conn.send(net::Message::AddContact(db_contact)),
+                    }
+
+                    *self = ModalState::Off;
+                }
+                Err(e) => {
+                    tracing::error!("Error: {:?}", e);
+                    match e {
+                        DbContactError::InvalidPublicKey => {
+                            *is_pub_invalid = true;
+                        }
+                        DbContactError::InvalidRelayUrl(_) => {
+                            *is_relay_invalid = true;
+                        }
+                        _ => (),
+                    }
+                }
+            }
+        }
+    }
+
     pub fn view<'a>(&'a self, underlay: Element<'a, Message>) -> Element<'a, Message> {
         let view: Element<_> = match self {
+            ModalState::Profile { contact } => Modal::new(true, underlay, move || {
+                let title = title("Profile");
+
+                let header = container(title).width(Length::Fill).center_y();
+                let card_body: Element<_> = if let Some(profile_meta) = contact.get_profile_meta() {
+                    let mut content = column![].spacing(5);
+                    if let Some(name) = profile_meta.name {
+                        content = content.push(text(name));
+                    }
+                    if let Some(display_name) = profile_meta.display_name {
+                        content = content.push(text(display_name));
+                    }
+                    if let Some(picture_url) = profile_meta.picture {
+                        content = content.push(text(picture_url));
+                    }
+                    if let Some(about) = profile_meta.about {
+                        content = content.push(text(about));
+                    }
+                    if let Some(website) = profile_meta.website {
+                        content = content.push(text(website));
+                    }
+                    if let Some(banner_url) = profile_meta.banner {
+                        content = content.push(text(banner_url));
+                    }
+                    if let Some(nip05) = profile_meta.nip05 {
+                        content = content.push(text(nip05));
+                    }
+                    if let Some(lud06) = profile_meta.lud06 {
+                        content = content.push(text(lud06));
+                    }
+                    if let Some(lud16) = profile_meta.lud16 {
+                        content = content.push(text(lud16));
+                    }
+                    content.into()
+                } else {
+                    text("No profile data found").into()
+                };
+                let card_body: Element<_> = container(card_body)
+                    .width(Length::Fill)
+                    .center_y()
+                    .center_x()
+                    .padding(10)
+                    .into();
+
+                Card::new(header, card_body)
+                    .foot(
+                        row![button(
+                            text("Cancel").horizontal_alignment(alignment::Horizontal::Center),
+                        )
+                        .width(Length::Fill)
+                        .on_press(Message::CloseModal),]
+                        .spacing(10)
+                        .padding(5)
+                        .width(Length::Fill),
+                    )
+                    .max_width(MODAL_WIDTH)
+                    .on_close(Message::CloseModal)
+                    .into()
+            })
+            .backdrop(Message::CloseModal)
+            .on_esc(Message::CloseModal)
+            .into(),
             ModalState::SendContactList { relays, .. } => Modal::new(true, underlay, move || {
                 let title = title("Send Contact List");
                 // let send_to_all_btn = row![Space::with_width(Length::Fill), button("Send All").on_press(Message::SendContactListToAll)];
@@ -548,19 +632,20 @@ impl ModalState {
                             text("Cancel").horizontal_alignment(alignment::Horizontal::Center),
                         )
                         .width(Length::Fill)
-                        .on_press(Message::CloseSendContactsModal),]
+                        .on_press(Message::CloseModal),]
                         .spacing(10)
                         .padding(5)
                         .width(Length::Fill),
                     )
-                    .max_width(ADD_CONTACT_MODAL_WIDTH)
-                    .on_close(Message::CloseSendContactsModal)
+                    .max_width(MODAL_WIDTH)
+                    .on_close(Message::CloseModal)
                     .into()
             })
-            .backdrop(Message::CloseSendContactsModal)
-            .on_esc(Message::CloseSendContactsModal)
+            .backdrop(Message::CloseModal)
+            .on_esc(Message::CloseModal)
             .into(),
             ModalState::ContactDetails {
+                db_contact: _,
                 modal_petname_input,
                 modal_pubkey_input,
                 modal_rec_relay_input,
@@ -615,7 +700,7 @@ impl ModalState {
                                 text("Cancel").horizontal_alignment(alignment::Horizontal::Center),
                             )
                             .width(Length::Fill)
-                            .on_press(Message::CloseAddContactModal),
+                            .on_press(Message::CloseModal),
                             button(text("Ok").horizontal_alignment(alignment::Horizontal::Center),)
                                 .width(Length::Fill)
                                 .on_press(Message::SubmitContact)
@@ -624,12 +709,12 @@ impl ModalState {
                         .padding(5)
                         .width(Length::Fill),
                     )
-                    .max_width(ADD_CONTACT_MODAL_WIDTH)
-                    .on_close(Message::CloseAddContactModal)
+                    .max_width(MODAL_WIDTH)
+                    .on_close(Message::CloseModal)
                     .into()
             })
-            .backdrop(Message::CloseAddContactModal)
-            .on_esc(Message::CloseAddContactModal)
+            .backdrop(Message::CloseModal)
+            .on_esc(Message::CloseModal)
             .into(),
             ModalState::ImportList {
                 imported_contacts,
@@ -647,7 +732,7 @@ impl ModalState {
                 let card_footer = row![
                     button(text("Cancel").horizontal_alignment(alignment::Horizontal::Center),)
                         .width(Length::Fill)
-                        .on_press(Message::CloseImportContactModal),
+                        .on_press(Message::CloseModal),
                     button(text("Ok").horizontal_alignment(alignment::Horizontal::Center),)
                         .width(Length::Fill)
                         .on_press(Message::SaveImportedContacts(imported_contacts.clone()))
@@ -658,15 +743,15 @@ impl ModalState {
 
                 let card: Element<_> = Card::new(card_header, card_body)
                     .foot(card_footer)
-                    .max_width(IMPORT_MODAL_WIDTH)
-                    .on_close(Message::CloseImportContactModal)
+                    .max_width(MODAL_WIDTH)
+                    .on_close(Message::CloseModal)
                     .style(crate::style::Card::Default)
                     .into();
 
                 card
             })
-            .backdrop(Message::CloseImportContactModal)
-            .on_esc(Message::CloseImportContactModal)
+            .backdrop(Message::CloseModal)
+            .on_esc(Message::CloseModal)
             .into(),
             ModalState::Off => underlay.into(),
         };
@@ -727,5 +812,5 @@ fn update_imported_contacts(tags: &[Tag], imported_contacts: &mut Vec<DbContact>
     *imported_contacts = oks.into_iter().map(Result::unwrap).collect();
 }
 
-const ADD_CONTACT_MODAL_WIDTH: f32 = 400.0;
-const IMPORT_MODAL_WIDTH: f32 = 400.0;
+const MODAL_WIDTH: f32 = 400.0;
+const MENU_WIDTH: f32 = 150.0;

@@ -1,3 +1,5 @@
+use chrono::NaiveDateTime;
+
 use crate::{
     db::{DbContact, DbEvent, DbMessage, DbRelay, DbRelayResponse},
     net::BackEndConnection,
@@ -139,7 +141,7 @@ pub enum SpecificEvent {
     ReceivedDM((DbContact, ChatMessage)),
     NewDMAndContact((DbContact, ChatMessage)),
     RelayContactsImported(Vec<DbContact>),
-    UpdatedContactMetadata((DbContact, nostr_sdk::Metadata)),
+    UpdatedContactMetadata(DbContact),
     UpdatedUserProfileMeta(nostr_sdk::Metadata),
 }
 
@@ -149,12 +151,11 @@ impl std::fmt::Display for SpecificEvent {
             SpecificEvent::UpdatedUserProfileMeta(_metadata) => {
                 write!(f, "Updated User Profile Metadata")
             }
-            SpecificEvent::UpdatedContactMetadata((contact, metadata)) => {
+            SpecificEvent::UpdatedContactMetadata(contact) => {
                 write!(
                     f,
-                    "Updated Contact Metadata: Contact public key: {}, Metadata: {:?}",
-                    contact.pubkey(),
-                    metadata
+                    "Updated Contact Metadata: Contact public key: {}",
+                    contact.pubkey()
                 )
             }
             SpecificEvent::RelayContactsImported(contacts) => {

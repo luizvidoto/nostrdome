@@ -2,16 +2,16 @@ use iced::widget::{button, container, row, text};
 use iced::Length;
 
 use crate::db::DbContact;
-use crate::icon::{delete_icon, download_icon, edit_icon};
+use crate::icon::{delete_icon, download_icon, edit_icon, file_icon_regular};
 use crate::style;
 use crate::utils::format_pubkey;
 use crate::widget::Element;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    GetProfile(DbContact),
     DeleteContact(DbContact),
     EditContact(DbContact),
+    OpenProfile(DbContact),
 }
 #[derive(Debug, Clone)]
 pub struct ContactRow {
@@ -36,13 +36,16 @@ impl ContactRow {
             contact: contact.clone(),
         }
     }
-    // pub fn update(&mut self, db_contact: &DbContact) {
-    //     self.contact.update_base_from_other(db_contact);
-    // }
     pub fn header<M: 'static>() -> Element<'static, M> {
         row![
             container(text("Public Key")).width(Length::Fixed(PUBKEY_CELL_WIDTH)),
+            container(text("PetName"))
+                .width(Length::Fixed(NAME_CELL_WIDTH_MIN))
+                .max_width(NAME_CELL_WIDTH_MAX),
             container(text("Name"))
+                .width(Length::Fixed(NAME_CELL_WIDTH_MIN))
+                .max_width(NAME_CELL_WIDTH_MAX),
+            container(text("Username"))
                 .width(Length::Fixed(NAME_CELL_WIDTH_MIN))
                 .max_width(NAME_CELL_WIDTH_MAX),
             container(text("Relay"))
@@ -61,6 +64,12 @@ impl ContactRow {
             container(text(&self.contact.get_petname().unwrap_or("".into())))
                 .width(Length::Fixed(NAME_CELL_WIDTH_MIN))
                 .max_width(NAME_CELL_WIDTH_MAX),
+            container(text(&self.contact.get_profile_name().unwrap_or("".into())))
+                .width(Length::Fixed(NAME_CELL_WIDTH_MIN))
+                .max_width(NAME_CELL_WIDTH_MAX),
+            container(text(&self.contact.get_display_name().unwrap_or("".into())))
+                .width(Length::Fixed(NAME_CELL_WIDTH_MIN))
+                .max_width(NAME_CELL_WIDTH_MAX),
             container(text(
                 &self
                     .contact
@@ -69,8 +78,10 @@ impl ContactRow {
                     .unwrap_or("".into())
             ))
             .width(Length::Fill),
-            container(button(download_icon().size(16)).on_press(Message::GetProfile(self.into())))
-                .width(Length::Fixed(EDIT_BTN_WIDTH)),
+            container(
+                button(file_icon_regular().size(16)).on_press(Message::OpenProfile(self.into()))
+            )
+            .width(Length::Fixed(EDIT_BTN_WIDTH)),
             container(button(edit_icon().size(16)).on_press(Message::EditContact(self.into())))
                 .width(Length::Fixed(EDIT_BTN_WIDTH)),
             container(

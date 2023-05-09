@@ -71,37 +71,7 @@ pub async fn backend_processing(
         BackEndInput::StoreEvent((relay_url, nostr_event)) => {
             process_async_with_event(insert_event(&pool, &keys, nostr_event, &relay_url)).await
         }
-        // BackEndInput::StoreEvents((relay_url, events)) => {
-        //     let pool_1 = pool.clone();
-        //     let keys_1 = keys.clone();
-        //     let mut sender_1 = sender.clone();
-        //     tokio::spawn(async move {
-        //         let mut inserted_events = Vec::new();
-        //         for ev in events.clone() {
-        //             let inserted =
-        //                 process_async_with_event(insert_event(&pool_1, &keys_1, ev, &relay_url))
-        //                     .await;
-        //             inserted_events.push(inserted.clone());
-        //             try_send_to_channel(
-        //                 &mut sender_1,
-        //                 BackEndInput::Ok(inserted),
-        //                 Event::None,
-        //                 "Error sending to backend channel",
-        //             );
-        //             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        //         }
-        //         try_send_to_channel(
-        //             &mut sender_1,
-        //             BackEndInput::Ok(Event::RelayEventsUpdated {
-        //                 relay_url,
-        //                 num_of_events: events.len(),
-        //             }),
-        //             Event::None,
-        //             "Error sending to backend channel",
-        //         );
-        //     });
-        //     Event::None
-        // }
+
         BackEndInput::StoreRelayMessage((relay_url, relay_message)) => {
             process_async_fn(
                 on_relay_message(&pool, &relay_url, &relay_message),
@@ -124,20 +94,20 @@ pub async fn insert_specific_kind(
                 "Received metadata event for public key: {}",
                 db_event.pubkey
             );
+            tracing::info!("{:?}", db_event);
+            let last_update = db_event.created_at_from_relay();
             let metadata = Metadata::from_json(&db_event.content)
                 .map_err(|_| Error::JsonToMetadata(db_event.content.to_string()))?;
 
             if db_event.pubkey == keys.public_key() {
-                update_user_meta(pool, &metadata).await?;
+                update_user_meta(pool, &metadata, last_update).await?;
                 Some(SpecificEvent::UpdatedUserProfileMeta(metadata))
             } else {
                 if let Some(mut db_contact) = DbContact::fetch_one(pool, &db_event.pubkey).await? {
-                    db_contact = db_contact.with_profile_meta(&metadata);
+                    db_contact = db_contact.with_profile_meta(&metadata, last_update);
                     DbContact::update(&pool, &db_contact).await?;
                     tracing::info!("Updated contact with profile metadata: {:?}", db_contact);
-                    Some(SpecificEvent::UpdatedContactMetadata((
-                        db_contact, metadata,
-                    )))
+                    Some(SpecificEvent::UpdatedContactMetadata(db_contact))
                 } else {
                     None
                 }

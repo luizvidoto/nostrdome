@@ -114,7 +114,7 @@ pub fn unchecked_url_or_err(url: &str, index: &str) -> Result<UncheckedUrl, sqlx
 }
 pub fn profile_meta_or_err(json: &str, index: &str) -> Result<nostr_sdk::Metadata, sqlx::Error> {
     tracing::info!("profile meta json: {}", json);
-    serde_json::from_str::<nostr_sdk::Metadata>(json).map_err(|e| handle_decode_error(e, index))
+    nostr_sdk::Metadata::from_json(json).map_err(|e| handle_decode_error(e, index))
 }
 
 pub fn contact_matches_search(contact: &DbContact, search: &str) -> bool {
@@ -127,7 +127,15 @@ pub fn contact_matches_search(contact: &DbContact, search: &str) -> bool {
         petname.to_lowercase().contains(&search.to_lowercase())
     });
 
-    pubkey_matches || petname_matches
+    let profile_name_matches = contact.get_profile_name().map_or(false, |name| {
+        name.to_lowercase().contains(&search.to_lowercase())
+    });
+
+    let display_name_matches = contact.get_display_name().map_or(false, |display_name| {
+        display_name.to_lowercase().contains(&search.to_lowercase())
+    });
+
+    pubkey_matches || petname_matches || profile_name_matches || display_name_matches
 }
 
 pub fn add_ellipsis_trunc(s: &str, max_length: usize) -> String {

@@ -83,6 +83,9 @@ impl DbEvent {
             self.event_hash.clone(),
         ))
     }
+    pub fn created_at_from_relay(&self) -> NaiveDateTime {
+        self.created_at_from_relay.clone()
+    }
 
     pub fn with_id(mut self, id: i64) -> Self {
         self.event_id = Some(id);

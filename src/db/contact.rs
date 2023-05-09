@@ -56,6 +56,7 @@ pub struct DbContact {
     last_message_content: Option<String>,
     last_message_date: Option<NaiveDateTime>,
     profile_meta: Option<nostr_sdk::Metadata>,
+    profile_meta_last_update: Option<NaiveDateTime>,
     local_profile_image: Option<String>,
     local_banner_image: Option<String>,
 }
@@ -91,6 +92,7 @@ impl DbContact {
             last_message_content: None,
             last_message_date: None,
             profile_meta: None,
+            profile_meta_last_update: None,
             local_banner_image: None,
             local_profile_image: None,
         }
@@ -133,17 +135,47 @@ impl DbContact {
             XOnlyPublicKey::from_str(pubkey).map_err(|_| DbContactError::InvalidPublicKey)?;
         Ok(Self::new(&pubkey))
     }
-    pub fn from_submit(pubkey: &str, petname: &str, relay_url: &str) -> Result<Self> {
-        let mut contact = Self::from_str(pubkey)?;
-        contact = contact.with_petname(petname);
-        contact = contact.with_relay_url(relay_url)?;
-        Ok(contact)
+    pub fn new_from_submit(pubkey: &str, petname: &str, relay_url: &str) -> Result<Self> {
+        let db_contact = Self::from_str(pubkey)?;
+        let db_contact = Self::edit_contact(db_contact, petname, relay_url)?;
+        Ok(db_contact)
+    }
+    pub fn edit_contact(
+        mut db_contact: DbContact,
+        petname: &str,
+        relay_url: &str,
+    ) -> Result<DbContact> {
+        db_contact.petname = Some(petname.to_owned());
+
+        if !relay_url.is_empty() {
+            db_contact.update_relay_url(relay_url)?;
+        } else {
+            db_contact.relay_url = None;
+        }
+
+        Ok(db_contact)
     }
     pub fn get_petname(&self) -> Option<String> {
         self.petname.clone()
     }
     pub fn get_profile_meta(&self) -> Option<nostr_sdk::Metadata> {
         self.profile_meta.clone()
+    }
+    pub fn get_profile_name(&self) -> Option<String> {
+        if let Some(metadata) = &self.profile_meta {
+            if let Some(name) = &metadata.name {
+                return Some(name.to_owned());
+            }
+        }
+        None
+    }
+    pub fn get_display_name(&self) -> Option<String> {
+        if let Some(metadata) = &self.profile_meta {
+            if let Some(display_name) = &metadata.display_name {
+                return Some(display_name.to_owned());
+            }
+        }
+        None
     }
     pub fn get_relay_url(&self) -> Option<UncheckedUrl> {
         self.relay_url.clone()
@@ -161,8 +193,19 @@ impl DbContact {
         self.unseen_messages
     }
 
-    pub fn with_profile_meta(mut self, meta: &nostr_sdk::Metadata) -> Self {
+    pub fn with_profile_meta(
+        mut self,
+        meta: &nostr_sdk::Metadata,
+        last_update: NaiveDateTime,
+    ) -> Self {
+        if let Some(previous_update) = self.profile_meta_last_update {
+            if previous_update > last_update {
+                tracing::info!("Cant contact profile with older data");
+                return self;
+            }
+        }
         self.profile_meta = Some(meta.clone());
+        self.profile_meta_last_update = Some(last_update);
         self
     }
     pub fn with_local_profile_image(mut self, path: &str) -> Self {
@@ -172,6 +215,29 @@ impl DbContact {
     pub fn with_local_banner_image(mut self, path: &str) -> Self {
         self.local_banner_image = Some(path.to_string());
         self
+    }
+    pub fn with_unchekd_relay_url(mut self, relay_url: &UncheckedUrl) -> Self {
+        self.relay_url = Some(relay_url.to_owned());
+        self
+    }
+    pub fn with_relay_url(mut self, relay_url: &str) -> Result<Self> {
+        let url = Self::parse_url(relay_url)?;
+        self.relay_url = Some(url);
+        Ok(self)
+    }
+    pub fn with_petname(mut self, petname: &str) -> Self {
+        self.petname = Some(petname.to_owned());
+        self
+    }
+
+    fn update_relay_url(&mut self, relay_url: &str) -> Result<()> {
+        let url = Self::parse_url(relay_url)?;
+        self.relay_url = Some(url);
+        Ok(())
+    }
+    fn parse_url(url: &str) -> Result<UncheckedUrl> {
+        RelayUrl::try_into_unchecked_url(url)
+            .map_err(|_e| DbContactError::InvalidRelayUrl(url.to_owned()))
     }
 
     pub async fn new_message(
@@ -254,23 +320,6 @@ impl DbContact {
         Ok(db_contact_updated)
     }
 
-    pub fn with_unchekd_relay_url(mut self, relay_url: &UncheckedUrl) -> Self {
-        self.relay_url = Some(relay_url.to_owned());
-        self
-    }
-
-    pub fn with_relay_url(mut self, relay_url: &str) -> Result<Self> {
-        let url = RelayUrl::try_into_unchecked_url(relay_url)
-            .map_err(|_e| DbContactError::InvalidRelayUrl(relay_url.to_owned()))?;
-        self.relay_url = Some(url);
-        Ok(self)
-    }
-
-    pub fn with_petname(mut self, petname: &str) -> Self {
-        self.petname = Some(petname.to_owned());
-        self
-    }
-
     pub async fn fetch(pool: &SqlitePool) -> Result<Vec<DbContact>> {
         let rows: Vec<DbContact> = sqlx::query_as::<_, DbContact>(Self::FETCH_QUERY)
             .fetch_all(pool)
@@ -299,9 +348,9 @@ impl DbContact {
             INSERT OR IGNORE INTO contact 
                 (pubkey, relay_url, petname, status, 
                 unseen_messages, created_at, updated_at, last_message_content, 
-                last_message_date, profile_meta, 
+                last_message_date, profile_meta, profile_meta_last_update, 
                 local_profile_image, local_banner_image) 
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
         "#;
 
         sqlx::query(sql)
@@ -320,6 +369,12 @@ impl DbContact {
                     .map(|date| date.timestamp_millis()),
             )
             .bind(&contact.profile_meta.as_ref().map(|meta| meta.as_json()))
+            .bind(
+                contact
+                    .profile_meta_last_update
+                    .as_ref()
+                    .map(|date| date.timestamp_millis()),
+            )
             .bind(&contact.local_profile_image)
             .bind(&contact.local_banner_image)
             .execute(tx)
@@ -389,7 +444,7 @@ impl DbContact {
             SET relay_url=?, petname=?, 
                 status=?, unseen_messages=?,  
                 last_message_content=?, last_message_date=?,
-                profile_meta=?, updated_at=?, local_profile_image=?, local_banner_image=?
+                profile_meta=?, profile_meta_last_update=?, updated_at=?, local_profile_image=?, local_banner_image=?
             WHERE pubkey=?
         "#;
 
@@ -406,6 +461,12 @@ impl DbContact {
                     .map(|date| date.timestamp_millis()),
             )
             .bind(&contact.profile_meta.as_ref().map(|meta| meta.as_json()))
+            .bind(
+                contact
+                    .profile_meta_last_update
+                    .as_ref()
+                    .map(|date| date.timestamp_millis()),
+            )
             .bind(Utc::now().timestamp_millis())
             .bind(&contact.local_profile_image)
             .bind(&contact.local_banner_image)
@@ -436,6 +497,12 @@ impl sqlx::FromRow<'_, SqliteRow> for DbContact {
             .map(|json| profile_meta_or_err(json, "profile_meta"))
             .transpose()?;
 
+        let profile_meta_last_update = row.get::<Option<i64>, &str>("profile_meta_last_update");
+        let profile_meta_last_update = profile_meta_last_update
+            .as_ref()
+            .map(|date| millis_to_naive_or_err(*date, "profile_meta_last_update"))
+            .transpose()?;
+
         let pubkey = row.try_get::<String, &str>("pubkey")?;
         let created_at =
             millis_to_naive_or_err(row.try_get::<i64, &str>("created_at")?, "created_at")?;
@@ -449,6 +516,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbContact {
 
         Ok(DbContact {
             profile_meta,
+            profile_meta_last_update,
             local_banner_image: row.get::<Option<String>, &str>("local_banner_image"),
             local_profile_image: row.get::<Option<String>, &str>("local_profile_image"),
             pubkey: XOnlyPublicKey::from_str(&pubkey).map_err(|e| sqlx::Error::ColumnDecode {

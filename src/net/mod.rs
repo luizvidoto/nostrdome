@@ -104,7 +104,7 @@ impl BackendState {
                 Message::CreateAccount(profile) => {
                     tracing::info!("Creating account");
                     let profile_meta = profile.into();
-                    match update_user_meta(pool, &profile_meta).await {
+                    match update_user_meta(pool, &profile_meta, Utc::now().naive_utc()).await {
                         Ok(_) => {
                             to_nostr_channel(client_sender, NostrInput::SendProfile(profile_meta));
                             Event::ProfileCreated
@@ -176,6 +176,18 @@ impl BackendState {
                         .await
                 }
                 // --------- NOSTR MESSAGES ------------
+                Message::RefreshContactsMetadata => match DbContact::fetch(pool).await {
+                    Ok(db_contacts) => {
+                        for db_contact in db_contacts {
+                            to_nostr_channel(
+                                client_sender,
+                                NostrInput::GetContactProfile(db_contact),
+                            );
+                        }
+                        Event::None
+                    }
+                    Err(e) => Event::Error(e.to_string()),
+                },
                 Message::GetContactProfile(db_contact) => {
                     to_nostr_channel(client_sender, NostrInput::GetContactProfile(db_contact))
                 }

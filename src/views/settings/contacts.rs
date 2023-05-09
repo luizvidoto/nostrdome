@@ -2,7 +2,7 @@ use iced::widget::{button, column, container, row, text, text_input, Space};
 use iced::{alignment, Length};
 
 use crate::components::{common_scrollable, contact_row, ContactRow};
-use crate::icon::{import_icon, plus_icon, to_cloud_icon};
+use crate::icon::{import_icon, plus_icon, refresh_icon, to_cloud_icon};
 use crate::net::events::frontend::SpecificEvent;
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
@@ -15,12 +15,14 @@ use crate::{components::text::title, db::DbContact};
 pub enum Message {
     BackEndEvent(Event),
     DeleteContact(DbContact),
+    OpenProfileModal(DbContact),
     ContactRowMessage(contact_row::Message),
     OpenAddContactModal,
     OpenEditContactModal(DbContact),
     OpenImportContactModal,
     SearchContactInputChange(String),
     OpenSendContactModal,
+    RefreshContacts,
 }
 
 #[derive(Debug, Clone)]
@@ -39,21 +41,26 @@ impl State {
 
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Option<Message> {
         match message {
+            Message::RefreshContacts => {
+                conn.send(net::Message::RefreshContactsMetadata);
+            }
+            Message::OpenProfileModal(_) => (),
             Message::OpenSendContactModal => (),
             Message::OpenEditContactModal(_) => (),
             Message::OpenAddContactModal => (),
             Message::OpenImportContactModal => (),
             Message::SearchContactInputChange(text) => self.search_contact_input = text,
             Message::ContactRowMessage(ct_msg) => match ct_msg {
+                // TODO: dont return a message, find a better way
+                contact_row::Message::OpenProfile(contact) => {
+                    return Some(Message::OpenProfileModal(contact));
+                }
                 contact_row::Message::DeleteContact(contact) => {
                     conn.send(net::Message::DeleteContact(contact))
                 }
                 contact_row::Message::EditContact(contact) => {
                     // self.modal_state = ModalState::add_contact(Some(contact));
                     return Some(Message::OpenEditContactModal(contact));
-                }
-                contact_row::Message::GetProfile(db_contact) => {
-                    conn.send(net::Message::GetContactProfile(db_contact));
                 }
             },
             Message::DeleteContact(contact) => {
@@ -66,6 +73,15 @@ impl State {
                 Event::EventInserted((_ev, specific)) => match specific {
                     Some(SpecificEvent::RelayContactsImported(_)) => {
                         conn.send(net::Message::FetchContacts)
+                    }
+                    Some(SpecificEvent::UpdatedContactMetadata(db_contact)) => {
+                        if let Some(contact) = self
+                            .contacts
+                            .iter_mut()
+                            .find(|c| c.pubkey() == db_contact.pubkey())
+                        {
+                            *contact = db_contact;
+                        }
                     }
                     _ => (),
                 },
@@ -96,6 +112,7 @@ impl State {
         )
         .padding(5)
         .on_press(Message::OpenAddContactModal);
+        let refresh_btn = button(refresh_icon().size(18)).on_press(Message::RefreshContacts);
         let import_btn = button(import_icon().size(18))
             .padding(5)
             .on_press(Message::OpenImportContactModal);
@@ -107,6 +124,7 @@ impl State {
             search_contact,
             Space::with_width(Length::Fill),
             add_contact_btn,
+            refresh_btn,
             import_btn,
             send_btn
         ]
