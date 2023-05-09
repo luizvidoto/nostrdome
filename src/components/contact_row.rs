@@ -1,8 +1,8 @@
-use iced::widget::{button, container, row, text};
+use iced::widget::{button, container, row, text, tooltip};
 use iced::Length;
 
 use crate::db::DbContact;
-use crate::icon::{delete_icon, download_icon, edit_icon, file_icon_regular};
+use crate::icon::{delete_icon, edit_icon, file_icon_regular};
 use crate::style;
 use crate::utils::format_pubkey;
 use crate::widget::Element;
@@ -79,15 +79,34 @@ impl ContactRow {
             ))
             .width(Length::Fill),
             container(
-                button(file_icon_regular().size(16)).on_press(Message::OpenProfile(self.into()))
+                tooltip(
+                    button(file_icon_regular().size(16))
+                        .on_press(Message::OpenProfile(self.into())),
+                    "Open Profile",
+                    tooltip::Position::Left
+                )
+                .style(style::Container::TooltipBg)
             )
             .width(Length::Fixed(EDIT_BTN_WIDTH)),
-            container(button(edit_icon().size(16)).on_press(Message::EditContact(self.into())))
-                .width(Length::Fixed(EDIT_BTN_WIDTH)),
             container(
-                button(delete_icon().size(16))
-                    .on_press(Message::DeleteContact(self.contact.clone()))
-                    .style(style::Button::Danger)
+                tooltip(
+                    button(edit_icon().size(16))
+                        .on_press(Message::EditContact(self.into()))
+                        .width(Length::Fixed(EDIT_BTN_WIDTH)),
+                    "Edit Contact",
+                    tooltip::Position::Left
+                )
+                .style(style::Container::TooltipBg)
+            ),
+            container(
+                tooltip(
+                    button(delete_icon().size(16))
+                        .on_press(Message::DeleteContact(self.contact.clone()))
+                        .style(style::Button::Danger),
+                    "Delete Contact",
+                    tooltip::Position::Left
+                )
+                .style(style::Container::TooltipBg)
             )
             .width(Length::Fixed(REMOVE_BTN_WIDTH))
         ]

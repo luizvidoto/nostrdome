@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, scrollable, Space};
+use iced::widget::{button, column, container, row, Space};
 use iced::Length;
 use nostr_sdk::Metadata;
 
@@ -62,15 +62,17 @@ impl State {
         match message {
             Message::BackEndEvent(back_ev) => match back_ev {
                 Event::GotUserProfileMeta(meta) => {
-                    self.name = meta.name.unwrap_or("".into());
-                    self.user_name = meta.display_name.unwrap_or("".into());
-                    self.picture_url = meta.picture.unwrap_or("".into());
-                    self.about = meta.about.unwrap_or("".into());
-                    self.banner = meta.banner.unwrap_or("".into());
-                    self.website = meta.website.unwrap_or("".into());
-                    self.ln_url = meta.lud06.unwrap_or("".into());
-                    self.ln_addrs = meta.lud16.unwrap_or("".into());
-                    self.nostr_addrs = meta.nip05.unwrap_or("".into());
+                    if let Some(meta) = meta {
+                        self.name = meta.name.unwrap_or("".into());
+                        self.user_name = meta.display_name.unwrap_or("".into());
+                        self.picture_url = meta.picture.unwrap_or("".into());
+                        self.about = meta.about.unwrap_or("".into());
+                        self.banner = meta.banner.unwrap_or("".into());
+                        self.website = meta.website.unwrap_or("".into());
+                        self.ln_url = meta.lud06.unwrap_or("".into());
+                        self.ln_addrs = meta.lud16.unwrap_or("".into());
+                        self.nostr_addrs = meta.nip05.unwrap_or("".into());
+                    }
                 }
                 _ => (),
             },

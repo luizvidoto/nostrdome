@@ -2,8 +2,8 @@ use chrono::{NaiveDateTime, Utc};
 use nostr_sdk::{prelude::UncheckedUrl, secp256k1::XOnlyPublicKey, Tag};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
-use std::result::Result as StdResult;
 use std::str::FromStr;
+use std::{path::PathBuf, result::Result as StdResult};
 use thiserror::Error;
 
 use crate::{
@@ -57,8 +57,8 @@ pub struct DbContact {
     last_message_date: Option<NaiveDateTime>,
     profile_meta: Option<nostr_sdk::Metadata>,
     profile_meta_last_update: Option<NaiveDateTime>,
-    local_profile_image: Option<String>,
-    local_banner_image: Option<String>,
+    local_profile_image: Option<PathBuf>,
+    local_banner_image: Option<PathBuf>,
 }
 
 impl From<&DbContact> for nostr_sdk::Contact {
@@ -161,6 +161,9 @@ impl DbContact {
     pub fn get_profile_meta(&self) -> Option<nostr_sdk::Metadata> {
         self.profile_meta.clone()
     }
+    pub fn get_profile_meta_last_update(&self) -> Option<NaiveDateTime> {
+        self.profile_meta_last_update.clone()
+    }
     pub fn get_profile_name(&self) -> Option<String> {
         if let Some(metadata) = &self.profile_meta {
             if let Some(name) = &metadata.name {
@@ -200,7 +203,7 @@ impl DbContact {
     ) -> Self {
         if let Some(previous_update) = self.profile_meta_last_update {
             if previous_update > last_update {
-                tracing::info!("Cant contact profile with older data");
+                tracing::warn!("Cant contact profile with older data");
                 return self;
             }
         }
@@ -208,12 +211,12 @@ impl DbContact {
         self.profile_meta_last_update = Some(last_update);
         self
     }
-    pub fn with_local_profile_image(mut self, path: &str) -> Self {
-        self.local_profile_image = Some(path.to_string());
+    pub fn with_local_profile_image(mut self, path: &PathBuf) -> Self {
+        self.local_profile_image = Some(path.to_owned());
         self
     }
-    pub fn with_local_banner_image(mut self, path: &str) -> Self {
-        self.local_banner_image = Some(path.to_string());
+    pub fn with_local_banner_image(mut self, path: &PathBuf) -> Self {
+        self.local_banner_image = Some(path.to_owned());
         self
     }
     pub fn with_unchekd_relay_url(mut self, relay_url: &UncheckedUrl) -> Self {
@@ -230,6 +233,28 @@ impl DbContact {
         self
     }
 
+    pub fn select_display_name(&self) -> String {
+        if let Some(petname) = &self.get_petname() {
+            if !petname.trim().is_empty() {
+                return petname.to_owned();
+            }
+        }
+
+        if let Some(display_name) = &self.get_display_name() {
+            if !display_name.trim().is_empty() {
+                return display_name.to_owned();
+            }
+        }
+
+        if let Some(profile_name) = &self.get_profile_name() {
+            if !profile_name.trim().is_empty() {
+                return profile_name.to_owned();
+            }
+        }
+
+        self.pubkey().to_string()
+    }
+
     fn update_relay_url(&mut self, relay_url: &str) -> Result<()> {
         let url = Self::parse_url(relay_url)?;
         self.relay_url = Some(url);
@@ -238,6 +263,20 @@ impl DbContact {
     fn parse_url(url: &str) -> Result<UncheckedUrl> {
         RelayUrl::try_into_unchecked_url(url)
             .map_err(|_e| DbContactError::InvalidRelayUrl(url.to_owned()))
+    }
+
+    pub fn local_profile_image_str(&self) -> Option<String> {
+        self.local_profile_image.as_ref().map(|path| {
+            let path_str = path.to_str().unwrap_or("");
+            path_str.to_string()
+        })
+    }
+
+    pub fn local_banner_image_str(&self) -> Option<String> {
+        self.local_banner_image.as_ref().map(|path| {
+            let path_str = path.to_str().unwrap_or("");
+            path_str.to_string()
+        })
     }
 
     pub async fn new_message(
@@ -375,8 +414,8 @@ impl DbContact {
                     .as_ref()
                     .map(|date| date.timestamp_millis()),
             )
-            .bind(&contact.local_profile_image)
-            .bind(&contact.local_banner_image)
+            .bind(contact.local_profile_image_str())
+            .bind(contact.local_banner_image_str())
             .execute(tx)
             .await?;
 
@@ -468,8 +507,8 @@ impl DbContact {
                     .map(|date| date.timestamp_millis()),
             )
             .bind(Utc::now().timestamp_millis())
-            .bind(&contact.local_profile_image)
-            .bind(&contact.local_banner_image)
+            .bind(contact.local_profile_image_str())
+            .bind(contact.local_banner_image_str())
             .bind(&contact.pubkey.to_string())
             .execute(pool)
             .await?;
@@ -514,11 +553,17 @@ impl sqlx::FromRow<'_, SqliteRow> for DbContact {
             .map(|url| unchecked_url_or_err(&url, "relay_url"))
             .transpose()?;
 
+        let local_profile_image: Option<String> = row.get("local_profile_image");
+        let local_profile_image = local_profile_image.map(|path| PathBuf::from(path));
+
+        let local_banner_image: Option<String> = row.get("local_banner_image");
+        let local_banner_image = local_banner_image.map(|path| PathBuf::from(path));
+
         Ok(DbContact {
             profile_meta,
             profile_meta_last_update,
-            local_banner_image: row.get::<Option<String>, &str>("local_banner_image"),
-            local_profile_image: row.get::<Option<String>, &str>("local_profile_image"),
+            local_profile_image,
+            local_banner_image,
             pubkey: XOnlyPublicKey::from_str(&pubkey).map_err(|e| sqlx::Error::ColumnDecode {
                 index: "pubkey".into(),
                 source: Box::new(e),

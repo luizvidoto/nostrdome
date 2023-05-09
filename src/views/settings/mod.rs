@@ -1,13 +1,13 @@
 use iced::alignment;
-use iced::widget::{button, column, container, row, scrollable, text, Space};
+use iced::widget::{button, column, container, row, text, Space};
 use iced::{Command, Length, Subscription};
 use iced_aw::{Card, Modal};
-use nostr_sdk::{Metadata, Tag};
+use nostr_sdk::Tag;
 
 use crate::components::text::title;
 use crate::components::text_input_group::TextInputGroup;
 use crate::components::{common_scrollable, file_importer, relay_row, FileImporter, RelayRow};
-use crate::db::{DbContact, DbContactError, DbRelay};
+use crate::db::{DbContact, DbContactError};
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
 use crate::style;
@@ -545,105 +545,8 @@ impl ModalState {
 
     pub fn view<'a>(&'a self, underlay: Element<'a, Message>) -> Element<'a, Message> {
         let view: Element<_> = match self {
-            ModalState::Profile { contact } => Modal::new(true, underlay, move || {
-                let title = title("Profile");
-
-                let header = container(title).width(Length::Fill).center_y();
-                let card_body: Element<_> = if let Some(profile_meta) = contact.get_profile_meta() {
-                    let mut content = column![].spacing(5);
-                    if let Some(name) = profile_meta.name {
-                        content = content.push(text(name));
-                    }
-                    if let Some(display_name) = profile_meta.display_name {
-                        content = content.push(text(display_name));
-                    }
-                    if let Some(picture_url) = profile_meta.picture {
-                        content = content.push(text(picture_url));
-                    }
-                    if let Some(about) = profile_meta.about {
-                        content = content.push(text(about));
-                    }
-                    if let Some(website) = profile_meta.website {
-                        content = content.push(text(website));
-                    }
-                    if let Some(banner_url) = profile_meta.banner {
-                        content = content.push(text(banner_url));
-                    }
-                    if let Some(nip05) = profile_meta.nip05 {
-                        content = content.push(text(nip05));
-                    }
-                    if let Some(lud06) = profile_meta.lud06 {
-                        content = content.push(text(lud06));
-                    }
-                    if let Some(lud16) = profile_meta.lud16 {
-                        content = content.push(text(lud16));
-                    }
-                    content.into()
-                } else {
-                    text("No profile data found").into()
-                };
-                let card_body: Element<_> = container(card_body)
-                    .width(Length::Fill)
-                    .center_y()
-                    .center_x()
-                    .padding(10)
-                    .into();
-
-                Card::new(header, card_body)
-                    .foot(
-                        row![button(
-                            text("Cancel").horizontal_alignment(alignment::Horizontal::Center),
-                        )
-                        .width(Length::Fill)
-                        .on_press(Message::CloseModal),]
-                        .spacing(10)
-                        .padding(5)
-                        .width(Length::Fill),
-                    )
-                    .max_width(MODAL_WIDTH)
-                    .on_close(Message::CloseModal)
-                    .into()
-            })
-            .backdrop(Message::CloseModal)
-            .on_esc(Message::CloseModal)
-            .into(),
-            ModalState::SendContactList { relays, .. } => Modal::new(true, underlay, move || {
-                let title = title("Send Contact List");
-                // let send_to_all_btn = row![Space::with_width(Length::Fill), button("Send All").on_press(Message::SendContactListToAll)];
-                let send_to_all_btn = text("");
-
-                let header = container(title)
-                    .width(Length::Fill)
-                    .style(style::Container::Default)
-                    .center_y();
-
-                let relay_list: Element<_> = relays
-                    .iter()
-                    .fold(column![send_to_all_btn].spacing(5), |col, relay_row| {
-                        col.push(relay_row.modal_view().map(Message::RelayRowMessage))
-                    })
-                    .into();
-
-                let modal_body = container(common_scrollable(relay_list)).width(Length::Fill);
-
-                Card::new(header, modal_body)
-                    .foot(
-                        row![button(
-                            text("Cancel").horizontal_alignment(alignment::Horizontal::Center),
-                        )
-                        .width(Length::Fill)
-                        .on_press(Message::CloseModal),]
-                        .spacing(10)
-                        .padding(5)
-                        .width(Length::Fill),
-                    )
-                    .max_width(MODAL_WIDTH)
-                    .on_close(Message::CloseModal)
-                    .into()
-            })
-            .backdrop(Message::CloseModal)
-            .on_esc(Message::CloseModal)
-            .into(),
+            ModalState::Profile { contact } => profile_view(contact, underlay),
+            ModalState::SendContactList { relays, .. } => send_contact_list_view(relays, underlay),
             ModalState::ContactDetails {
                 db_contact: _,
                 modal_petname_input,
@@ -719,40 +622,7 @@ impl ModalState {
             ModalState::ImportList {
                 imported_contacts,
                 file_importer,
-            } => Modal::new(true, underlay, || {
-                let importer_cp = file_importer.view().map(Message::FileImporterMessage);
-                let found_contacts_txt = match imported_contacts.len() {
-                    0 => text(""),
-                    n => text(format!("Found contacts: {}", n)),
-                };
-                let stats_row = row![found_contacts_txt];
-
-                let card_header = text("Import Contacts");
-                let card_body = column![importer_cp, stats_row].spacing(4);
-                let card_footer = row![
-                    button(text("Cancel").horizontal_alignment(alignment::Horizontal::Center),)
-                        .width(Length::Fill)
-                        .on_press(Message::CloseModal),
-                    button(text("Ok").horizontal_alignment(alignment::Horizontal::Center),)
-                        .width(Length::Fill)
-                        .on_press(Message::SaveImportedContacts(imported_contacts.clone()))
-                ]
-                .spacing(10)
-                .padding(5)
-                .width(Length::Fill);
-
-                let card: Element<_> = Card::new(card_header, card_body)
-                    .foot(card_footer)
-                    .max_width(MODAL_WIDTH)
-                    .on_close(Message::CloseModal)
-                    .style(crate::style::Card::Default)
-                    .into();
-
-                card
-            })
-            .backdrop(Message::CloseModal)
-            .on_esc(Message::CloseModal)
-            .into(),
+            } => import_list_view(imported_contacts, file_importer, underlay),
             ModalState::Off => underlay.into(),
         };
 
@@ -810,6 +680,158 @@ fn update_imported_contacts(tags: &[Tag], imported_contacts: &mut Vec<DbContact>
     }
 
     *imported_contacts = oks.into_iter().map(Result::unwrap).collect();
+}
+
+fn profile_view<'a>(
+    contact: &'a DbContact,
+    underlay: Element<'a, Message>,
+) -> Element<'a, Message> {
+    Modal::new(true, underlay, move || {
+        let title = title("Profile");
+        let header = container(title).width(Length::Fill).center_y();
+        let card_body: Element<_> = if let Some(profile_meta) = contact.get_profile_meta() {
+            let mut content = column![].spacing(5);
+            if let Some(name) = profile_meta.name {
+                content = content.push(column![text("name"), text(name)].spacing(5));
+            }
+            if let Some(display_name) = profile_meta.display_name {
+                content =
+                    content.push(column![text("display_name"), text(display_name)].spacing(5));
+            }
+            if let Some(picture_url) = profile_meta.picture {
+                content = content.push(column![text("picture_url"), text(picture_url)].spacing(5));
+            }
+            if let Some(about) = profile_meta.about {
+                content = content.push(column![text("about"), text(about)].spacing(5));
+            }
+            if let Some(website) = profile_meta.website {
+                content = content.push(column![text("website"), text(website)].spacing(5));
+            }
+            if let Some(banner_url) = profile_meta.banner {
+                content = content.push(column![text("banner_url"), text(banner_url)].spacing(5));
+            }
+            if let Some(nip05) = profile_meta.nip05 {
+                content = content.push(column![text("nip05"), text(nip05)].spacing(5));
+            }
+            if let Some(lud06) = profile_meta.lud06 {
+                content = content.push(column![text("lud06"), text(lud06)].spacing(5));
+            }
+            if let Some(lud16) = profile_meta.lud16 {
+                content = content.push(column![text("lud16"), text(lud16)].spacing(5));
+            }
+            content.into()
+        } else {
+            text("No profile data found").into()
+        };
+        let card_body: Element<_> = container(card_body)
+            .width(Length::Fill)
+            .center_y()
+            .center_x()
+            .padding(10)
+            .into();
+
+        Card::new(header, card_body)
+            .foot(
+                row![
+                    button(text("Cancel").horizontal_alignment(alignment::Horizontal::Center),)
+                        .width(Length::Fill)
+                        .on_press(Message::CloseModal),
+                ]
+                .spacing(10)
+                .padding(5)
+                .width(Length::Fill),
+            )
+            .max_width(MODAL_WIDTH)
+            .on_close(Message::CloseModal)
+            .into()
+    })
+    .backdrop(Message::CloseModal)
+    .on_esc(Message::CloseModal)
+    .into()
+}
+
+fn send_contact_list_view<'a>(
+    relays: &'a [RelayRow],
+    underlay: Element<'a, Message>,
+) -> Element<'a, Message> {
+    Modal::new(true, underlay, move || {
+        let title = title("Send Contact List");
+        // let send_to_all_btn = row![Space::with_width(Length::Fill), button("Send All").on_press(Message::SendContactListToAll)];
+        let send_to_all_btn = text("");
+
+        let header = container(title)
+            .width(Length::Fill)
+            .style(style::Container::Default)
+            .center_y();
+
+        let relay_list: Element<_> = relays
+            .iter()
+            .fold(column![send_to_all_btn].spacing(5), |col, relay_row| {
+                col.push(relay_row.modal_view().map(Message::RelayRowMessage))
+            })
+            .into();
+
+        let modal_body = container(common_scrollable(relay_list)).width(Length::Fill);
+
+        Card::new(header, modal_body)
+            .foot(
+                row![
+                    button(text("Cancel").horizontal_alignment(alignment::Horizontal::Center),)
+                        .width(Length::Fill)
+                        .on_press(Message::CloseModal),
+                ]
+                .spacing(10)
+                .padding(5)
+                .width(Length::Fill),
+            )
+            .max_width(MODAL_WIDTH)
+            .on_close(Message::CloseModal)
+            .into()
+    })
+    .backdrop(Message::CloseModal)
+    .on_esc(Message::CloseModal)
+    .into()
+}
+
+fn import_list_view<'a>(
+    imported_contacts: &'a [DbContact],
+    file_importer: &'a FileImporter,
+    underlay: Element<'a, Message>,
+) -> Element<'a, Message> {
+    Modal::new(true, underlay, || {
+        let importer_cp = file_importer.view().map(Message::FileImporterMessage);
+        let found_contacts_txt = match imported_contacts.len() {
+            0 => text(""),
+            n => text(format!("Found contacts: {}", n)),
+        };
+        let stats_row = row![found_contacts_txt];
+
+        let card_header = text("Import Contacts");
+        let card_body = column![importer_cp, stats_row].spacing(4);
+        let card_footer = row![
+            button(text("Cancel").horizontal_alignment(alignment::Horizontal::Center),)
+                .width(Length::Fill)
+                .on_press(Message::CloseModal),
+            button(text("Ok").horizontal_alignment(alignment::Horizontal::Center),)
+                .width(Length::Fill)
+                .on_press(Message::SaveImportedContacts(imported_contacts.to_vec()))
+        ]
+        .spacing(10)
+        .padding(5)
+        .width(Length::Fill);
+
+        let card: Element<_> = Card::new(card_header, card_body)
+            .foot(card_footer)
+            .max_width(MODAL_WIDTH)
+            .on_close(Message::CloseModal)
+            .style(crate::style::Card::Default)
+            .into();
+
+        card
+    })
+    .backdrop(Message::CloseModal)
+    .on_esc(Message::CloseModal)
+    .into()
 }
 
 const MODAL_WIDTH: f32 = 400.0;

@@ -17,6 +17,7 @@ pub enum Button {
     MenuBtn,
     StatusBarButton,
     Bordered,
+    Notification,
 }
 
 impl button::StyleSheet for Theme {
@@ -87,6 +88,14 @@ impl button::StyleSheet for Theme {
                 border_width: 0.0,
                 ..primary
             },
+            Button::Notification => button::Appearance {
+                background: self.pallete().notification.into(),
+                text_color: self.pallete().text_color,
+                border_color: Color::TRANSPARENT,
+                border_radius: 20.0,
+                border_width: 0.0,
+                ..primary
+            },
         }
     }
     fn hovered(&self, style: &Self::Style) -> button::Appearance {
@@ -119,6 +128,56 @@ impl button::StyleSheet for Theme {
                 background: self.pallete().hover_status_bar_bg.into(),
                 ..self.active(style)
             },
+            Button::Notification => self.active(style),
+        }
+    }
+
+    fn pressed(&self, style: &Self::Style) -> button::Appearance {
+        match style {
+            Button::Primary => self.active(style),
+            Button::Secondary => self.active(style),
+            Button::Danger => self.active(style),
+            Button::Invisible => self.active(style),
+            Button::Bordered => self.active(style),
+            Button::ContactCard => self.active(style),
+            Button::ActiveContactCard => self.active(style),
+            Button::ActiveMenuBtn => self.active(style),
+            Button::MenuBtn => self.active(style),
+            Button::StatusBarButton => self.active(style),
+            Button::Notification => self.active(style),
+        }
+    }
+
+    fn disabled(&self, style: &Self::Style) -> button::Appearance {
+        let active = self.active(style);
+
+        let def = button::Appearance {
+            shadow_offset: Vector::default(),
+            background: active.background.map(|background| match background {
+                Background::Color(color) => Background::Color(Color {
+                    a: color.a * 0.5,
+                    ..color
+                }),
+            }),
+            text_color: Color {
+                a: active.text_color.a * 0.5,
+                ..active.text_color
+            },
+            ..active
+        };
+
+        match style {
+            Button::Primary => def,
+            Button::Secondary => def,
+            Button::Danger => def,
+            Button::Invisible => def,
+            Button::Bordered => def,
+            Button::ContactCard => def,
+            Button::ActiveContactCard => def,
+            Button::ActiveMenuBtn => def,
+            Button::MenuBtn => def,
+            Button::StatusBarButton => def,
+            Button::Notification => self.active(style),
         }
     }
 }

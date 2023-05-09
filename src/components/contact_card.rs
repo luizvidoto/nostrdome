@@ -1,5 +1,5 @@
 use chrono::{Datelike, Utc};
-use iced::widget::{button, column, container, row, text};
+use iced::widget::{button, column, container, image, row, text};
 use iced::{alignment, Length};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -16,19 +16,31 @@ pub enum Message {
     ShowFullCard,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum CardMode {
+    Small,
+    Full,
+}
+
 #[derive(Debug, Clone)]
 pub struct ContactCard {
     active_contact: Option<DbContact>,
-    only_profile: bool,
+    mode: CardMode,
     pub contact: DbContact,
+    profile_img_handle: Option<image::Handle>,
 }
 
 impl ContactCard {
     pub fn from_db_contact(db_contact: &DbContact) -> Self {
+        let mut profile_img_handle = None;
+        if let Some(profile_img_str) = db_contact.local_profile_image_str() {
+            profile_img_handle = Some(image::Handle::from_path(profile_img_str));
+        }
         Self {
             active_contact: None,
-            only_profile: false,
+            mode: CardMode::Full,
             contact: db_contact.clone(),
+            profile_img_handle,
         }
     }
     pub fn view(&self) -> Element<Message> {
@@ -38,90 +50,80 @@ impl ContactCard {
             is_active = contact == &self.contact;
         }
 
-        let unseen_messages: Element<_> = {
-            match self.contact.unseen_messages() {
-                0 => text("").into(),
-                count => container(text(count))
-                    .width(NOTIFICATION_COUNT_WIDTH)
-                    .align_x(alignment::Horizontal::Right)
-                    .into(),
-            }
+        let pic_element: Element<_> = match &self.profile_img_handle {
+            Some(handle) => image::Image::new(handle.clone()).into(),
+            None => self.name_element(true),
         };
+        let pic_container = container(pic_element).width(PIC_WIDTH);
 
-        // let pic: Element<_> = match self.contact.get_profile_image() {
-        //     Some(_image) => text("pic").into(),
-        //     None => self.name_element(true),
-        // };
-        let pic = self.name_element(true);
-        let pic_container = container(pic).width(PIC_WIDTH);
-
-        let btn_content: Element<_> = if self.only_profile {
-            column![pic_container, unseen_messages].into()
-        } else {
-            // --- TOP ROW ---
-
-            let last_date_cp: Element<_> = match self.contact.last_message_date() {
-                Some(date) => {
-                    let now = Utc::now().naive_utc();
-                    let date_format = if date.day() == now.day() {
-                        "%H:%M"
-                    } else {
-                        "%Y-%m-%d"
-                    };
-
-                    container(text(&date.format(date_format)).size(18.0))
-                        .align_x(alignment::Horizontal::Right)
-                        .width(Length::Fill)
-                        .into()
-                }
-                None => text("").into(),
-            };
-            let card_top_row = container(row![self.name_element(false), last_date_cp,].spacing(5))
-                .width(Length::Fill);
-
-            let card_bottom_row = iced_lazy::responsive(|size| {
-                let unseen_messages: Element<_> = {
-                    match self.contact.unseen_messages() {
-                        0 => text("").into(),
-                        count => container(text(count))
-                            .width(NOTIFICATION_COUNT_WIDTH)
-                            .align_x(alignment::Horizontal::Right)
-                            .into(),
-                    }
-                };
-                // --- BOTTOM ROW ---
-                let last_message_cp: Element<_> = match self.contact.last_message_content() {
-                    Some(content) => {
-                        let left_pixels = size.width - NOTIFICATION_COUNT_WIDTH - 5.0; //spacing;
-                        let pixel_p_char = 8.0; // 8px = 1 char
-                        let taker = (left_pixels / pixel_p_char).floor() as usize;
-                        let content = if taker > content.len() {
-                            content
+        let btn_content: Element<_> = match self.mode {
+            CardMode::Small => {
+                let content: Element<_> = column![pic_container, self.make_notifications()].into();
+                content.into()
+            }
+            CardMode::Full => {
+                // --- TOP ROW ---
+                let last_date_cp: Element<_> = match self.contact.last_message_date() {
+                    Some(date) => {
+                        let now = Utc::now().naive_utc();
+                        let date_format = if date.day() == now.day() {
+                            "%H:%M"
                         } else {
-                            let truncated = content.graphemes(true).take(taker).collect::<String>();
-                            format!("{}...", &truncated)
+                            "%Y-%m-%d"
                         };
-                        container(text(&content).size(18.0))
+
+                        container(text(&date.format(date_format)).size(18.0))
+                            .align_x(alignment::Horizontal::Right)
                             .width(Length::Fill)
                             .into()
                     }
                     None => text("").into(),
                 };
-                container(
-                    row![last_message_cp, unseen_messages,]
-                        .align_items(alignment::Alignment::Center)
-                        .spacing(5),
+                let card_top_row = container(
+                    row![
+                        text(self.contact.select_display_name()).size(24),
+                        last_date_cp,
+                    ]
+                    .spacing(5),
                 )
-                .width(Length::Fill)
-                .into()
-            });
+                .width(Length::Fill);
 
-            let expanded_card = column![card_top_row, card_bottom_row].width(Length::Fill);
+                let card_bottom_row = iced_lazy::responsive(|size| {
+                    // --- BOTTOM ROW ---
+                    let last_message_cp: Element<_> = match self.contact.last_message_content() {
+                        Some(content) => {
+                            let left_pixels = size.width - NOTIFICATION_COUNT_WIDTH - 5.0; //spacing;
+                            let pixel_p_char = 8.0; // 8px = 1 char
+                            let taker = (left_pixels / pixel_p_char).floor() as usize;
+                            let content = if taker > content.len() {
+                                content
+                            } else {
+                                let truncated =
+                                    content.graphemes(true).take(taker).collect::<String>();
+                                format!("{}...", &truncated)
+                            };
+                            container(text(&content).size(18.0))
+                                .width(Length::Fill)
+                                .into()
+                        }
+                        None => text("").into(),
+                    };
+                    container(
+                        row![last_message_cp, self.make_notifications()]
+                            .align_items(alignment::Alignment::Center)
+                            .spacing(5),
+                    )
+                    .width(Length::Fill)
+                    .into()
+                });
 
-            row![pic_container, expanded_card,]
-                .width(Length::Fill)
-                .spacing(2)
-                .into()
+                let expanded_card = column![card_top_row, card_bottom_row].width(Length::Fill);
+
+                row![pic_container, expanded_card,]
+                    .width(Length::Fill)
+                    .spacing(2)
+                    .into()
+            }
         };
 
         button(btn_content)
@@ -156,20 +158,38 @@ impl ContactCard {
             None => text(format!("{}", extracted_name)).into(),
         }
     }
+
     pub fn update(&mut self, message: Message) {
         match message {
             Message::ContactUpdated(db_contact) => {
+                let mut profile_img_handle = None;
+                if let Some(profile_img_str) = db_contact.local_profile_image_str() {
+                    profile_img_handle = Some(image::Handle::from_path(profile_img_str));
+                }
+                self.profile_img_handle = profile_img_handle;
                 self.contact = db_contact;
             }
             Message::UpdateActiveContact(contact) => {
                 self.active_contact = Some(contact.clone());
             }
             Message::ShowOnlyProfileImage => {
-                self.only_profile = true;
+                self.mode = CardMode::Small;
             }
-            Message::ShowFullCard => {
-                self.only_profile = false;
-            }
+            Message::ShowFullCard => self.mode = CardMode::Full,
+        }
+    }
+
+    fn make_notifications<'a>(&self) -> Element<'a, Message> {
+        match self.contact.unseen_messages() {
+            0 => text("").into(),
+            count => container(
+                button(text(count).size(16))
+                    .padding([2, 5])
+                    .style(style::Button::Notification),
+            )
+            .width(NOTIFICATION_COUNT_WIDTH)
+            .align_x(alignment::Horizontal::Right)
+            .into(),
         }
     }
 }

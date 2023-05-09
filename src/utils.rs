@@ -113,7 +113,7 @@ pub fn unchecked_url_or_err(url: &str, index: &str) -> Result<UncheckedUrl, sqlx
     UncheckedUrl::from_str(url).map_err(|e| handle_decode_error(e, index))
 }
 pub fn profile_meta_or_err(json: &str, index: &str) -> Result<nostr_sdk::Metadata, sqlx::Error> {
-    tracing::info!("profile meta json: {}", json);
+    tracing::debug!("profile meta json: {}", json);
     nostr_sdk::Metadata::from_json(json).map_err(|e| handle_decode_error(e, index))
 }
 

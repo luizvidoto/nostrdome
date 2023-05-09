@@ -12,12 +12,12 @@ pub(crate) mod utils;
 pub(crate) mod views;
 pub(crate) mod widget;
 
-use components::{inform_card, text::title};
+use components::inform_card;
 use dotenv::dotenv;
 use iced::{
     executor,
-    widget::{button, column, container, text},
-    window, Application, Command, Length, Settings,
+    widget::{button, column, text},
+    window, Application, Command, Settings,
 };
 use net::{backend_connect, events::Event, BackEndConnection};
 use nostr_sdk::Keys;

@@ -1,4 +1,4 @@
-use crate::{db::user_config::setup_user_config, error::Error};
+use crate::{consts::APP_PROJECT_DIRS, db::UserConfig, error::Error};
 
 use directories::ProjectDirs;
 use sqlx::SqlitePool;
@@ -12,39 +12,36 @@ pub struct Database {
 impl Database {
     pub async fn new(pubkey: &str) -> Result<Self, Error> {
         tracing::info!("NEW DATABASE_pubkey {:?}", pubkey);
+        let dirs = ProjectDirs::from(APP_PROJECT_DIRS.0, APP_PROJECT_DIRS.1, APP_PROJECT_DIRS.2)
+            .ok_or(Error::NotFoundProjectDirectory)?;
+        tracing::debug!("Creating project directory");
+        let project_dir = dirs.config_dir();
+        std::fs::create_dir_all(project_dir)?;
 
-        if let Some(dirs) = ProjectDirs::from("com", "NostrTalk", "NostrTalk") {
-            tracing::debug!("Creating project directory");
-            let project_dir = dirs.config_dir();
-            std::fs::create_dir_all(project_dir)?;
-
-            tracing::debug!("Creating database");
-            let db_url = if IN_MEMORY {
-                "sqlite::memory:".to_owned()
-            } else {
-                let mut path_ext = String::new();
-                for dir in project_dir.iter() {
-                    if let Some(p) = dir.to_str() {
-                        if p.contains("\\") || p.contains("/") {
-                            continue;
-                        }
-                        path_ext.push_str(&format!("/{}", p));
-                    }
-                }
-                format!("sqlite://{}/{}.db3?mode=rwc", &path_ext, pubkey)
-            };
-
-            tracing::info!("Connecting database");
-            let pool = SqlitePool::connect(&db_url).await?;
-
-            let s = Self { pool };
-
-            upgrade_db(&s.pool).await?;
-
-            Ok(s)
+        tracing::debug!("Creating database");
+        let db_url = if IN_MEMORY {
+            "sqlite::memory:".to_owned()
         } else {
-            Err(Error::DatabaseSetup("Not found project directory".into()))
-        }
+            let mut path_ext = String::new();
+            for dir in project_dir.iter() {
+                if let Some(p) = dir.to_str() {
+                    if p.contains("\\") || p.contains("/") {
+                        continue;
+                    }
+                    path_ext.push_str(&format!("/{}", p));
+                }
+            }
+            format!("sqlite://{}/{}.db3?mode=rwc", &path_ext, pubkey)
+        };
+
+        tracing::info!("Connecting database");
+        let pool = SqlitePool::connect(&db_url).await?;
+
+        let s = Self { pool };
+
+        upgrade_db(&s.pool).await?;
+
+        Ok(s)
     }
 }
 
@@ -108,7 +105,7 @@ async fn initial_setup(pool: &SqlitePool) -> Result<usize, sqlx::Error> {
         sqlx::query(sql).execute(pool).await?;
     }
 
-    setup_user_config(pool).await?;
+    UserConfig::setup_user_config(pool).await?;
 
     tracing::info!("Database schema initialized to v1");
 

@@ -30,6 +30,7 @@ pub struct AppPalette {
     pub welcome_bg_1: Color,
     pub welcome_bg_2: Color,
     pub welcome_bg_3: Color,
+    pub notification: Color,
 }
 impl AppPalette {
     pub const LIGHT: Self = Self {
@@ -61,6 +62,8 @@ impl AppPalette {
         welcome_bg_1: Color::from_rgb(42.0 / 255.0, 37.0 / 255.0, 120.0 / 255.0),
         welcome_bg_2: Color::from_rgb(26.0 / 255.0, 36.0 / 255.0, 56.0 / 255.0),
         welcome_bg_3: Color::from_rgb(16.0 / 255.0, 21.0 / 255.0, 60.0 / 255.0),
+        // notification: Color::from_rgb(9.0 / 255.0, 211.0 / 255.0, 245.0 / 255.0),
+        notification: Color::from_rgb(64.0 / 255.0, 130.0 / 255.0, 188.0 / 255.0),
     };
     pub const DARK: Self = Self {
         background: Color::from_rgb(23.0 / 255.0, 33.0 / 255.0, 43.0 / 255.0),
@@ -91,5 +94,6 @@ impl AppPalette {
         welcome_bg_1: Color::from_rgb(42.0 / 255.0, 37.0 / 255.0, 120.0 / 255.0),
         welcome_bg_2: Color::from_rgb(26.0 / 255.0, 36.0 / 255.0, 56.0 / 255.0),
         welcome_bg_3: Color::from_rgb(16.0 / 255.0, 21.0 / 255.0, 60.0 / 255.0),
+        notification: Color::from_rgb(64.0 / 255.0, 130.0 / 255.0, 188.0 / 255.0),
     };
 }

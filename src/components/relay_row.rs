@@ -1,4 +1,4 @@
-use crate::db::{DbRelay, DbRelayResponse};
+use crate::db::DbRelay;
 use crate::icon::{delete_icon, download_icon, solid_circle_icon};
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
@@ -334,21 +334,31 @@ impl RelayRow {
 
     pub fn view<'a>(&'a self) -> Element<'a, MessageWrapper> {
         let (status_icon, status_text) = self.relay_status_icon();
-        let delete_btn = button(delete_icon().size(16))
-            .on_press(MessageWrapper::new(
-                self.id,
-                Message::DeleteRelay(self.db_relay.clone()),
-            ))
-            .style(style::Button::Danger)
-            .width(Length::Fixed(ACTION_ICON_WIDTH));
+        let delete_btn = tooltip(
+            button(delete_icon().size(16))
+                .on_press(MessageWrapper::new(
+                    self.id,
+                    Message::DeleteRelay(self.db_relay.clone()),
+                ))
+                .style(style::Button::Danger)
+                .width(Length::Fixed(ACTION_ICON_WIDTH)),
+            "Delete Relay",
+            tooltip::Position::Left,
+        )
+        .style(style::Container::TooltipBg);
+
         let mut download_btn =
             button(download_icon().size(16)).width(Length::Fixed(ACTION_ICON_WIDTH));
+
         if self.is_connected() && self.db_relay.read {
             download_btn = download_btn.on_press(MessageWrapper::new(
                 self.id,
                 Message::RequestEventsOf(self.db_relay.clone()),
             ));
         }
+
+        let download_btn = tooltip(download_btn, "Download Events", tooltip::Position::Left)
+            .style(style::Container::TooltipBg);
 
         container(
             row![
@@ -472,12 +482,17 @@ impl RelayRow {
                 .style(style::Container::TooltipBg),
                 text(&self.db_relay.url),
                 Space::with_width(Length::Fill),
-                button(delete_icon())
-                    .on_press(MessageWrapper::new(
-                        self.id,
-                        Message::DeleteRelay(self.db_relay.clone())
-                    ))
-                    .style(style::Button::Danger)
+                tooltip(
+                    button(delete_icon())
+                        .on_press(MessageWrapper::new(
+                            self.id,
+                            Message::DeleteRelay(self.db_relay.clone())
+                        ))
+                        .style(style::Button::Danger),
+                    "Delete",
+                    tooltip::Position::Top
+                )
+                .style(style::Container::TooltipBg)
             ]
             .align_items(alignment::Alignment::Center),
         )

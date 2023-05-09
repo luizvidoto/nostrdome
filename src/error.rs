@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::db::DbContactError;
 
-pub type Result<T> = std::result::Result<T, Error>;
+// pub type Result<T> = std::result::Result<T, Error>;
 
 /// Errors that can occur in the nostrtalk crate
 #[derive(Error, Debug)]
@@ -12,12 +12,22 @@ pub enum Error {
     GitHubTokenNotFound,
     #[error("Request error: {0}")]
     ReqwestError(#[from] reqwest::Error),
+    #[error("Request error: {0}")]
+    ReqwestStreamError(reqwest::Error),
+
     #[error("Request failed. Status code: {0}")]
     RequestFailed(reqwest::StatusCode),
     #[error("Tag name not found")]
     RequestTagNameNotFound,
     #[error("Not found any releases")]
     RequestReleaseNotFound,
+    #[error("Failed to download image. Status code: {0}")]
+    RequestImageError(reqwest::StatusCode),
+    #[error("Missing content-type header")]
+    RequestMissingContentType,
+
+    #[error("Invalid content-type header: {0}")]
+    ImageInvalidContentType(String),
 
     #[error("Error parsing JSON content into nostr_sdk::Metadata: {0}")]
     JsonToMetadata(String),
@@ -46,6 +56,8 @@ pub enum Error {
     InvalidTimestamp(i64),
     #[error("Database setup error: {0}")]
     DatabaseSetup(String),
+    #[error("Not found project directory")]
+    NotFoundProjectDirectory,
 
     // FromDbContactError
     #[error("{0}")]
@@ -76,6 +88,8 @@ pub enum Error {
     SqlxError(#[from] sqlx::Error),
     #[error("Not a valid nostr relay url: {0}")]
     Url(String),
+    #[error("{0}")]
+    ToStrError(#[from] reqwest::header::ToStrError),
 
     // I/O Error
     #[error("I/O Error: {0}")]

@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, text, text_input, Space};
+use iced::widget::{button, column, container, row, text, text_input, tooltip, Space};
 use iced::{alignment, Length};
 
 use crate::components::{common_scrollable, contact_row, ContactRow};
@@ -105,20 +105,40 @@ impl State {
             .on_input(Message::SearchContactInputChange)
             .style(style::TextInput::ChatSearch)
             .width(SEARCH_CONTACT_WIDTH);
-        let add_contact_btn = button(
-            row![text("Add").size(18), plus_icon().size(14)]
-                .align_items(alignment::Alignment::Center)
-                .spacing(2),
+        let add_contact_btn = tooltip(
+            button(
+                row![text("Add").size(18), plus_icon().size(14)]
+                    .align_items(alignment::Alignment::Center)
+                    .spacing(2),
+            )
+            .padding(5)
+            .on_press(Message::OpenAddContactModal),
+            "Add Contact",
+            tooltip::Position::Top,
         )
-        .padding(5)
-        .on_press(Message::OpenAddContactModal);
-        let refresh_btn = button(refresh_icon().size(18)).on_press(Message::RefreshContacts);
-        let import_btn = button(import_icon().size(18))
-            .padding(5)
-            .on_press(Message::OpenImportContactModal);
-        let send_btn = button(to_cloud_icon().size(18))
-            .padding(5)
-            .on_press(Message::OpenSendContactModal);
+        .style(style::Container::TooltipBg);
+        let refresh_btn = tooltip(
+            button(refresh_icon().size(18)).on_press(Message::RefreshContacts),
+            "Refresh Contacts",
+            tooltip::Position::Top,
+        )
+        .style(style::Container::TooltipBg);
+        let import_btn = tooltip(
+            button(import_icon().size(18))
+                .padding(5)
+                .on_press(Message::OpenImportContactModal),
+            "Import from file",
+            tooltip::Position::Top,
+        )
+        .style(style::Container::TooltipBg);
+        let send_btn = tooltip(
+            button(to_cloud_icon().size(18))
+                .padding(5)
+                .on_press(Message::OpenSendContactModal),
+            "Send to relays",
+            tooltip::Position::Top,
+        )
+        .style(style::Container::TooltipBg);
 
         let utils_row = row![
             search_contact,

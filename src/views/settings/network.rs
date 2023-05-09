@@ -1,5 +1,5 @@
 use iced::alignment::{self, Horizontal};
-use iced::widget::{button, column, container, row, text};
+use iced::widget::{button, column, container, row, text, tooltip};
 use iced::{Command, Length, Subscription};
 use iced_aw::{Card, Modal};
 use nostr_sdk::Url;
@@ -11,6 +11,7 @@ use crate::db::DbRelay;
 use crate::icon::plus_icon;
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
+use crate::style;
 use crate::widget::Element;
 
 #[derive(Debug, Clone)]
@@ -118,13 +119,18 @@ impl State {
             col.push(relay.view().map(Message::RelayMessage))
         });
         let empty = container(text("")).width(Length::Fill);
-        let add_btn = button(
-            row![text("Add").size(18), plus_icon().size(14)]
-                .align_items(alignment::Alignment::Center)
-                .spacing(2),
+        let add_btn = tooltip(
+            button(
+                row![text("Add").size(18), plus_icon().size(14)]
+                    .align_items(alignment::Alignment::Center)
+                    .spacing(2),
+            )
+            .padding(5)
+            .on_press(Message::OpenAddRelayModal),
+            "Add Relay",
+            tooltip::Position::Top,
         )
-        .padding(5)
-        .on_press(Message::OpenAddRelayModal);
+        .style(style::Container::TooltipBg);
         let add_row = row![empty, add_btn];
         let content: Element<_> = container(column![title, add_row, relays])
             .width(Length::Fill)

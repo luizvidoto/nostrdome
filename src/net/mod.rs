@@ -1,25 +1,22 @@
-use crate::db::{
-    fetch_user_meta, query_has_logged_in, store_first_login, update_user_meta, Database, DbContact,
-    DbEvent,
-};
+use crate::db::{Database, DbContact, DbEvent, UserConfig};
 use crate::error::Error;
+use crate::net::client::fetch_latest_version;
 use crate::net::events::backend::{self, backend_processing};
 use crate::net::events::frontend::Event;
 use crate::net::events::nostr::NostrSdkWrapper;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use futures::channel::mpsc;
 use futures::{Future, StreamExt};
 use iced::futures::stream::Fuse;
 use iced::subscription;
 use iced::Subscription;
 use nostr_sdk::{Keys, RelayPoolNotification};
-use serde::Deserialize;
 use sqlx::SqlitePool;
-use std::env;
 use std::pin::Pin;
 use std::time::Duration;
 
 mod back_channel;
+mod client;
 pub(crate) mod events;
 mod messages;
 
@@ -104,7 +101,13 @@ impl BackendState {
                 Message::CreateAccount(profile) => {
                     tracing::info!("Creating account");
                     let profile_meta = profile.into();
-                    match update_user_meta(pool, &profile_meta, Utc::now().naive_utc()).await {
+                    match UserConfig::update_user_metadata_if_newer(
+                        pool,
+                        &profile_meta,
+                        Utc::now().naive_utc(),
+                    )
+                    .await
+                    {
                         Ok(_) => {
                             to_nostr_channel(client_sender, NostrInput::SendProfile(profile_meta));
                             Event::ProfileCreated
@@ -112,7 +115,7 @@ impl BackendState {
                         Err(e) => Event::Error(e.to_string()),
                     }
                 }
-                Message::StoreFirstLogin => match store_first_login(pool).await {
+                Message::StoreFirstLogin => match UserConfig::store_first_login(pool).await {
                     Ok(_) => Event::FirstLoginStored,
                     Err(e) => Event::Error(e.to_string()),
                 },
@@ -127,9 +130,8 @@ impl BackendState {
                 // -------- DATABASE MESSAGES -------
                 Message::GetUserProfileMeta => {
                     tracing::info!("Fetching user profile meta");
-                    match fetch_user_meta(pool).await {
-                        Ok(Some(meta)) => Event::GotUserProfileMeta(meta),
-                        Ok(None) => Event::None,
+                    match UserConfig::fetch(pool).await {
+                        Ok(user) => Event::GotUserProfileMeta(user.profile_meta),
                         Err(e) => Event::Error(e.to_string()),
                     }
                 }
@@ -188,9 +190,9 @@ impl BackendState {
                     }
                     Err(e) => Event::Error(e.to_string()),
                 },
-                Message::GetContactProfile(db_contact) => {
-                    to_nostr_channel(client_sender, NostrInput::GetContactProfile(db_contact))
-                }
+                // Message::GetContactProfile(db_contact) => {
+                //     to_nostr_channel(client_sender, NostrInput::GetContactProfile(db_contact))
+                // }
                 Message::SendDMToRelays(chat_msg) => {
                     match DbEvent::fetch_one(pool, &chat_msg.event_hash).await {
                         Ok(Some(db_event)) => {
@@ -426,19 +428,6 @@ pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
 
 // ---------------------------------
 
-async fn process_async_fn<T, E>(
-    operation: impl Future<Output = Result<T, E>>,
-    success_event_fn: impl Fn(T) -> Event,
-) -> Event
-where
-    E: std::error::Error,
-{
-    match operation.await {
-        Ok(result) => success_event_fn(result),
-        Err(e) => Event::Error(e.to_string()),
-    }
-}
-
 async fn process_async_with_event<E>(operation: impl Future<Output = Result<Event, E>>) -> Event
 where
     E: std::error::Error,
@@ -486,46 +475,11 @@ async fn handle_first_login(
     pool: &SqlitePool,
     client_sender: &mut mpsc::Sender<NostrInput>,
 ) -> Result<Event, Error> {
-    if query_has_logged_in(pool).await? {
+    if UserConfig::query_has_logged_in(pool).await? {
         let input = prepare_client(pool).await?;
         to_nostr_channel(client_sender, input);
         Ok(Event::None)
     } else {
         Ok(Event::FirstLogin)
     }
-}
-
-#[derive(Deserialize, Debug)]
-pub struct GitHubRelease {
-    pub tag_name: String,
-    pub name: String,
-    pub body: String,
-    pub draft: bool,
-    pub prerelease: bool,
-    pub created_at: DateTime<Utc>,
-    pub published_at: DateTime<Utc>,
-}
-
-async fn fetch_latest_version(client: reqwest::Client) -> Result<String, Error> {
-    let token = env::var("GITHUB_TOKEN").map_err(|_| Error::GitHubTokenNotFound)?;
-    let url = "https://api.github.com/repos/luizvidoto/nostrtalk/releases";
-    let response = client
-        .get(url)
-        .header("Accept", "application/vnd.github+json")
-        .header("Authorization", format!("Bearer {}", token))
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-        .await?;
-
-    response.error_for_status_ref()?;
-
-    let releases: Vec<GitHubRelease> = response.json().await?;
-
-    // Ordena as releases por data de criação
-    let mut sorted_releases: Vec<&GitHubRelease> = releases.iter().collect();
-    sorted_releases.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    let first_release = sorted_releases
-        .get(0)
-        .ok_or(Error::RequestReleaseNotFound)?;
-    Ok(first_release.tag_name.clone())
 }

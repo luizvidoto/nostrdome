@@ -1,5 +1,3 @@
-use chrono::NaiveDateTime;
-
 use crate::{
     db::{DbContact, DbEvent, DbMessage, DbRelay, DbRelayResponse},
     net::BackEndConnection,
@@ -31,8 +29,10 @@ pub enum Event {
         db_event: DbEvent,
         db_message: Option<DbMessage>,
     },
-    GotUserProfileMeta(nostr_sdk::Metadata),
+    GotUserProfileMeta(Option<nostr_sdk::Metadata>),
     FileContactsImported(Vec<DbContact>),
+    UserProfilePictureUpdated,
+    UserBannerPictureUpdated,
     // --- Nostr ---
     EndOfStoredEvents((nostr_sdk::Url, nostr_sdk::SubscriptionId)),
     RequestedEventsOf(DbRelay),
@@ -61,6 +61,8 @@ pub enum Event {
 impl std::fmt::Display for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Event::UserProfilePictureUpdated => write!(f, "User Profile Picture Updated"),
+            Event::UserBannerPictureUpdated => write!(f, "User Banner Picture Updated"),
             Event::EndOfStoredEvents((relay_url, subscription_id)) => {
                 write!(
                     f,

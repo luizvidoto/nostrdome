@@ -5,14 +5,14 @@ use iced::{alignment, Command, Length};
 
 use crate::components::{common_scrollable, contact_card, status_bar, StatusBar};
 use crate::db::DbContact;
-use crate::icon::{menu_bars_icon, send_icon};
+use crate::icon::{file_icon_regular, menu_bars_icon, send_icon};
 use crate::net::events::frontend::SpecificEvent;
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::types::{chat_message, ChatMessage};
 use crate::utils::contact_matches_search;
-use crate::widget::{Column, Element};
+use crate::widget::{Button, Column, Container, Element};
 use once_cell::sync::Lazy;
 
 // static CONTACTS_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
@@ -31,6 +31,7 @@ pub enum Message {
     ChatMessage(chat_message::Message),
     SearchContactInputChange(String),
     Scrolled(scrollable::RelativeOffset),
+    OpenContactProfile,
 }
 
 pub struct State {
@@ -70,9 +71,14 @@ impl State {
     pub fn view(&self) -> Element<Message> {
         // --- FIRST SPLIT ---
         let contact_list: Element<_> = if self.contacts.is_empty() {
-            button("Add Contact")
-                .on_press(Message::AddContactPress)
-                .into()
+            container(
+                button("Add Contact")
+                    .padding(10)
+                    .on_press(Message::AddContactPress),
+            )
+            .center_x()
+            .width(Length::Fill)
+            .into()
         } else {
             common_scrollable(
                 self.contacts
@@ -105,7 +111,7 @@ impl State {
         .height(NAVBAR_HEIGHT);
         let first = container(column![search_container, contact_list])
             .height(Length::Fill)
-            .width(Length::Fixed(300.0))
+            .width(Length::Fill)
             .style(style::Container::ContactList);
         // ---
         // --- SECOND SPLIT ---
@@ -121,23 +127,18 @@ impl State {
             .height(CHAT_INPUT_HEIGHT)
             .padding([10, 5]);
 
-        let goto_channels_btn = button("Channels")
-            .padding(5)
-            .on_press(Message::GoToChannelsPress);
+        let second: Element<_> = if let Some(active_contact) = &self.active_contact {
+            // Todo: add/remove user button
+            let add_or_remove_user = text("");
 
-        let chat_navbar = container(
-            row![Space::with_width(Length::Fill), goto_channels_btn]
-                .spacing(5)
-                .width(Length::Fill),
-        )
-        .padding(10)
-        .height(NAVBAR_HEIGHT)
-        .style(style::Container::Default);
-
-        let second: Element<_> = if self.active_contact.is_some() {
-            container(column![chat_navbar, chat_messages, msg_input_row])
-                .width(Length::Fill)
-                .into()
+            container(column![
+                chat_navbar(active_contact),
+                add_or_remove_user,
+                chat_messages,
+                msg_input_row
+            ])
+            .width(Length::Fill)
+            .into()
         } else {
             container(text("Select a chat to start messaging"))
                 .center_x()
@@ -272,6 +273,12 @@ impl State {
 
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
         match message {
+            Message::OpenContactProfile => {
+                if let Some(contact) = &self.active_contact {
+                    // self.profile = Some(contact.clone());
+                    tracing::info!("Open Contact Profile: {}", contact.pubkey());
+                }
+            }
             Message::StatusBarMessage(status_msg) => {
                 let _command = self.status_bar.update(status_msg, conn);
             }
@@ -389,6 +396,42 @@ fn create_chat_content<'a>(messages: &[ChatMessage]) -> Element<'a, Message> {
         .height(Length::Fill)
         .style(style::Container::ChatContainer)
         .into()
+}
+
+fn chat_navbar<'a>(active_contact: &'a DbContact) -> Container<'a, Message> {
+    container(
+        row![header_details(active_contact), header_action_buttons()]
+            .spacing(5)
+            .width(Length::Fill),
+    )
+    .height(NAVBAR_HEIGHT)
+    .style(style::Container::Default)
+}
+
+fn header_details<'a>(db_contact: &'a DbContact) -> Button<'a, Message> {
+    let last_message_date = db_contact
+        .last_message_date()
+        .map(|date| format!("last seen {}", date.format("%Y-%m-%d")))
+        .unwrap_or("".into());
+
+    button(column![
+        text(db_contact.select_display_name()).size(20),
+        text(last_message_date).size(16)
+    ])
+    .padding([5, 0, 0, 5])
+    .style(style::Button::Invisible)
+    .on_press(Message::OpenContactProfile)
+    .height(Length::Fill)
+    .width(Length::Fill)
+}
+
+fn header_action_buttons<'a>() -> Element<'a, Message> {
+    row![button(file_icon_regular())
+        .style(style::Button::Invisible)
+        .on_press(Message::OpenContactProfile)]
+    .padding(10)
+    .align_items(alignment::Alignment::End)
+    .into()
 }
 
 const PIC_WIDTH: u16 = 50;

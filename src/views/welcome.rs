@@ -128,7 +128,7 @@ pub enum StepView {
 impl StepView {
     fn relays_view(conn: &mut BackEndConnection) -> Self {
         conn.send(net::Message::FetchRelays);
-        let mut relays_suggestion: Vec<_> = vec![
+        let relays_suggestion: Vec<_> = vec![
             "wss://relay.plebstr.com",
             "wss://nostr.wine",
             "wss://relay.nostr.info",
@@ -139,14 +139,14 @@ impl StepView {
         .filter_map(|s| nostr_sdk::Url::parse(s).ok())
         .collect();
 
-        let num_random_ips = 5; // Número de IPs aleatórios a serem gerados
-        for _ in 0..num_random_ips {
-            let random_ip = generate_random_ipv4();
-            let random_url = format!("ws://{}:8080", random_ip);
-            if let Ok(url) = nostr_sdk::Url::parse(&random_url) {
-                relays_suggestion.push(url);
-            }
-        }
+        // let num_random_ips = 5; // Número de IPs aleatórios a serem gerados
+        // for _ in 0..num_random_ips {
+        //     let random_ip = generate_random_ipv4();
+        //     let random_url = format!("ws://{}:8080", random_ip);
+        //     if let Ok(url) = nostr_sdk::Url::parse(&random_url) {
+        //         relays_suggestion.push(url);
+        //     }
+        // }
 
         Self::Relays {
             relays_suggestion,
@@ -701,7 +701,7 @@ impl EventData {
     }
 }
 
-fn generate_random_ipv4() -> Ipv4Addr {
+fn _generate_random_ipv4() -> Ipv4Addr {
     let mut rng = thread_rng();
     let ip = Ipv4Addr::new(
         rng.gen_range(1..=255),

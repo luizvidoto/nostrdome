@@ -6,6 +6,7 @@ use iced::Color;
 pub enum Text {
     #[default]
     Default,
+    Inverted,
     Primary,
     Danger,
     ChatMessageStatus,
@@ -31,6 +32,9 @@ impl text::StyleSheet for Theme {
                     // color: color!(0xeb, 0xdb, 0xb2).into(),
                 }
             }
+            Text::Inverted => text::Appearance {
+                color: self.pallete().background.into(),
+            },
             Text::Primary => text::Appearance {
                 color: self.pallete().primary.into(),
             },

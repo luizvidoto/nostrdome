@@ -45,6 +45,12 @@ pub enum NostrOutput {
     ToBackend(BackEndInput),
 }
 
+impl From<Box<dyn std::error::Error + Send>> for NostrOutput {
+    fn from(error: Box<dyn std::error::Error + Send>) -> Self {
+        NostrOutput::Error(error)
+    }
+}
+
 impl From<Event> for NostrOutput {
     fn from(event: Event) -> Self {
         NostrOutput::Ok(event)
@@ -406,21 +412,11 @@ async fn request_events_of(
 ) -> Result<Event, Error> {
     if let Some(relay) = client.relays().await.get(&db_relay.url) {
         let from_me = Filter::new()
-            .kinds(vec![
-                Kind::Metadata,
-                Kind::EncryptedDirectMessage,
-                Kind::RecommendRelay,
-                Kind::ContactList,
-            ])
+            .kinds(nostr_kinds())
             .author(own_public_key.to_string())
             .until(Timestamp::now());
         let to_me = Filter::new()
-            .kinds(vec![
-                Kind::Metadata,
-                Kind::EncryptedDirectMessage,
-                Kind::RecommendRelay,
-                Kind::ContactList,
-            ])
+            .kinds(nostr_kinds())
             .pubkey(own_public_key.to_owned())
             .until(Timestamp::now());
         let timeout = Some(Duration::from_secs(10));
@@ -452,10 +448,12 @@ pub async fn request_events(
         // if has last_event, request events since last_event.timestamp
         // else request events since 0
         let sent_msgs_sub_past = Filter::new()
+            .kinds(nostr_kinds())
             .author(pk.to_string())
             .since(Timestamp::from(last_timestamp_secs))
             .until(Timestamp::now());
         let recv_msgs_sub_past = Filter::new()
+            .kinds(nostr_kinds())
             .pubkey(pk.to_owned())
             .since(Timestamp::from(last_timestamp_secs))
             .until(Timestamp::now());
@@ -494,4 +492,14 @@ pub async fn toggle_write_for_relay(
 pub async fn delete_relay(client: &Client, db_relay: DbRelay) -> Result<BackEndInput, Error> {
     client.remove_relay(db_relay.url.as_str()).await?;
     Ok(BackEndInput::DeleteRelayFromDb(db_relay))
+}
+
+pub fn nostr_kinds() -> Vec<Kind> {
+    [
+        Kind::Metadata,
+        Kind::EncryptedDirectMessage,
+        Kind::RecommendRelay,
+        Kind::ContactList,
+    ]
+    .to_vec()
 }

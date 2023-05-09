@@ -1,5 +1,3 @@
-use nostr_sdk::Keys;
-
 use crate::{
     db::{DbContact, DbRelay},
     types::ChatMessage,
@@ -30,7 +28,7 @@ pub enum Message {
 
     // -------- NOSTR CLIENT MESSAGES
     RefreshContactsMetadata,
-    GetContactProfile(DbContact),
+    // GetContactProfile(DbContact),
     RequestEventsOf(DbRelay),
     RequestEvents,
     FetchRelayServer(nostr_sdk::Url),
