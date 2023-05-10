@@ -2,10 +2,13 @@ use chrono::{NaiveDateTime, Utc};
 use nostr_sdk::{prelude::UncheckedUrl, secp256k1::XOnlyPublicKey, Tag};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
+use std::borrow::Borrow;
+use std::path::Path;
 use std::str::FromStr;
 use std::{path::PathBuf, result::Result as StdResult};
 use thiserror::Error;
 
+use crate::net::{get_png_image_path, ImageKind, ImageSize};
 use crate::{
     types::{ChatMessage, RelayUrl},
     utils::{millis_to_naive_or_err, profile_meta_or_err, unchecked_url_or_err},
@@ -203,7 +206,7 @@ impl DbContact {
     ) -> Self {
         if let Some(previous_update) = self.profile_meta_last_update {
             if previous_update > last_update {
-                tracing::warn!("Cant contact profile with older data");
+                tracing::warn!("Cant update profile metadata with older data");
                 return self;
             }
         }
@@ -233,7 +236,7 @@ impl DbContact {
         self
     }
 
-    pub fn select_display_name(&self) -> String {
+    pub fn select_name(&self) -> String {
         if let Some(petname) = &self.get_petname() {
             if !petname.trim().is_empty() {
                 return petname.to_owned();
@@ -268,6 +271,14 @@ impl DbContact {
     pub fn local_profile_image_str(&self) -> Option<String> {
         self.local_profile_image.as_ref().map(|path| {
             let path_str = path.to_str().unwrap_or("");
+            path_str.to_string()
+        })
+    }
+
+    pub fn local_profile_image_str_small(&self) -> Option<String> {
+        self.local_profile_image.as_ref().map(|path| {
+            let small_image_path = get_png_image_path(path, ImageKind::Profile, ImageSize::Small);
+            let path_str = small_image_path.to_str().unwrap_or("");
             path_str.to_string()
         })
     }
@@ -383,8 +394,10 @@ impl DbContact {
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         contact: &DbContact,
     ) -> Result<()> {
+        tracing::info!("Inserting Contact");
+        tracing::info!("{:?}", contact); //todo: replace with debug
         let sql = r#"
-            INSERT OR IGNORE INTO contact 
+            INSERT INTO contact 
                 (pubkey, relay_url, petname, status, 
                 unseen_messages, created_at, updated_at, last_message_content, 
                 last_message_date, profile_meta, profile_meta_last_update, 
@@ -422,62 +435,57 @@ impl DbContact {
         Ok(())
     }
 
-    pub async fn update_basic(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-        contact: &DbContact,
+    pub async fn insert(pool: &SqlitePool, contact: &DbContact) -> Result<()> {
+        let mut tx = pool.begin().await?;
+
+        Self::insert_single_contact(&mut tx, contact).await?;
+
+        tx.commit().await?;
+
+        Ok(())
+    }
+
+    pub async fn insert_batch<T: Borrow<DbContact>>(
+        pool: &SqlitePool,
+        contacts: &[T],
     ) -> Result<()> {
+        tracing::info!("Inserting Batch of contacts");
+
+        let mut tx = pool.begin().await?;
+
+        for contact in contacts {
+            let contact: &DbContact = contact.borrow();
+            if let Err(e) = Self::insert_single_contact(&mut tx, contact).await {
+                tracing::error!("Error inserting contact: {:?}", e);
+            }
+        }
+        tx.commit().await?;
+
+        Ok(())
+    }
+
+    pub async fn update_basic(pool: &SqlitePool, contact: &DbContact) -> Result<()> {
+        tracing::info!("Updating Basic Contact {}", contact.pubkey().to_string());
+        tracing::debug!("{:?}", contact); //todo: replace with debug
         let sql = r#"
             UPDATE contact 
-            SET relay_url=?, petname=?, updated_at=?
+            SET relay_url=?, petname=?
             WHERE pubkey=?
         "#;
 
         sqlx::query(sql)
             .bind(&contact.relay_url.as_ref().map(|url| url.to_string()))
             .bind(&contact.petname)
-            .bind(Utc::now().timestamp_millis())
             .bind(&contact.pubkey.to_string())
-            .execute(tx)
+            .execute(pool)
             .await?;
 
         Ok(())
     }
 
-    pub async fn insert(pool: &SqlitePool, contact: &DbContact) -> Result<()> {
-        tracing::info!("Inserting Contact");
-        tracing::debug!("{:?}", contact);
-
-        // Iniciar a transação
-        let mut tx = pool.begin().await?;
-
-        // Chamar a função auxiliar para inserir o contato
-        Self::insert_single_contact(&mut tx, contact).await?;
-        Self::update_basic(&mut tx, contact).await?;
-
-        // Fazer commit da transação
-        tx.commit().await?;
-
-        Ok(())
-    }
-
-    pub async fn insert_batch(pool: &SqlitePool, contacts: &[DbContact]) -> Result<()> {
-        tracing::info!("Inserting Batch of contacts");
-
-        // Iniciar a transação
-        let mut tx = pool.begin().await?;
-
-        for contact in contacts {
-            // Chamar a função auxiliar para inserir o contato
-            Self::insert_single_contact(&mut tx, contact).await?;
-        }
-
-        // Fazer commit da transação
-        tx.commit().await?;
-
-        Ok(())
-    }
-
     pub async fn update(pool: &SqlitePool, contact: &DbContact) -> Result<()> {
+        tracing::info!("Updating Contact {}", contact.pubkey().to_string());
+        tracing::debug!("{:?}", contact); //todo: replace with debug
         let sql = r#"
             UPDATE contact 
             SET relay_url=?, petname=?, 
@@ -526,6 +534,33 @@ impl DbContact {
 
         Ok(())
     }
+
+    pub(crate) async fn last_update_at(
+        pool: &sqlx::Pool<sqlx::Sqlite>,
+        pubkey: &XOnlyPublicKey,
+    ) -> Result<Option<NaiveDateTime>> {
+        let sql = "SELECT updated_at FROM contact WHERE pubkey=?";
+        let result = sqlx::query(sql)
+            .bind(&pubkey.to_string())
+            .fetch_one(pool)
+            .await
+            .ok();
+        let date = result.map(|row| row.get::<i64, &str>("updated_at"));
+        let date = date
+            .map(|d| millis_to_naive_or_err(d, "updated_at"))
+            .transpose()?;
+        Ok(date)
+    }
+
+    pub(crate) async fn have_contact(pool: &SqlitePool, pubkey: &XOnlyPublicKey) -> Result<bool> {
+        let sql = "SELECT pubkey FROM contact WHERE pubkey=?";
+        let result = sqlx::query(sql)
+            .bind(&pubkey.to_string())
+            .fetch_one(pool)
+            .await
+            .ok();
+        Ok(result.is_some())
+    }
 }
 
 impl sqlx::FromRow<'_, SqliteRow> for DbContact {
@@ -559,6 +594,8 @@ impl sqlx::FromRow<'_, SqliteRow> for DbContact {
         let local_banner_image: Option<String> = row.get("local_banner_image");
         let local_banner_image = local_banner_image.map(|path| PathBuf::from(path));
 
+        let petname: Option<String> = row.get("petname");
+
         Ok(DbContact {
             profile_meta,
             profile_meta_last_update,
@@ -570,7 +607,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbContact {
             })?,
             created_at,
             updated_at,
-            petname: row.try_get::<Option<String>, &str>("petname")?,
+            petname,
             relay_url,
             status: row.get::<u8, &str>("status").into(),
             unseen_messages: row.try_get::<i64, &str>("unseen_messages")? as u8,

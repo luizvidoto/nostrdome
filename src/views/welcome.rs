@@ -24,8 +24,6 @@ pub enum Message {
     ToPreviousStep,
     ToApp,
     AddRelay(nostr_sdk::Url),
-    ImportContactsRelays,
-    ImportContactsFile,
     AddOtherPress,
 
     // Add Relay Modal
@@ -156,12 +154,13 @@ impl StepView {
     }
     fn download_events_view(conn: &mut BackEndConnection) -> Self {
         conn.send(net::Message::FetchRelays);
+        conn.send(net::Message::SubscribeToEvents);
         Self::DownloadEvents {
             relays: HashMap::new(),
         }
     }
     fn loading_client(conn: &mut BackEndConnection) -> StepView {
-        conn.send(net::Message::PrepareClient);
+        // conn.send(net::Message::PrepareClient);
         Self::LoadingClient
     }
     fn get_step(&self) -> u8 {
@@ -387,61 +386,7 @@ impl StepView {
                     .style(style::Container::WelcomeBg3)
                     .into()
             }
-            // StepView::Contacts => {
-            //     let title_3 = "Contacts";
-            //     let text_3a = "Import from relays";
-            //     let text_3b = "Import from file";
-            //     let content = column![
-            //         title(title_3)
-            //             .height(Length::FillPortion(1))
-            //             .width(Length::Fill)
-            //             .center_x()
-            //             .center_y(),
-            //         container(
-            //             row![
-            //                 container(contacts_image)
-            //                     .max_width(WELCOME_IMAGE_MAX_WIDTH)
-            //                     .height(Length::Fill),
-            //                 container(
-            //                     column![
-            //                         button(
-            //                             container(text(text_3a).size(WELCOME_TEXT_SIZE))
-            //                                 .padding(30)
-            //                         )
-            //                         .style(style::Button::Bordered)
-            //                         .on_press(Message::ImportContactsRelays),
-            //                         button(
-            //                             container(text(text_3b).size(WELCOME_TEXT_SIZE))
-            //                                 .padding(30)
-            //                         )
-            //                         .style(style::Button::Bordered)
-            //                         .on_press(Message::ImportContactsFile),
-            //                     ]
-            //                     .spacing(10)
-            //                 )
-            //                 .width(Length::Fixed(WELCOME_TEXT_WIDTH))
-            //                 .height(Length::Fill)
-            //                 .center_x()
-            //                 .center_y(),
-            //             ]
-            //             .spacing(20)
-            //         )
-            //         .height(Length::FillPortion(4))
-            //         .width(Length::Fill)
-            //         .center_y()
-            //         .center_x(),
-            //         container(self.make_step_buttons()).height(Length::FillPortion(1))
-            //     ]
-            //     .spacing(10);
 
-            //     container(content)
-            //         .width(Length::Fill)
-            //         .height(Length::Fill)
-            //         .center_x()
-            //         .center_y()
-            //         .style(style::Container::WelcomeBg3)
-            //         .into()
-            // }
             StepView::LoadingClient => inform_card("Loading", "Please wait...").into(),
         }
     }
@@ -510,12 +455,6 @@ impl State {
                     conn.send(net::Message::AddRelay(db_relay));
                 }
             }
-            Message::ImportContactsRelays => {
-                tracing::info!("Importing contacts from relays");
-            }
-            Message::ImportContactsFile => {
-                tracing::info!("Importing contacts from a file");
-            }
             Message::AddOtherPress => {
                 if let StepView::Relays {
                     add_relay_modal, ..
@@ -581,17 +520,18 @@ impl State {
                         ev_data.done();
                     }
                 }
-                net::events::Event::EventInserted((ev, specific)) => {
-                    match (ev.from_relay, specific) {
-                        (Some(relay_url), Some(specific)) => {
-                            if let Some(ev_data) = relays.get_mut(&relay_url) {
-                                let event_str = format!("{}", specific.to_string());
-                                ev_data.add_event(&event_str);
-                            }
+                net::events::Event::EventInserted {
+                    specific_event,
+                    db_event,
+                } => match (db_event.from_relay, specific_event) {
+                    (Some(relay_url), Some(specific)) => {
+                        if let Some(ev_data) = relays.get_mut(&relay_url) {
+                            let event_str = format!("{}", specific.to_string());
+                            ev_data.add_event(&event_str);
                         }
-                        _ => (),
                     }
-                }
+                    _ => (),
+                },
                 _ => (),
             },
             StepView::Relays {

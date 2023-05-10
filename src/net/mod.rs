@@ -4,6 +4,7 @@ use crate::net::client::fetch_latest_version;
 use crate::net::events::backend::{self, backend_processing};
 use crate::net::events::frontend::Event;
 use crate::net::events::nostr::NostrSdkWrapper;
+use crate::views::login::BasicProfile;
 use chrono::Utc;
 use futures::channel::mpsc;
 use futures::{Future, StreamExt};
@@ -20,10 +21,12 @@ mod client;
 pub(crate) mod events;
 mod messages;
 
+pub(crate) use client::{get_png_image_path, ImageKind, ImageSize};
+
 pub(crate) use self::back_channel::BackEndConnection;
 use self::events::backend::{
-    add_to_unseen_count, delete_contact, fetch_and_decrypt_chat, fetch_contacts, fetch_relays,
-    fetch_relays_responses, insert_contact, prepare_client, update_contact, BackEndInput,
+    add_new_contact, add_to_unseen_count, delete_contact, fetch_and_decrypt_chat, fetch_contacts,
+    fetch_relays, fetch_relays_responses, prepare_client, update_contact, BackEndInput,
 };
 use self::events::nostr::{build_dm, NostrInput, NostrOutput};
 pub(crate) use messages::Message;
@@ -56,9 +59,20 @@ impl BackendState {
         self
     }
 
-    pub async fn process_in(&mut self, backend_input: BackEndInput) -> Event {
+    pub async fn process_in(
+        &mut self,
+        backend_input: BackEndInput,
+        nostr_sender: &mut mpsc::Sender<NostrInput>,
+    ) -> Event {
         if let Some(db_client) = &mut self.db_client {
-            backend_processing(&db_client.pool, &self.keys, backend_input, &mut self.sender).await
+            backend_processing(
+                &db_client.pool,
+                &self.keys,
+                backend_input,
+                &mut self.sender,
+                nostr_sender,
+            )
+            .await
         } else {
             Event::None
         }
@@ -69,7 +83,7 @@ impl BackendState {
     }
     pub async fn process_message(
         &mut self,
-        client_sender: &mut mpsc::Sender<NostrInput>,
+        nostr_sender: &mut mpsc::Sender<NostrInput>,
         message: Message,
     ) -> Event {
         if let (Some(db_client), Some(req_client)) = (&mut self.db_client, &mut self.req_client) {
@@ -77,54 +91,25 @@ impl BackendState {
             match message {
                 // ---- REQWEST ----
                 Message::FetchLatestVersion => {
-                    tracing::info!("Fetching latest version");
-                    let req_client_clone = req_client.clone();
-                    let mut sender_clone = self.sender.clone();
-                    tokio::spawn(async move {
-                        match fetch_latest_version(req_client_clone).await {
-                            Ok(version) => {
-                                if let Err(e) =
-                                    sender_clone.try_send(BackEndInput::LatestVersion(version))
-                                {
-                                    tracing::error!("Error sending latest version: {}", e);
-                                }
-                            }
-                            Err(e) => tracing::error!("{}", e),
-                        }
-                    });
-                    Event::FetchingLatestVersion
+                    handle_fetch_last_version(req_client, &mut self.sender)
                 }
                 // ---- CONFIG ----
                 Message::Logout => {
                     panic!("Logout should be processed outside here")
                 }
                 Message::CreateAccount(profile) => {
-                    tracing::info!("Creating account");
-                    let profile_meta = profile.into();
-                    match UserConfig::update_user_metadata_if_newer(
-                        pool,
-                        &profile_meta,
-                        Utc::now().naive_utc(),
-                    )
-                    .await
-                    {
-                        Ok(_) => {
-                            to_nostr_channel(client_sender, NostrInput::SendProfile(profile_meta));
-                            Event::ProfileCreated
-                        }
-                        Err(e) => Event::Error(e.to_string()),
-                    }
+                    handle_create_account(profile, pool, nostr_sender).await
                 }
                 Message::StoreFirstLogin => match UserConfig::store_first_login(pool).await {
                     Ok(_) => Event::FirstLoginStored,
                     Err(e) => Event::Error(e.to_string()),
                 },
-                Message::QueryFirstLogin => match handle_first_login(pool, client_sender).await {
+                Message::QueryFirstLogin => match handle_first_login(pool, nostr_sender).await {
                     Ok(event) => event,
                     Err(e) => Event::Error(e.to_string()),
                 },
                 Message::PrepareClient => match prepare_client(pool).await {
-                    Ok(input) => to_nostr_channel(client_sender, input),
+                    Ok(input) => to_nostr_channel(nostr_sender, input),
                     Err(e) => Event::Error(e.to_string()),
                 },
                 // -------- DATABASE MESSAGES -------
@@ -137,16 +122,7 @@ impl BackendState {
                 }
                 Message::UpdateUserProfileMeta(profile_meta) => {
                     tracing::info!("Updating user profile meta");
-                    to_nostr_channel(client_sender, NostrInput::SendProfile(profile_meta.clone()))
-                }
-                Message::RequestEvents => match DbEvent::fetch_last(pool).await {
-                    Ok(last_event) => {
-                        to_nostr_channel(client_sender, NostrInput::RequestEvents(last_event))
-                    }
-                    Err(e) => Event::Error(e.to_string()),
-                },
-                Message::RequestEventsOf(db_relay) => {
-                    to_nostr_channel(client_sender, NostrInput::RequestEventsOf(db_relay))
+                    to_nostr_channel(nostr_sender, NostrInput::SendProfile(profile_meta.clone()))
                 }
                 Message::FetchRelayResponses(event_id) => {
                     process_async_with_event(fetch_relays_responses(pool, event_id)).await
@@ -154,16 +130,24 @@ impl BackendState {
                 Message::AddToUnseenCount(db_contact) => {
                     process_async_with_event(add_to_unseen_count(pool, db_contact)).await
                 }
-                Message::ImportContacts(db_contacts) => {
-                    for db_contact in &db_contacts {
-                        if let Err(e) = insert_contact(&self.keys, pool, db_contact).await {
-                            tracing::error!("{}", e);
-                        }
-                    }
-                    Event::FileContactsImported(db_contacts)
+                Message::ImportContacts((db_contacts, is_replace)) => {
+                    process_async_with_event(import_contacts(
+                        &self.keys,
+                        pool,
+                        db_contacts,
+                        nostr_sender,
+                        is_replace,
+                    ))
+                    .await
                 }
                 Message::AddContact(db_contact) => {
-                    process_async_with_event(insert_contact(&self.keys, pool, &db_contact)).await
+                    process_async_with_event(add_new_contact(
+                        &self.keys,
+                        pool,
+                        &db_contact,
+                        nostr_sender,
+                    ))
+                    .await
                 }
                 Message::UpdateContact(db_contact) => {
                     process_async_with_event(update_contact(&self.keys, pool, &db_contact)).await
@@ -178,68 +162,71 @@ impl BackendState {
                         .await
                 }
                 // --------- NOSTR MESSAGES ------------
-                Message::RefreshContactsMetadata => match DbContact::fetch(pool).await {
+                Message::RequestEventsOf(db_relay) => {
+                    to_nostr_channel(nostr_sender, NostrInput::RequestEventsOf(db_relay))
+                }
+                Message::SubscribeToEvents => match DbEvent::fetch_last(pool).await {
+                    Ok(last_event) => {
+                        to_nostr_channel(nostr_sender, NostrInput::SubscribeToEvents(last_event))
+                    }
+                    Err(e) => Event::Error(e.to_string()),
+                },
+                Message::RefreshContactsProfile => match DbContact::fetch(pool).await {
                     Ok(db_contacts) => {
-                        for db_contact in db_contacts {
-                            to_nostr_channel(
-                                client_sender,
-                                NostrInput::GetContactProfile(db_contact),
-                            );
-                        }
+                        to_nostr_channel(
+                            nostr_sender,
+                            NostrInput::GetContactListProfiles(db_contacts),
+                        );
                         Event::None
                     }
                     Err(e) => Event::Error(e.to_string()),
                 },
-                // Message::GetContactProfile(db_contact) => {
-                //     to_nostr_channel(client_sender, NostrInput::GetContactProfile(db_contact))
-                // }
                 Message::SendDMToRelays(chat_msg) => {
                     match DbEvent::fetch_one(pool, &chat_msg.event_hash).await {
                         Ok(Some(db_event)) => {
-                            to_nostr_channel(client_sender, NostrInput::SendDMToRelays(db_event))
+                            to_nostr_channel(nostr_sender, NostrInput::SendDMToRelays(db_event))
                         }
                         Ok(None) => Event::None,
                         Err(e) => Event::Error(e.to_string()),
                     }
                 }
                 Message::FetchRelayServer(url) => {
-                    to_nostr_channel(client_sender, NostrInput::FetchRelayServer(url))
+                    to_nostr_channel(nostr_sender, NostrInput::FetchRelayServer(url))
                 }
                 Message::FetchRelayServers => {
-                    to_nostr_channel(client_sender, NostrInput::FetchRelayServers)
+                    to_nostr_channel(nostr_sender, NostrInput::FetchRelayServers)
                 }
-                Message::CreateChannel => {
-                    to_nostr_channel(client_sender, NostrInput::CreateChannel)
-                }
+                Message::CreateChannel => to_nostr_channel(nostr_sender, NostrInput::CreateChannel),
                 Message::ConnectToRelay(db_relay) => match DbEvent::fetch_last(pool).await {
                     Ok(last_event) => to_nostr_channel(
-                        client_sender,
+                        nostr_sender,
                         NostrInput::ConnectToRelay((db_relay, last_event)),
                     ),
                     Err(e) => Event::Error(e.to_string()),
                 },
                 Message::AddRelay(db_relay) => {
-                    to_nostr_channel(client_sender, NostrInput::AddRelay(db_relay))
+                    to_nostr_channel(nostr_sender, NostrInput::AddRelay(db_relay))
                 }
                 Message::DeleteRelay(db_relay) => {
-                    to_nostr_channel(client_sender, NostrInput::DeleteRelay(db_relay))
+                    to_nostr_channel(nostr_sender, NostrInput::DeleteRelay(db_relay))
                 }
                 Message::ToggleRelayRead((db_relay, read)) => {
-                    to_nostr_channel(client_sender, NostrInput::ToggleRelayRead((db_relay, read)))
+                    to_nostr_channel(nostr_sender, NostrInput::ToggleRelayRead((db_relay, read)))
                 }
                 Message::ToggleRelayWrite((db_relay, write)) => to_nostr_channel(
-                    client_sender,
+                    nostr_sender,
                     NostrInput::ToggleRelayWrite((db_relay, write)),
                 ),
                 Message::SendContactListToRelay(db_relay) => match DbContact::fetch(pool).await {
                     Ok(list) => to_nostr_channel(
-                        client_sender,
+                        nostr_sender,
                         NostrInput::SendContactListToRelay((db_relay, list)),
                     ),
                     Err(e) => Event::Error(e.to_string()),
                 },
+                // -- TO BACKEND CHANNEL --
                 Message::BuildDM((db_contact, content)) => {
-                    // to_nostr_channel(client_sender, NostrInput::SendDMTo((contact, msg)))
+                    // to backend channel, create a pending event and await confirmation of relays
                     match build_dm(&self.keys, &db_contact, &content) {
                         Ok(input) => to_backend_channel(&mut self.sender, input),
                         Err(e) => Event::Error(e.to_string()),
@@ -269,6 +256,62 @@ impl BackendState {
         }
 
         Event::None
+    }
+}
+
+async fn import_contacts(
+    keys: &Keys,
+    pool: &SqlitePool,
+    db_contacts: Vec<DbContact>,
+    nostr_sender: &mut mpsc::Sender<NostrInput>,
+    is_replace: bool,
+) -> Result<Event, Error> {
+    for db_contact in &db_contacts {
+        if is_replace {
+            DbContact::delete(pool, db_contact).await?;
+            add_new_contact(keys, pool, db_contact, nostr_sender).await?;
+        } else {
+            update_contact(keys, pool, db_contact).await?;
+        }
+    }
+    Ok(Event::FileContactsImported(db_contacts))
+}
+
+fn handle_fetch_last_version(
+    req_client: &mut reqwest::Client,
+    sender: &mut mpsc::Sender<BackEndInput>,
+) -> Event {
+    tracing::info!("Fetching latest version");
+    let req_client_clone = req_client.clone();
+    let mut sender_clone = sender.clone();
+    tokio::spawn(async move {
+        match fetch_latest_version(req_client_clone).await {
+            Ok(version) => {
+                if let Err(e) = sender_clone.try_send(BackEndInput::LatestVersion(version)) {
+                    tracing::error!("Error sending latest version: {}", e);
+                }
+            }
+            Err(e) => tracing::error!("{}", e),
+        }
+    });
+    Event::FetchingLatestVersion
+}
+
+async fn handle_create_account(
+    profile: BasicProfile,
+    pool: &SqlitePool,
+    client_sender: &mut mpsc::Sender<NostrInput>,
+) -> Event {
+    tracing::info!("Creating account");
+    let profile_meta = profile.into();
+    match UserConfig::update_user_metadata_if_newer(pool, &profile_meta, Utc::now().naive_utc())
+        .await
+    {
+        Ok(_) => {
+            to_nostr_channel(client_sender, NostrInput::SendProfile(profile_meta));
+            Event::ProfileCreated
+        }
+        Err(e) => Event::Error(e.to_string()),
     }
 }
 pub struct NostrState {
@@ -404,7 +447,7 @@ pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
                             nostr.process_out(nostr_output, &mut backend.sender).await
                         }
                         backend_input = backend.receiver.select_next_some() => {
-                            backend.process_in(backend_input).await
+                            backend.process_in(backend_input, &mut nostr.in_sender).await
                         }
                         notification = nostr.notifications_stream.select_next_some() => {
                             backend.process_notification(notification).await

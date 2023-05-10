@@ -84,7 +84,6 @@ impl State {
 
             Message::BackEndEvent(ev) => match ev {
                 Event::RelayCreated(db_relay) => {
-                    conn.send(net::Message::RequestEvents);
                     self.relays
                         .push(RelayRow::new(self.relays.len() as i32, db_relay, conn))
                 }

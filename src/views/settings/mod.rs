@@ -449,7 +449,12 @@ impl ModalState {
             }
             Message::SubmitContact => self.handle_submit_contact(conn),
             Message::SaveImportedContacts(imported_contacts) => {
-                conn.send(net::Message::ImportContacts(imported_contacts));
+                // TODO: two buttons, one replace. other merge
+                let is_replace = true;
+                conn.send(net::Message::ImportContacts((
+                    imported_contacts,
+                    is_replace,
+                )));
                 *self = ModalState::Off;
             }
             Message::FileImporterMessage(msg) => {

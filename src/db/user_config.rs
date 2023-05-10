@@ -15,12 +15,19 @@ pub struct UserConfig {
     pub profile_meta_last_update: Option<NaiveDateTime>,
     pub local_profile_image: Option<PathBuf>,
     pub local_banner_image: Option<PathBuf>,
+    pub main_subscription_id: Option<nostr_sdk::SubscriptionId>,
 }
 
 impl UserConfig {
     pub async fn setup_user_config(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         tracing::info!("setup_user_config");
-        let query = r#"INSERT INTO user_config (id, has_logged_in, profile_meta, profile_meta_last_update, local_profile_image, local_banner_image) VALUES (1, 0, "", 0, "", "");"#;
+        let query = r#"
+            INSERT INTO user_config 
+                (id, has_logged_in, profile_meta, 
+                profile_meta_last_update, local_profile_image, 
+                local_banner_image, main_subscription_id) 
+            VALUES (1, 0, "", 0, "", "", "");
+        "#;
         sqlx::query(query).execute(pool).await?;
         Ok(())
     }
@@ -111,6 +118,19 @@ impl UserConfig {
         sqlx::query(query).bind(path.to_str()).execute(pool).await?;
         Ok(())
     }
+
+    // insert main_subscription_id
+    pub(crate) async fn update_main_subcription_id(
+        pool: &SqlitePool,
+        subscription_id: nostr_sdk::SubscriptionId,
+    ) -> Result<(), Error> {
+        let query = "UPDATE user_config SET main_subscription_id=? WHERE id = 1;";
+        sqlx::query(query)
+            .bind(subscription_id.to_string())
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
 }
 
 impl sqlx::FromRow<'_, SqliteRow> for UserConfig {
@@ -128,12 +148,16 @@ impl sqlx::FromRow<'_, SqliteRow> for UserConfig {
         let local_banner_image: Option<String> = row.get("local_banner_image");
         let local_banner_image = local_banner_image.map(|path| PathBuf::from(path));
 
+        let main_subscription_id: Option<String> = row.get("main_subscription_id");
+        let main_subscription_id = main_subscription_id.map(|s| nostr_sdk::SubscriptionId::new(s));
+
         Ok(Self {
             profile_meta,
             profile_meta_last_update,
             local_profile_image,
             local_banner_image,
             has_logged_in: row.try_get::<bool, &str>("has_logged_in")?,
+            main_subscription_id,
         })
     }
 }

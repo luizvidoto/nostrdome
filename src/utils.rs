@@ -117,7 +117,14 @@ pub fn profile_meta_or_err(json: &str, index: &str) -> Result<nostr_sdk::Metadat
     nostr_sdk::Metadata::from_json(json).map_err(|e| handle_decode_error(e, index))
 }
 
-pub fn contact_matches_search(contact: &DbContact, search: &str) -> bool {
+pub fn contact_matches_search_selected_name(contact: &DbContact, search: &str) -> bool {
+    let selected_name = contact.select_name();
+    selected_name
+        .to_lowercase()
+        .contains(&search.to_lowercase())
+}
+
+pub fn contact_matches_search_full(contact: &DbContact, search: &str) -> bool {
     let pubkey_matches = contact
         .pubkey()
         .to_string()

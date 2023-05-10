@@ -2,29 +2,50 @@ use chrono::{DateTime, Utc};
 use directories::ProjectDirs;
 use futures::TryStreamExt;
 use futures_util::StreamExt;
+use image::ImageFormat;
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 use reqwest::Url;
 use serde::Deserialize;
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
-use crate::consts::APP_PROJECT_DIRS;
-use crate::db::DbContact;
+use crate::consts::{APP_PROJECT_DIRS, SMALL_PROFILE_PIC_HEIGHT, SMALL_PROFILE_PIC_WIDTH};
 use crate::error::Error;
+
+pub enum ImageSize {
+    Small,
+    Large,
+}
+impl ImageSize {
+    pub fn to_str(&self) -> &str {
+        match self {
+            ImageSize::Small => "small",
+            ImageSize::Large => "large",
+        }
+    }
+}
 
 pub enum ImageKind {
     Profile,
     Banner,
 }
 impl ImageKind {
-    pub fn to_str(&self, image_type: &str) -> String {
+    pub fn to_str(&self, image_type: &str, image_size: ImageSize) -> String {
         match self {
-            ImageKind::Profile => format!("profile_1.{}", image_type),
-            ImageKind::Banner => format!("banner_1.{}", image_type),
+            ImageKind::Profile => format!("profile_1_{}.{}", image_size.to_str(), image_type),
+            ImageKind::Banner => format!("banner_1_{}.{}", image_size.to_str(), image_type),
         }
     }
+}
+
+pub fn get_png_image_path(base_path: &Path, kind: ImageKind, size: ImageSize) -> PathBuf {
+    // Always use PNG as the image format for the resized images
+    let image_type = "png";
+
+    let file_name = kind.to_str(image_type, size);
+    base_path.with_file_name(file_name)
 }
 
 pub async fn download_image(
@@ -38,7 +59,8 @@ pub async fn download_image(
     let content_type = response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
-        .ok_or(Error::RequestMissingContentType)?;
+        .ok_or(Error::RequestMissingContentType)
+        .cloned()?;
 
     if !content_type.to_str()?.starts_with("image/") {
         return Err(Error::ImageInvalidContentType(
@@ -49,7 +71,7 @@ pub async fn download_image(
     let dirs = ProjectDirs::from(APP_PROJECT_DIRS.0, APP_PROJECT_DIRS.1, APP_PROJECT_DIRS.2)
         .ok_or(Error::NotFoundProjectDirectory)?;
     let images_dir = dirs
-        .config_dir()
+        .cache_dir()
         .join(IMAGES_FOLDER_NAME)
         .join(public_key.to_string());
     tokio::fs::create_dir_all(&images_dir).await?;
@@ -60,21 +82,69 @@ pub async fn download_image(
         .split("/")
         .nth(1)
         .ok_or(Error::ImageInvalidContentType(content_type_str.to_owned()))?;
-
-    let image_path = images_dir.join(kind.to_str(image_type));
-
-    // Open the file for writing
+    let image_path = images_dir.join(kind.to_str(image_type, ImageSize::Large));
     let mut dest = File::create(&image_path).await?;
-
     let mut stream = response.bytes_stream().map_err(Error::ReqwestStreamError);
-
     while let Some(item) = stream.next().await {
         let chunk = item?;
         dest.write_all(&chunk).await?;
     }
 
+    let small_image_path = images_dir.join(kind.to_str("png", ImageSize::Small));
+    resize_and_save_image(
+        &image_path,
+        &small_image_path,
+        SMALL_PROFILE_PIC_WIDTH,
+        SMALL_PROFILE_PIC_HEIGHT,
+    )?;
+
     Ok(image_path)
 }
+
+pub fn resize_and_save_image(
+    input_path: &Path,
+    output_path: &Path,
+    desired_width: u32,
+    desired_height: u32,
+) -> Result<(), Error> {
+    let image = image::open(input_path)?;
+
+    let resized_image = image.resize(
+        desired_width,
+        desired_height,
+        image::imageops::FilterType::Lanczos3,
+    );
+
+    // Save the resized image as a PNG, regardless of the input format
+    resized_image.save_with_format(output_path, ImageFormat::Png)?;
+
+    Ok(())
+}
+
+// pub fn resize_and_save_image(
+//     input_path: &Path,
+//     output_path: &Path,
+//     desired_width: u32,
+//     desired_height: u32,
+// ) -> Result<(), Error> {
+//     let image = image::open(input_path)?;
+
+//     let resized_image = image.resize(
+//         desired_width,
+//         desired_height,
+//         image::imageops::FilterType::Lanczos3,
+//     );
+
+//     let extension = input_path.extension().ok_or(Error::ImageInvalidExtension(
+//         input_path.to_string_lossy().into_owned(),
+//     ))?;
+//     let format = ImageFormat::from_extension(extension)
+//         .ok_or_else(|| Error::ImageInvalidFormat(extension.to_string_lossy().into_owned()))?;
+
+//     resized_image.save_with_format(output_path, format)?;
+
+//     Ok(())
+// }
 
 #[derive(Deserialize, Debug)]
 pub struct GitHubRelease {

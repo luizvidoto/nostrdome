@@ -74,6 +74,7 @@ impl DbEvent {
         Ok(Self::from_event(event, true)?)
     }
 
+    // pending event is not confirmed yet
     pub fn pending_event(event: Event) -> Result<Self, Error> {
         Ok(Self::from_event(event, false)?)
     }
@@ -123,6 +124,20 @@ impl DbEvent {
     pub async fn fetch_last(pool: &SqlitePool) -> Result<Option<DbEvent>, Error> {
         let sql = format!("{} ORDER BY event_id DESC LIMIT 1", Self::FETCH_QUERY);
         Ok(sqlx::query_as::<_, DbEvent>(&sql)
+            .fetch_optional(pool)
+            .await?)
+    }
+
+    pub async fn fetch_last_kind(
+        pool: &SqlitePool,
+        kind: nostr_sdk::Kind,
+    ) -> Result<Option<DbEvent>, Error> {
+        let sql = format!(
+            "{} WHERE kind = ? ORDER BY event_id DESC LIMIT 1",
+            Self::FETCH_QUERY
+        );
+        Ok(sqlx::query_as::<_, DbEvent>(&sql)
+            .bind(kind.as_u32())
             .fetch_optional(pool)
             .await?)
     }
@@ -184,7 +199,8 @@ impl DbEvent {
         Ok(db_event)
     }
 
-    pub async fn delete(pool: &SqlitePool, event_id: i32) -> Result<(), Error> {
+    pub async fn delete(pool: &SqlitePool, event_id: i64) -> Result<(), Error> {
+        tracing::info!("Deleting event with id {}", event_id);
         let sql = "DELETE FROM event WHERE event_id = ?";
 
         sqlx::query(sql).bind(event_id).execute(pool).await?;
@@ -231,7 +247,10 @@ impl sqlx::FromRow<'_, SqliteRow> for DbEvent {
                 .map(|s| url_or_err(&s, "from_relay"))
                 .transpose()?,
             created_at_from_relay: NaiveDateTime::from_timestamp_millis(created_at).ok_or(
-                handle_decode_error(Box::new(Error::DbEventTimestampError), "relay_created_at"),
+                handle_decode_error(
+                    Box::new(Error::DbEventTimestampError),
+                    "created_at_from_relay",
+                ),
             )?,
             kind: Kind::from(kind as u64),
             tags,

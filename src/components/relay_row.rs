@@ -63,7 +63,6 @@ pub enum Message {
     Ready(RelayRowConnection),
     Performing,
     Waited,
-    RequestEventsOf(DbRelay),
     SendContactListToRelay(DbRelay),
 }
 #[derive(Debug, Clone)]
@@ -228,9 +227,6 @@ impl RelayRow {
             Message::ConnectToRelay(db_relay) => {
                 conn.send(net::Message::ConnectToRelay(db_relay));
             }
-            Message::RequestEventsOf(db_relay) => {
-                conn.send(net::Message::RequestEventsOf(db_relay));
-            }
             Message::DeleteRelay(db_relay) => {
                 conn.send(net::Message::DeleteRelay(db_relay));
             }
@@ -299,6 +295,16 @@ impl RelayRow {
             text("").into()
         }
     }
+    fn is_connected(&self) -> bool {
+        match &self.db_relay.status {
+            Some(last_active) => match last_active.0 {
+                RelayStatus::Connected => true,
+                _ => false,
+            },
+            None => false,
+        }
+    }
+
     pub fn view_header() -> Element<'static, MessageWrapper> {
         row![
             container(text("")).width(Length::Fixed(RELAY_STATUS_ICON_WIDTH)),
@@ -314,22 +320,9 @@ impl RelayRow {
                 .width(Length::Fixed(CHECKBOX_CELL_WIDTH)),
             container(text(""))
                 .center_x()
-                .width(Length::Fixed(ACTION_ICON_WIDTH)),
-            container(text(""))
-                .center_x()
                 .width(Length::Fixed(ACTION_ICON_WIDTH))
         ]
         .into()
-    }
-
-    fn is_connected(&self) -> bool {
-        match &self.db_relay.status {
-            Some(last_active) => match last_active.0 {
-                RelayStatus::Connected => true,
-                _ => false,
-            },
-            None => false,
-        }
     }
 
     pub fn view<'a>(&'a self) -> Element<'a, MessageWrapper> {
@@ -346,19 +339,6 @@ impl RelayRow {
             tooltip::Position::Left,
         )
         .style(style::Container::TooltipBg);
-
-        let mut download_btn =
-            button(download_icon().size(16)).width(Length::Fixed(ACTION_ICON_WIDTH));
-
-        if self.is_connected() && self.db_relay.read {
-            download_btn = download_btn.on_press(MessageWrapper::new(
-                self.id,
-                Message::RequestEventsOf(self.db_relay.clone()),
-            ));
-        }
-
-        let download_btn = tooltip(download_btn, "Download Events", tooltip::Position::Left)
-            .style(style::Container::TooltipBg);
 
         container(
             row![
@@ -386,7 +366,6 @@ impl RelayRow {
                 )))
                 .center_x()
                 .width(Length::Fixed(CHECKBOX_CELL_WIDTH)),
-                download_btn,
                 delete_btn,
             ]
             .align_items(alignment::Alignment::Center),

@@ -9,3 +9,5 @@ insert_event_flux.txt
 community.json
 test.http
 .env
+/logs
+*.log

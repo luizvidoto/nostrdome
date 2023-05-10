@@ -1,7 +1,7 @@
 use chrono::{Datelike, NaiveDateTime};
 use iced::subscription::Subscription;
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
-use iced::{alignment, Command, Length};
+use iced::{alignment, Alignment, Command, Length};
 
 use crate::components::{common_scrollable, contact_card, status_bar, StatusBar};
 use crate::db::DbContact;
@@ -11,7 +11,7 @@ use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::types::{chat_message, ChatMessage};
-use crate::utils::contact_matches_search;
+use crate::utils::contact_matches_search_selected_name;
 use crate::widget::{Button, Column, Container, Element};
 use once_cell::sync::Lazy;
 
@@ -83,7 +83,9 @@ impl State {
             common_scrollable(
                 self.contacts
                     .iter()
-                    .filter(|c| contact_matches_search(&c.contact, &self.search_contact_input))
+                    .filter(|c| {
+                        contact_matches_search_selected_name(&c.contact, &self.search_contact_input)
+                    })
                     .fold(column![].spacing(0), |col, contact| {
                         col.push(contact.view().map(Message::ContactCardMessage))
                     }),
@@ -208,8 +210,13 @@ impl State {
                 }
                 Command::none()
             }
-            Event::LocalPendingEvent((_ev, specific)) | Event::EventInserted((_ev, specific)) => {
-                match specific {
+            Event::LocalPendingEvent { specific_event, .. }
+            | Event::EventInserted { specific_event, .. } => {
+                match specific_event {
+                    Some(SpecificEvent::UpdatedContactMetadata(db_contact)) => {
+                        self.update_contact(db_contact);
+                        Command::none()
+                    }
                     Some(SpecificEvent::ReceivedDM((db_contact, msg))) => {
                         self.update_contact(db_contact.clone());
 
@@ -243,6 +250,11 @@ impl State {
                     }
                     _ => Command::none(),
                 }
+            }
+            Event::ContactCreated(db_contact) => {
+                self.contacts
+                    .push(contact_card::ContactCard::from_db_contact(&db_contact));
+                Command::none()
             }
             Event::ContactUpdated(db_contact) => {
                 self.update_contact(db_contact);
@@ -413,16 +425,26 @@ fn header_details<'a>(db_contact: &'a DbContact) -> Button<'a, Message> {
         .last_message_date()
         .map(|date| format!("last seen {}", date.format("%Y-%m-%d")))
         .unwrap_or("".into());
+    let user_name: Element<_> = if let Some(petname) = db_contact.get_petname() {
+        row![
+            text(petname).size(20),
+            text(db_contact.get_display_name().unwrap_or("".into()))
+                .size(14)
+                .style(style::Text::ChatMessageStatus)
+        ]
+        .align_items(Alignment::End)
+        .spacing(5)
+        .into()
+    } else {
+        text(db_contact.select_name()).size(20).into()
+    };
 
-    button(column![
-        text(db_contact.select_display_name()).size(20),
-        text(last_message_date).size(16)
-    ])
-    .padding([5, 0, 0, 5])
-    .style(style::Button::Invisible)
-    .on_press(Message::OpenContactProfile)
-    .height(Length::Fill)
-    .width(Length::Fill)
+    button(column![user_name, text(last_message_date).size(16)])
+        .padding([5, 0, 0, 5])
+        .style(style::Button::Invisible)
+        .on_press(Message::OpenContactProfile)
+        .height(Length::Fill)
+        .width(Length::Fill)
 }
 
 fn header_action_buttons<'a>() -> Element<'a, Message> {

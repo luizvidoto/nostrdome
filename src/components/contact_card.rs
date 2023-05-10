@@ -3,6 +3,7 @@ use iced::widget::{button, column, container, image, row, text};
 use iced::{alignment, Length};
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::consts::{SMALL_PROFILE_PIC_HEIGHT, SMALL_PROFILE_PIC_WIDTH};
 use crate::db::DbContact;
 use crate::style;
 use crate::utils::format_pubkey;
@@ -33,7 +34,7 @@ pub struct ContactCard {
 impl ContactCard {
     pub fn from_db_contact(db_contact: &DbContact) -> Self {
         let mut profile_img_handle = None;
-        if let Some(profile_img_str) = db_contact.local_profile_image_str() {
+        if let Some(profile_img_str) = db_contact.local_profile_image_str_small() {
             profile_img_handle = Some(image::Handle::from_path(profile_img_str));
         }
         Self {
@@ -54,7 +55,9 @@ impl ContactCard {
             Some(handle) => image::Image::new(handle.clone()).into(),
             None => self.name_element(true),
         };
-        let pic_container = container(pic_element).width(PIC_WIDTH);
+        let pic_container = container(pic_element)
+            .width(SMALL_PROFILE_PIC_WIDTH as f32)
+            .height(SMALL_PROFILE_PIC_HEIGHT as f32);
 
         let btn_content: Element<_> = match self.mode {
             CardMode::Small => {
@@ -80,11 +83,7 @@ impl ContactCard {
                     None => text("").into(),
                 };
                 let card_top_row = container(
-                    row![
-                        text(self.contact.select_display_name()).size(24),
-                        last_date_cp,
-                    ]
-                    .spacing(5),
+                    row![text(self.contact.select_name()).size(24), last_date_cp,].spacing(5),
                 )
                 .width(Length::Fill);
 
@@ -163,7 +162,7 @@ impl ContactCard {
         match message {
             Message::ContactUpdated(db_contact) => {
                 let mut profile_img_handle = None;
-                if let Some(profile_img_str) = db_contact.local_profile_image_str() {
+                if let Some(profile_img_str) = db_contact.local_profile_image_str_small() {
                     profile_img_handle = Some(image::Handle::from_path(profile_img_str));
                 }
                 self.profile_img_handle = profile_img_handle;
@@ -194,6 +193,5 @@ impl ContactCard {
     }
 }
 
-const PIC_WIDTH: f32 = 50.0;
 const CARD_HEIGHT: f32 = 80.0;
 const NOTIFICATION_COUNT_WIDTH: f32 = 30.0;

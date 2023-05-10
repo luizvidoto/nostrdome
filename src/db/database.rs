@@ -15,7 +15,7 @@ impl Database {
         let dirs = ProjectDirs::from(APP_PROJECT_DIRS.0, APP_PROJECT_DIRS.1, APP_PROJECT_DIRS.2)
             .ok_or(Error::NotFoundProjectDirectory)?;
         tracing::debug!("Creating project directory");
-        let project_dir = dirs.config_dir();
+        let project_dir = dirs.data_dir();
         std::fs::create_dir_all(project_dir)?;
 
         tracing::debug!("Creating database");

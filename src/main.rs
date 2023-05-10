@@ -21,6 +21,7 @@ use iced::{
 };
 use net::{backend_connect, events::Event, BackEndConnection};
 use nostr_sdk::Keys;
+use tracing_appender::{non_blocking, rolling};
 use tracing_subscriber::{
     fmt::SubscriberBuilder, prelude::__tracing_subscriber_SubscriberExt, EnvFilter,
 };
@@ -311,8 +312,28 @@ async fn main() {
     dotenv().ok();
 
     if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "info");
+        std::env::set_var("RUST_LOG", "warn");
     }
+
+    // CombinedLogger::init(vec![
+    //     TermLogger::new(
+    //         LevelFilter::Info,
+    //         Config::default(),
+    //         TerminalMode::Mixed,
+    //         ColorChoice::Auto,
+    //     ),
+    //     WriteLogger::new(
+    //         LevelFilter::Trace,
+    //         Config::default(),
+    //         std::fs::File::create("app.log").expect("Unable to create app.log file"),
+    //     ),
+    // ])
+    // .expect("Failed to set logger");
+
+    //
+
+    // let file_appender = rolling::never("./logs", "app.log");
+    // let (non_blocking, _guard) = non_blocking(file_appender);
 
     // Cria um filtro de ambiente que define o nível de log padrão para todas as bibliotecas como ERROR e o nível de log do seu aplicativo como INFO
     let filter = EnvFilter::from_default_env()
@@ -324,6 +345,7 @@ async fn main() {
         .with_file(true)
         .with_line_number(true)
         .with_target(false)
+        // .with_writer(non_blocking)
         .fmt_fields(tracing_subscriber::fmt::format::DefaultFields::default()) // Adicione esta linha para incluir eventos de spans
         .finish()
         .with(tracing_error::ErrorLayer::default());

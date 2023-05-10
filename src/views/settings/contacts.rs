@@ -7,7 +7,7 @@ use crate::net::events::frontend::SpecificEvent;
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
 use crate::style;
-use crate::utils::contact_matches_search;
+use crate::utils::contact_matches_search_full;
 use crate::widget::Element;
 use crate::{components::text::title, db::DbContact};
 
@@ -42,7 +42,7 @@ impl State {
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Option<Message> {
         match message {
             Message::RefreshContacts => {
-                conn.send(net::Message::RefreshContactsMetadata);
+                conn.send(net::Message::RefreshContactsProfile);
             }
             Message::OpenProfileModal(_) => (),
             Message::OpenSendContactModal => (),
@@ -70,8 +70,8 @@ impl State {
                 Event::GotContacts(db_contacts) => {
                     self.contacts = db_contacts;
                 }
-                Event::EventInserted((_ev, specific)) => match specific {
-                    Some(SpecificEvent::RelayContactsImported(_)) => {
+                Event::EventInserted { specific_event, .. } => match specific_event {
+                    Some(SpecificEvent::ReceivedContactList(_)) => {
                         conn.send(net::Message::FetchContacts)
                     }
                     Some(SpecificEvent::UpdatedContactMetadata(db_contact)) => {
@@ -154,7 +154,7 @@ impl State {
         let contact_list: Element<_> = self
             .contacts
             .iter()
-            .filter(|c| contact_matches_search(c, &self.search_contact_input))
+            .filter(|c| contact_matches_search_full(c, &self.search_contact_input))
             .map(|c| ContactRow::from_db_contact(c))
             .fold(column![].spacing(5), |col, contact| {
                 col.push(contact.view().map(Message::ContactRowMessage))

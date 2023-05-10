@@ -21,8 +21,14 @@ pub enum Event {
     ContactCreated(DbContact),
     ContactUpdated(DbContact),
     ContactDeleted(DbContact),
-    EventInserted((DbEvent, Option<SpecificEvent>)),
-    LocalPendingEvent((DbEvent, Option<SpecificEvent>)),
+    EventInserted {
+        db_event: DbEvent,
+        specific_event: Option<SpecificEvent>,
+    },
+    LocalPendingEvent {
+        db_event: DbEvent,
+        specific_event: Option<SpecificEvent>,
+    },
     // RelayEventDebugger((nostr_sdk::Url, Box<Event>)),
     UpdateWithRelayResponse {
         relay_response: DbRelayResponse,
@@ -35,8 +41,11 @@ pub enum Event {
     UserBannerPictureUpdated,
     // --- Nostr ---
     EndOfStoredEvents((nostr_sdk::Url, nostr_sdk::SubscriptionId)),
+    SubscribedToEvents,
     RequestedEventsOf(DbRelay),
     RequestedMetadata(DbContact),
+    RequestedContactListProfiles,
+    RequestedContactProfile(DbContact),
     GotRelayServer(Option<nostr_sdk::Relay>),
     GotRelayServers(Vec<nostr_sdk::Relay>),
     RelayMessage(nostr_sdk::RelayMessage),
@@ -61,6 +70,12 @@ pub enum Event {
 impl std::fmt::Display for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Event::RequestedContactProfile(db_contact) => write!(
+                f,
+                "Requested Contact Profile Public Key: {}",
+                db_contact.pubkey()
+            ),
+            Event::SubscribedToEvents => write!(f, "Subscribed to Events"),
             Event::UserProfilePictureUpdated => write!(f, "User Profile Picture Updated"),
             Event::UserBannerPictureUpdated => write!(f, "User Banner Picture Updated"),
             Event::EndOfStoredEvents((relay_url, subscription_id)) => {
@@ -73,14 +88,14 @@ impl std::fmt::Display for Event {
             Event::RequestedMetadata(contact) => {
                 write!(f, "Requested Metadata for public key: {}", contact.pubkey())
             }
-
+            Event::RequestedContactListProfiles => write!(f, "Requested Metadata for Contacts"),
             Event::RequestedEventsOf(db_relay) => {
                 write!(f, "Requested events of: {}", db_relay.url)
             }
             Event::LatestVersion(version) => write!(f, "Latest Version: {}", version),
             Event::FetchingLatestVersion => write!(f, "Fetching Latest Version"),
             Event::ProfileCreated => write!(f, "Profile Created"),
-            Event::LocalPendingEvent(_) => write!(f, "Local Pending Event"),
+            Event::LocalPendingEvent { .. } => write!(f, "Local Pending Event"),
             Event::GotChatMessages((contact, messages)) => {
                 write!(
                     f,
@@ -100,7 +115,7 @@ impl std::fmt::Display for Event {
             Event::ContactCreated(contact) => write!(f, "Contact Created: {}", contact.pubkey()),
             Event::ContactUpdated(contact) => write!(f, "Contact Updated: {}", contact.pubkey()),
             Event::ContactDeleted(contact) => write!(f, "Contact Deleted: {}", contact.pubkey()),
-            Event::EventInserted(_) => write!(f, "Event Inserted"),
+            Event::EventInserted { .. } => write!(f, "Event Inserted"),
             Event::UpdateWithRelayResponse { relay_response, .. } => write!(
                 f,
                 "Update With Relay Response: {}",
@@ -142,7 +157,7 @@ impl std::fmt::Display for Event {
 pub enum SpecificEvent {
     ReceivedDM((DbContact, ChatMessage)),
     NewDMAndContact((DbContact, ChatMessage)),
-    RelayContactsImported(Vec<DbContact>),
+    ReceivedContactList(Vec<DbContact>),
     UpdatedContactMetadata(DbContact),
     UpdatedUserProfileMeta(nostr_sdk::Metadata),
 }
@@ -160,7 +175,7 @@ impl std::fmt::Display for SpecificEvent {
                     contact.pubkey()
                 )
             }
-            SpecificEvent::RelayContactsImported(contacts) => {
+            SpecificEvent::ReceivedContactList(contacts) => {
                 write!(f, "Relay Contacts Imported: {}", contacts.len())
             }
             SpecificEvent::ReceivedDM((contact, message)) => {

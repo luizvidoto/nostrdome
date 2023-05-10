@@ -8,6 +8,14 @@ use crate::db::DbContactError;
 /// Errors that can occur in the nostrtalk crate
 #[derive(Error, Debug)]
 pub enum Error {
+    // Image Errors
+    #[error("Image error: {0}")]
+    ImageError(#[from] image::error::ImageError),
+    #[error("Invalid image extension: {0}")]
+    ImageInvalidExtension(String),
+    #[error("Invalid image format: {0}")]
+    ImageInvalidFormat(String),
+
     #[error("GITHUB_TOKEN not found")]
     GitHubTokenNotFound,
     #[error("Request error: {0}")]
@@ -38,6 +46,8 @@ pub enum Error {
     // General errors
     #[error("Unable to update contact: message ID is required but not provided.")]
     MissingMessageIdForContactUpdate,
+    #[error("Outdated contact insert")]
+    OutDatedContactInsert,
     #[error("Can't update message without id")]
     MessageNotInDatabase,
     #[error("Can't update channel without id")]
