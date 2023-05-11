@@ -1,13 +1,12 @@
 /target
-todo.txt
-insert_event_flux.txt
 .DS_Store
 /assets/contacts_img.jpg
 /assets/contacts_img_2.jpg
 /assets/relays_img.jpg
 /assets/color_pallete.png
 community.json
-test.http
 .env
 /logs
 *.log
+*.txt
+*.http

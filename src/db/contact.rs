@@ -3,7 +3,6 @@ use nostr_sdk::{prelude::UncheckedUrl, secp256k1::XOnlyPublicKey, Tag};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use std::borrow::Borrow;
-use std::path::Path;
 use std::str::FromStr;
 use std::{path::PathBuf, result::Result as StdResult};
 use thiserror::Error;
@@ -327,25 +326,24 @@ impl DbContact {
 
     pub async fn add_to_unseen_count(
         pool: &SqlitePool,
-        db_contact: &DbContact,
+        mut db_contact: DbContact,
     ) -> Result<DbContact> {
+        db_contact.unseen_messages += 1;
+
         let sql = r#"
                 UPDATE contact
-                SET updated_at = ?, unseen_messages = unseen_messages + 1
+                SET updated_at = ?, unseen_messages = ?
                 WHERE pubkey = ?
             "#;
 
         sqlx::query(sql)
             .bind(Utc::now().timestamp_millis())
+            .bind(&db_contact.unseen_messages)
             .bind(&db_contact.pubkey.to_string())
             .execute(pool)
             .await?;
 
-        let db_contact_updated = Self::fetch_one(pool, &db_contact.pubkey).await?.ok_or(
-            DbContactError::NotFoundContact(db_contact.pubkey().to_string()),
-        )?;
-
-        Ok(db_contact_updated)
+        Ok(db_contact)
     }
 
     pub async fn update_unseen_count(

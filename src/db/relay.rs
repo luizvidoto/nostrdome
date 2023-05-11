@@ -85,14 +85,9 @@ impl DbRelay {
         Ok(Self::new(url))
     }
 
-    pub async fn fetch(pool: &SqlitePool, criteria: Option<&str>) -> Result<Vec<DbRelay>, Error> {
+    pub async fn fetch(pool: &SqlitePool) -> Result<Vec<DbRelay>, Error> {
         let sql = Self::FETCH_QUERY.to_owned();
-        let sql = match criteria {
-            None => sql,
-            Some(crit) => format!("{} WHERE {}", sql, crit),
-        };
         let output = sqlx::query_as::<_, DbRelay>(&sql).fetch_all(pool).await?;
-
         Ok(output)
     }
 

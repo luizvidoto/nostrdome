@@ -74,7 +74,11 @@ impl DbMessage {
         self
     }
 
-    pub fn from_db_event(db_event: &DbEvent, relay_url: Option<&Url>) -> Result<Self, Error> {
+    fn from_db_event(
+        db_event: &DbEvent,
+        relay_url: Option<&Url>,
+        created_at: NaiveDateTime,
+    ) -> Result<Self, Error> {
         let (to_pub, event_id, event_hash) = Self::info_from_tags(&db_event)?;
         Ok(Self {
             id: None,
@@ -83,12 +87,26 @@ impl DbMessage {
             to_pubkey: to_pub,
             event_id: Some(event_id),
             event_hash: Some(event_hash),
-            created_at: db_event.created_at,
-            updated_at: db_event.created_at,
+            updated_at: created_at.clone(),
+            created_at,
             status: MessageStatus::from_db_event(&db_event),
             relay_url: relay_url.map(|url| url.to_owned().into()),
         })
     }
+
+    pub(crate) fn confirmed_message(db_event: &DbEvent, relay_url: &Url) -> Result<Self, Error> {
+        let created_at = db_event.remote_creation().ok_or(Error::NotConfirmedEvent)?;
+        Ok(Self::from_db_event(db_event, Some(relay_url), created_at)?)
+    }
+
+    pub(crate) fn pending_message(pending_event: &DbEvent) -> Result<Self, Error> {
+        Ok(Self::from_db_event(
+            pending_event,
+            None,
+            Utc::now().naive_utc(),
+        )?)
+    }
+
     pub fn decrypt_message(&self, keys: &Keys) -> Result<String, Error> {
         let secret_key = keys.secret_key()?;
         if self.im_author(&keys.public_key()) {
@@ -242,7 +260,7 @@ pub enum MessageStatus {
 
 impl MessageStatus {
     pub fn from_db_event(db_event: &DbEvent) -> Self {
-        if db_event.confirmed {
+        if db_event.relay_url.is_some() {
             Self::Delivered
         } else {
             Self::Offline

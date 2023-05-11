@@ -1,4 +1,4 @@
-use crate::db::{Database, DbContact, DbEvent, UserConfig};
+use crate::db::{Database, DbContact, DbEvent, DbRelay, DbRelayResponse, UserConfig};
 use crate::error::Error;
 use crate::net::client::fetch_latest_version;
 use crate::net::events::backend::{self, backend_processing};
@@ -14,7 +14,6 @@ use iced::Subscription;
 use nostr_sdk::{Keys, RelayPoolNotification};
 use sqlx::SqlitePool;
 use std::pin::Pin;
-use std::time::Duration;
 
 mod back_channel;
 mod client;
@@ -25,10 +24,12 @@ pub(crate) use client::{get_png_image_path, ImageKind, ImageSize};
 
 pub(crate) use self::back_channel::BackEndConnection;
 use self::events::backend::{
-    add_new_contact, add_to_unseen_count, delete_contact, fetch_and_decrypt_chat, fetch_contacts,
-    fetch_relays, fetch_relays_responses, prepare_client, update_contact, BackEndInput,
+    add_new_contact, delete_contact, fetch_and_decrypt_chat, prepare_client, update_contact,
+    BackEndInput,
 };
-use self::events::nostr::{build_dm, NostrInput, NostrOutput};
+use self::events::nostr::{
+    build_contact_list_event, build_dm, build_profile_event, NostrInput, NostrOutput,
+};
 pub(crate) use messages::Message;
 
 pub struct BackendState {
@@ -98,7 +99,11 @@ impl BackendState {
                     panic!("Logout should be processed outside here")
                 }
                 Message::CreateAccount(profile) => {
-                    handle_create_account(profile, pool, nostr_sender).await
+                    let profile_meta = profile.into();
+                    update_user_metadata(pool, &self.keys, &mut self.sender, profile_meta).await
+                }
+                Message::UpdateUserProfileMeta(profile_meta) => {
+                    update_user_metadata(pool, &self.keys, &mut self.sender, profile_meta).await
                 }
                 Message::StoreFirstLogin => match UserConfig::store_first_login(pool).await {
                     Ok(_) => Event::FirstLoginStored,
@@ -120,15 +125,18 @@ impl BackendState {
                         Err(e) => Event::Error(e.to_string()),
                     }
                 }
-                Message::UpdateUserProfileMeta(profile_meta) => {
-                    tracing::info!("Updating user profile meta");
-                    to_nostr_channel(nostr_sender, NostrInput::SendProfile(profile_meta.clone()))
-                }
+
                 Message::FetchRelayResponses(event_id) => {
-                    process_async_with_event(fetch_relays_responses(pool, event_id)).await
+                    match DbRelayResponse::fetch_by_event(pool, event_id).await {
+                        Ok(responses) => Event::GotRelayResponses(responses),
+                        Err(e) => Event::Error(e.to_string()),
+                    }
                 }
                 Message::AddToUnseenCount(db_contact) => {
-                    process_async_with_event(add_to_unseen_count(pool, db_contact)).await
+                    match DbContact::add_to_unseen_count(pool, db_contact).await {
+                        Ok(db_contact) => Event::ContactUpdated(db_contact),
+                        Err(e) => Event::Error(e.to_string()),
+                    }
                 }
                 Message::ImportContacts((db_contacts, is_replace)) => {
                     process_async_with_event(import_contacts(
@@ -155,8 +163,14 @@ impl BackendState {
                 Message::DeleteContact(contact) => {
                     process_async_with_event(delete_contact(pool, &contact)).await
                 }
-                Message::FetchContacts => process_async_with_event(fetch_contacts(pool)).await,
-                Message::FetchRelays => process_async_with_event(fetch_relays(pool)).await,
+                Message::FetchContacts => match DbContact::fetch(pool).await {
+                    Ok(contacts) => Event::GotContacts(contacts),
+                    Err(e) => Event::Error(e.to_string()),
+                },
+                Message::FetchRelays => match DbRelay::fetch(pool).await {
+                    Ok(relays) => Event::GotRelays(relays),
+                    Err(e) => Event::Error(e.to_string()),
+                },
                 Message::FetchMessages(contact) => {
                     process_async_with_event(fetch_and_decrypt_chat(&self.keys, pool, contact))
                         .await
@@ -180,15 +194,6 @@ impl BackendState {
                     }
                     Err(e) => Event::Error(e.to_string()),
                 },
-                Message::SendDMToRelays(chat_msg) => {
-                    match DbEvent::fetch_one(pool, &chat_msg.event_hash).await {
-                        Ok(Some(db_event)) => {
-                            to_nostr_channel(nostr_sender, NostrInput::SendDMToRelays(db_event))
-                        }
-                        Ok(None) => Event::None,
-                        Err(e) => Event::Error(e.to_string()),
-                    }
-                }
                 Message::FetchRelayServer(url) => {
                     to_nostr_channel(nostr_sender, NostrInput::FetchRelayServer(url))
                 }
@@ -216,21 +221,22 @@ impl BackendState {
                     nostr_sender,
                     NostrInput::ToggleRelayWrite((db_relay, write)),
                 ),
-                Message::SendContactListToRelay(db_relay) => match DbContact::fetch(pool).await {
-                    Ok(list) => to_nostr_channel(
-                        nostr_sender,
-                        NostrInput::SendContactListToRelay((db_relay, list)),
-                    ),
-                    Err(e) => Event::Error(e.to_string()),
-                },
+
                 // -- TO BACKEND CHANNEL --
-                Message::BuildDM((db_contact, content)) => {
+                Message::SendDM((db_contact, content)) => {
                     // to backend channel, create a pending event and await confirmation of relays
-                    match build_dm(&self.keys, &db_contact, &content) {
+                    match build_dm(&self.keys, db_contact, content) {
                         Ok(input) => to_backend_channel(&mut self.sender, input),
                         Err(e) => Event::Error(e.to_string()),
                     }
                 }
+                Message::SendContactListToRelay(db_relay) => match DbContact::fetch(pool).await {
+                    Ok(list) => match build_contact_list_event(&self.keys, &list).await {
+                        Ok(input) => to_backend_channel(&mut self.sender, input),
+                        Err(e) => Event::Error(e.to_string()),
+                    },
+                    Err(e) => Event::Error(e.to_string()),
+                },
             }
         } else {
             Event::None
@@ -241,8 +247,7 @@ impl BackendState {
         // Cria uma tarefa separada para processar a notificação
         let backend_input = match notification {
             RelayPoolNotification::Event(relay_url, event) => {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                backend::BackEndInput::StoreEvent((relay_url, event))
+                backend::BackEndInput::StoreConfirmedEvent((relay_url, event))
             }
             RelayPoolNotification::Message(relay_url, msg) => {
                 backend::BackEndInput::StoreRelayMessage((relay_url, msg))
@@ -255,6 +260,23 @@ impl BackendState {
         }
 
         Event::None
+    }
+}
+
+async fn update_user_metadata(
+    pool: &SqlitePool,
+    keys: &Keys,
+    back_sender: &mut mpsc::Sender<backend::BackEndInput>,
+    profile_meta: nostr_sdk::Metadata,
+) -> Event {
+    match UserConfig::update_user_metadata_if_newer(pool, &profile_meta, Utc::now().naive_utc())
+        .await
+    {
+        Ok(_) => match build_profile_event(keys, profile_meta).await {
+            Ok(input) => to_backend_channel(back_sender, input),
+            Err(e) => Event::Error(e.to_string()),
+        },
+        Err(e) => Event::Error(e.to_string()),
     }
 }
 
@@ -296,23 +318,6 @@ fn handle_fetch_last_version(
     Event::FetchingLatestVersion
 }
 
-async fn handle_create_account(
-    profile: BasicProfile,
-    pool: &SqlitePool,
-    client_sender: &mut mpsc::Sender<NostrInput>,
-) -> Event {
-    tracing::info!("Creating account");
-    let profile_meta = profile.into();
-    match UserConfig::update_user_metadata_if_newer(pool, &profile_meta, Utc::now().naive_utc())
-        .await
-    {
-        Ok(_) => {
-            to_nostr_channel(client_sender, NostrInput::SendProfile(profile_meta));
-            Event::ProfileCreated
-        }
-        Err(e) => Event::Error(e.to_string()),
-    }
-}
 pub struct NostrState {
     keys: Keys,
     in_receiver: mpsc::Receiver<NostrInput>,
@@ -470,11 +475,11 @@ pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
 
 // ---------------------------------
 
-async fn process_async_with_event<E>(operation: impl Future<Output = Result<Event, E>>) -> Event
+async fn process_async_with_event<E>(op: impl Future<Output = Result<Event, E>>) -> Event
 where
     E: std::error::Error,
 {
-    match operation.await {
+    match op.await {
         Ok(result) => result,
         Err(e) => Event::Error(e.to_string()),
     }
@@ -492,9 +497,9 @@ pub fn try_send_to_channel<T>(
     }
 }
 
-fn to_nostr_channel(client_sender: &mut mpsc::Sender<NostrInput>, input: NostrInput) -> Event {
+fn to_nostr_channel(nostr_sender: &mut mpsc::Sender<NostrInput>, input: NostrInput) -> Event {
     try_send_to_channel(
-        client_sender,
+        nostr_sender,
         input,
         Event::NostrLoading,
         "Error sending to Nostr channel",
@@ -515,11 +520,11 @@ fn to_backend_channel(
 
 async fn handle_first_login(
     pool: &SqlitePool,
-    client_sender: &mut mpsc::Sender<NostrInput>,
+    nostr_sender: &mut mpsc::Sender<NostrInput>,
 ) -> Result<Event, Error> {
     if UserConfig::query_has_logged_in(pool).await? {
         let input = prepare_client(pool).await?;
-        to_nostr_channel(client_sender, input);
+        to_nostr_channel(nostr_sender, input);
         Ok(Event::None)
     } else {
         Ok(Event::FirstLogin)

@@ -1,4 +1,3 @@
-use nostr_sdk::types::contact;
 use std::str::FromStr;
 use std::time::Duration;
 use url::Url;
@@ -20,7 +19,6 @@ use super::{backend::BackEndInput, Event};
 
 #[derive(Debug, Clone)]
 pub enum NostrInput {
-    SendDMToRelays(DbEvent),
     PrepareClient {
         relays: Vec<DbRelay>,
         last_event: Option<DbEvent>,
@@ -33,10 +31,9 @@ pub enum NostrInput {
     ToggleRelayRead((DbRelay, bool)),
     ToggleRelayWrite((DbRelay, bool)),
     ConnectToRelay((DbRelay, Option<DbEvent>)),
-    SendContactListToRelay((DbRelay, Vec<DbContact>)),
+    SendEventToRelays(DbEvent),
     GetContactProfile(DbContact),
     GetContactListProfiles(Vec<DbContact>),
-    SendProfile(Metadata),
     CreateChannel,
     RequestEventsOf((DbRelay, Vec<DbContact>)),
 }
@@ -104,12 +101,6 @@ impl NostrSdkWrapper {
                 });
             }
 
-            NostrInput::SendProfile(metadata) => {
-                let keys_1 = keys.clone();
-                tokio::spawn(async move {
-                    run_and_send(send_profile(&client, &keys_1, metadata), &mut channel).await;
-                });
-            }
             NostrInput::GetContactProfile(db_contact) => {
                 tokio::spawn(async move {
                     run_and_send(get_contact_profile(&client, db_contact), &mut channel).await;
@@ -121,9 +112,10 @@ impl NostrSdkWrapper {
                         .await;
                 });
             }
-            NostrInput::SendDMToRelays(db_event) => {
+
+            NostrInput::SendEventToRelays(db_event) => {
                 tokio::spawn(async move {
-                    run_and_send(send_dm_to_relays(&client, db_event), &mut channel).await;
+                    run_and_send(send_event_to_relays(&client, db_event), &mut channel).await;
                 });
             }
 
@@ -181,16 +173,6 @@ impl NostrSdkWrapper {
                 tokio::spawn(async move {
                     run_and_send(
                         connect_to_relay(&client, &keys_1, db_relay, last_event),
-                        &mut channel,
-                    )
-                    .await;
-                });
-            }
-            NostrInput::SendContactListToRelay((db_relay, list)) => {
-                let keys_1 = keys.clone();
-                tokio::spawn(async move {
-                    run_and_send(
-                        send_contact_list_to(&keys_1, &client, &db_relay.url, &list),
                         &mut channel,
                     )
                     .await;
@@ -272,7 +254,7 @@ fn make_nostr_filters(
     let last_timestamp_secs: u64 = last_event
         .map(|e| {
             // syncronization problems with different machines
-            let earlier_time = e.created_at - chrono::Duration::minutes(10);
+            let earlier_time = e.local_creation - chrono::Duration::minutes(10);
             (earlier_time.timestamp_millis() / 1000) as u64
         })
         .unwrap_or(0);
@@ -320,10 +302,10 @@ pub async fn client_with_stream(
     (nostr_client, notifications_stream)
 }
 
-async fn send_dm_to_relays(client: &Client, event: DbEvent) -> Result<Event, Error> {
-    tracing::debug!("send_dm_to_relays");
-    let event_id = client.send_event(event.into()).await?;
-    Ok(Event::SentDirectMessage(event_id))
+async fn send_event_to_relays(client: &Client, db_event: DbEvent) -> Result<Event, Error> {
+    tracing::debug!("send_event_to_relays: {}", db_event.event_hash);
+    let event_hash = client.send_event(db_event.nostr_event()).await?;
+    Ok(Event::SentEventToRelays(event_hash))
 }
 
 async fn get_contact_profile(client: &Client, db_contact: DbContact) -> Result<Event, Error> {
@@ -331,7 +313,7 @@ async fn get_contact_profile(client: &Client, db_contact: DbContact) -> Result<E
     let filter = Filter::new()
         .author(db_contact.pubkey().to_string())
         .kind(Kind::Metadata);
-    let timeout = Some(Duration::from_secs(30));
+    let timeout = Some(Duration::from_secs(10));
     client.req_events_of(vec![filter], timeout).await;
     Ok(Event::RequestedContactProfile(db_contact))
 }
@@ -340,23 +322,15 @@ async fn get_contact_list_profile(
     client: &Client,
     db_contacts: Vec<DbContact>,
 ) -> Result<Event, Error> {
-    tracing::debug!("get_contact_list_profile");
+    tracing::debug!("get_contact_list_profile: {}", db_contacts.len());
     let all_pubkeys = db_contacts
         .iter()
         .map(|c| c.pubkey().to_string())
         .collect::<Vec<_>>();
     let filter = Filter::new().authors(all_pubkeys).kind(Kind::Metadata);
-    let timeout = Some(Duration::from_secs(30));
+    let timeout = Some(Duration::from_secs(10));
     client.req_events_of(vec![filter], timeout).await;
     Ok(Event::RequestedContactListProfiles)
-}
-
-async fn send_profile(client: &Client, keys: &Keys, meta: Metadata) -> Result<BackEndInput, Error> {
-    tracing::debug!("send_profile");
-    let builder = EventBuilder::set_metadata(meta);
-    let event = builder.to_event(keys)?;
-    client.send_event(event.clone()).await?;
-    Ok(BackEndInput::StorePendingEvent(event))
 }
 
 pub async fn create_channel(client: &Client) -> Result<Event, Error> {
@@ -372,33 +346,6 @@ pub async fn create_channel(client: &Client) -> Result<Event, Error> {
     let event_id = client.new_channel(metadata).await?;
 
     Ok(Event::ChannelCreated(event_id))
-}
-
-pub async fn send_contact_list_to(
-    // pool: &SqlitePool,
-    keys: &Keys,
-    client: &Client,
-    url: &Url,
-    list: &[DbContact],
-) -> Result<BackEndInput, Error> {
-    tracing::debug!("send_contact_list_to");
-    // let list = DbContact::fetch(pool).await?;
-    let c_list: Vec<Contact> = list.iter().map(|c| c.into()).collect();
-
-    let builder = EventBuilder::set_contact_list(c_list);
-    let event = builder.to_event(keys)?;
-
-    let _event_id = client.send_event_to(url.to_owned(), event.clone()).await?;
-
-    Ok(BackEndInput::StorePendingEvent(event))
-}
-
-pub fn build_dm(keys: &Keys, db_contact: &DbContact, content: &str) -> Result<BackEndInput, Error> {
-    tracing::debug!("build_dm");
-    let builder =
-        EventBuilder::new_encrypted_direct_msg(&keys, db_contact.pubkey().to_owned(), content)?;
-    let event = builder.to_event(keys)?;
-    Ok(BackEndInput::StorePendingEvent(event))
 }
 
 pub async fn add_relay(client: &Client, db_relay: DbRelay) -> Result<BackEndInput, Error> {
@@ -523,3 +470,51 @@ pub fn nostr_kinds() -> Vec<Kind> {
     ]
     .to_vec()
 }
+
+// ------- EVENT BUILDERS ---------
+//
+//
+
+pub async fn build_profile_event(keys: &Keys, metadata: Metadata) -> Result<BackEndInput, Error> {
+    tracing::debug!("send_profile");
+    let builder = EventBuilder::set_metadata(metadata.clone());
+    let ns_event = builder.to_event(keys)?;
+    Ok(BackEndInput::StorePendingMetadata((ns_event, metadata)))
+}
+
+pub async fn build_contact_list_event(
+    keys: &Keys,
+    list: &[DbContact],
+) -> Result<BackEndInput, Error> {
+    tracing::debug!("build_contact_list_event");
+    let c_list: Vec<Contact> = list.iter().map(|c| c.into()).collect();
+    let builder = EventBuilder::set_contact_list(c_list);
+    let ns_event = builder.to_event(keys)?;
+    // client
+    //     .send_event_to(url.to_owned(), ns_event.clone())
+    //     .await?;
+    Ok(BackEndInput::StorePendingContactList((
+        ns_event,
+        list.to_owned(),
+    )))
+}
+
+pub fn build_dm(
+    keys: &Keys,
+    db_contact: DbContact,
+    content: String,
+) -> Result<BackEndInput, Error> {
+    tracing::debug!("build_dm");
+    let builder =
+        EventBuilder::new_encrypted_direct_msg(&keys, db_contact.pubkey().to_owned(), &content)?;
+    let ns_event = builder.to_event(keys)?;
+    Ok(BackEndInput::StorePendingMessage {
+        ns_event,
+        content,
+        db_contact,
+    })
+}
+
+// -------  ---------
+//
+//

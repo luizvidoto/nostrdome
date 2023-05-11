@@ -3,7 +3,6 @@ use iced::{alignment, Length};
 
 use crate::components::{common_scrollable, contact_row, ContactRow};
 use crate::icon::{import_icon, plus_icon, refresh_icon, to_cloud_icon};
-use crate::net::events::frontend::SpecificEvent;
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
 use crate::style;
@@ -70,22 +69,17 @@ impl State {
                 Event::GotContacts(db_contacts) => {
                     self.contacts = db_contacts;
                 }
-                Event::EventInserted { specific_event, .. } => match specific_event {
-                    Some(SpecificEvent::ReceivedContactList(_)) => {
-                        conn.send(net::Message::FetchContacts)
+                Event::UpdatedContactMetadata { db_contact, .. } => {
+                    if let Some(contact) = self
+                        .contacts
+                        .iter_mut()
+                        .find(|c| c.pubkey() == db_contact.pubkey())
+                    {
+                        *contact = db_contact;
                     }
-                    Some(SpecificEvent::UpdatedContactMetadata(db_contact)) => {
-                        if let Some(contact) = self
-                            .contacts
-                            .iter_mut()
-                            .find(|c| c.pubkey() == db_contact.pubkey())
-                        {
-                            *contact = db_contact;
-                        }
-                    }
-                    _ => (),
-                },
+                }
                 Event::FileContactsImported(_)
+                | Event::ReceivedContactList { .. }
                 | Event::ContactCreated(_)
                 | Event::ContactUpdated(_)
                 | Event::ContactDeleted(_) => {

@@ -36,8 +36,7 @@ pub enum Message {
     ToggleRelayRead((DbRelay, bool)),
     ToggleRelayWrite((DbRelay, bool)),
     ConnectToRelay(DbRelay),
-    BuildDM((DbContact, String)),
-    SendDMToRelays(ChatMessage),
+    SendDM((DbContact, String)),
     SendContactListToRelay(DbRelay),
     CreateChannel,
 }

@@ -2,9 +2,7 @@ use std::path::PathBuf;
 
 use chrono::{Datelike, NaiveDateTime};
 use iced::subscription::Subscription;
-use iced::widget::{
-    button, column, container, image, row, scrollable, text, text_input, Image, Space,
-};
+use iced::widget::{button, column, container, image, row, scrollable, text, text_input, Image};
 use iced::{alignment, Alignment, Command, Length};
 use iced_aw::{Card, Modal};
 
@@ -13,7 +11,6 @@ use crate::components::{common_scrollable, contact_card, status_bar, StatusBar};
 use crate::consts::{DEFAULT_PROFILE_IMAGE_SMALL, YMD_FORMAT};
 use crate::db::DbContact;
 use crate::icon::{file_icon_regular, menu_bars_icon, send_icon};
-use crate::net::events::frontend::SpecificEvent;
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
 use crate::style;
@@ -304,45 +301,42 @@ impl State {
                 }
                 Command::none()
             }
-            Event::LocalPendingEvent { specific_event, .. }
-            | Event::EventInserted { specific_event, .. } => {
-                match specific_event {
-                    Some(SpecificEvent::UpdatedContactMetadata(db_contact)) => {
-                        self.update_contact(db_contact);
-                        Command::none()
-                    }
-                    Some(SpecificEvent::ReceivedDM((db_contact, msg))) => {
-                        self.update_contact(db_contact.clone());
+            Event::UpdatedContactMetadata { db_contact, .. } => {
+                self.update_contact(db_contact);
+                Command::none()
+            }
+            Event::PendingDM((db_contact, msg)) => {
+                self.update_contact(db_contact.clone());
+                self.messages.push(msg.clone());
+                self.messages
+                    .sort_by(|a, b| a.created_at.cmp(&b.created_at));
+                self.current_scroll_offset = scrollable::RelativeOffset::END;
+                //COMMAND
+                scrollable::snap_to(CHAT_SCROLLABLE_ID.clone(), self.current_scroll_offset)
+            }
+            Event::ReceivedDM {
+                chat_message: msg,
+                db_contact,
+                ..
+            } => {
+                self.update_contact(db_contact.clone());
 
-                        if self.active_contact.as_ref() == Some(&db_contact) {
-                            if msg.status.is_offline() {
-                                conn.send(net::Message::SendDMToRelays(msg.clone()));
-                            }
-                            // estou na conversa
-                            self.messages.push(msg.clone());
-                            self.messages
-                                .sort_by(|a, b| a.created_at.cmp(&b.created_at));
-                            self.current_scroll_offset = scrollable::RelativeOffset::END;
+                if self.active_contact.as_ref() == Some(&db_contact) {
+                    // if msg.status.is_offline() {
+                    //     conn.send(net::Message::SendDMToRelays(msg.clone()));
+                    // }
+                    // estou na conversa
+                    self.messages.push(msg.clone());
+                    self.messages
+                        .sort_by(|a, b| a.created_at.cmp(&b.created_at));
+                    self.current_scroll_offset = scrollable::RelativeOffset::END;
 
-                            //COMMAND
-                            scrollable::snap_to(
-                                CHAT_SCROLLABLE_ID.clone(),
-                                self.current_scroll_offset,
-                            )
-                        } else {
-                            // não estou na conversa
-                            conn.send(net::Message::AddToUnseenCount(db_contact));
-                            Command::none()
-                        }
-                    }
-                    Some(SpecificEvent::NewDMAndContact((db_contact, _))) => {
-                        self.contacts
-                            .push(contact_card::ContactCard::from_db_contact(&db_contact));
-                        // não estou na conversa
-                        conn.send(net::Message::AddToUnseenCount(db_contact));
-                        Command::none()
-                    }
-                    _ => Command::none(),
+                    //COMMAND
+                    scrollable::snap_to(CHAT_SCROLLABLE_ID.clone(), self.current_scroll_offset)
+                } else {
+                    // não estou na conversa
+                    conn.send(net::Message::AddToUnseenCount(db_contact));
+                    Command::none()
                 }
             }
             Event::ContactCreated(db_contact) => {
@@ -364,6 +358,7 @@ impl State {
         // println!("Update Contact: {}", &db_contact.pubkey().to_string());
         // dbg!(&db_contact);
 
+        // check if the active is the one who got a new message and update it
         if self.active_contact.as_ref() == Some(&db_contact) {
             self.active_contact = Some(db_contact.clone());
         }
@@ -374,6 +369,9 @@ impl State {
             .find(|c| c.contact.pubkey() == db_contact.pubkey())
         {
             found_card.update(contact_card::Message::ContactUpdated(db_contact.clone()));
+        } else {
+            self.contacts
+                .push(contact_card::ContactCard::from_db_contact(&db_contact));
         }
     }
 
@@ -415,7 +413,7 @@ impl State {
             }
             Message::DMSentPress => match (&self.active_contact, self.dm_msg.is_empty()) {
                 (Some(contact), false) => {
-                    conn.send(net::Message::BuildDM((
+                    conn.send(net::Message::SendDM((
                         contact.to_owned(),
                         self.dm_msg.clone(),
                     )));

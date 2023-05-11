@@ -21,15 +21,8 @@ pub enum Event {
     ContactCreated(DbContact),
     ContactUpdated(DbContact),
     ContactDeleted(DbContact),
-    EventInserted {
-        db_event: DbEvent,
-        specific_event: Option<SpecificEvent>,
-    },
-    LocalPendingEvent {
-        db_event: DbEvent,
-        specific_event: Option<SpecificEvent>,
-    },
-    // RelayEventDebugger((nostr_sdk::Url, Box<Event>)),
+    OtherKindEventInserted(DbEvent),
+    OtherPendingEvent(DbEvent),
     UpdateWithRelayResponse {
         relay_response: DbRelayResponse,
         db_event: DbEvent,
@@ -61,15 +54,41 @@ pub enum Event {
     Disconnected,
     FirstLoginStored,
     FinishedPreparing,
+    // --- Specific Events ---
+    ReceivedDM {
+        relay_url: nostr_sdk::Url,
+        db_contact: DbContact,
+        chat_message: ChatMessage,
+    },
+    ReceivedContactList {
+        relay_url: nostr_sdk::Url,
+        contact_list: Vec<DbContact>,
+    },
+    UpdatedContactMetadata {
+        relay_url: nostr_sdk::Url,
+        db_contact: DbContact,
+    },
+    UpdatedUserProfileMeta {
+        relay_url: nostr_sdk::Url,
+        metadata: nostr_sdk::Metadata,
+    },
     // --- General ---
     BackendClosed,
     LoggedOut,
     Error(String),
     None,
+    PendingDM((DbContact, ChatMessage)),
+    PendingContactList(DbEvent),
+    PendingMetadata(DbEvent),
+    SentEventToRelays(nostr_sdk::EventId),
 }
 impl std::fmt::Display for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Event::SentEventToRelays(event_id) => write!(f, "Sent Event to Relays: {}", event_id),
+            Event::PendingMetadata(_) => write!(f, "Pending Metadata"),
+            Event::PendingContactList(_) => write!(f, "Pending Contact List"),
+            Event::PendingDM(_) => write!(f, "Pending Direct Message"),
             Event::RequestedContactProfile(db_contact) => write!(
                 f,
                 "Requested Contact Profile Public Key: {}",
@@ -95,7 +114,7 @@ impl std::fmt::Display for Event {
             Event::LatestVersion(version) => write!(f, "Latest Version: {}", version),
             Event::FetchingLatestVersion => write!(f, "Fetching Latest Version"),
             Event::ProfileCreated => write!(f, "Profile Created"),
-            Event::LocalPendingEvent { .. } => write!(f, "Local Pending Event"),
+            Event::OtherPendingEvent { .. } => write!(f, "Local Pending Event"),
             Event::GotChatMessages((contact, messages)) => {
                 write!(
                     f,
@@ -115,7 +134,7 @@ impl std::fmt::Display for Event {
             Event::ContactCreated(contact) => write!(f, "Contact Created: {}", contact.pubkey()),
             Event::ContactUpdated(contact) => write!(f, "Contact Updated: {}", contact.pubkey()),
             Event::ContactDeleted(contact) => write!(f, "Contact Deleted: {}", contact.pubkey()),
-            Event::EventInserted { .. } => write!(f, "Event Inserted"),
+            Event::OtherKindEventInserted(_) => write!(f, "Confirmed Event Inserted"),
             Event::UpdateWithRelayResponse { relay_response, .. } => write!(
                 f,
                 "Update With Relay Response: {}",
@@ -148,52 +167,32 @@ impl std::fmt::Display for Event {
             Event::BackendClosed => write!(f, "Backend Closed"),
             Event::LoggedOut => write!(f, "Logged Out"),
             Event::Error(error) => write!(f, "Error: {}", error),
-            Event::None => write!(f, "None"),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum SpecificEvent {
-    ReceivedDM((DbContact, ChatMessage)),
-    NewDMAndContact((DbContact, ChatMessage)),
-    ReceivedContactList(Vec<DbContact>),
-    UpdatedContactMetadata(DbContact),
-    UpdatedUserProfileMeta(nostr_sdk::Metadata),
-}
-
-impl std::fmt::Display for SpecificEvent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SpecificEvent::UpdatedUserProfileMeta(_metadata) => {
+            Event::UpdatedUserProfileMeta { .. } => {
                 write!(f, "Updated User Profile Metadata")
             }
-            SpecificEvent::UpdatedContactMetadata(contact) => {
+            Event::UpdatedContactMetadata { db_contact, .. } => {
                 write!(
                     f,
                     "Updated Contact Metadata: Contact public key: {}",
-                    contact.pubkey()
+                    db_contact.pubkey()
                 )
             }
-            SpecificEvent::ReceivedContactList(contacts) => {
-                write!(f, "Relay Contacts Imported: {}", contacts.len())
+            Event::ReceivedContactList { contact_list, .. } => {
+                write!(f, "Relay Contacts Imported: {}", contact_list.len())
             }
-            SpecificEvent::ReceivedDM((contact, message)) => {
+            Event::ReceivedDM {
+                db_contact,
+                chat_message,
+                ..
+            } => {
                 write!(
                     f,
                     "Received DM: Contact public key: {}, Message: {}",
-                    contact.pubkey(),
-                    message.content
+                    db_contact.pubkey(),
+                    chat_message.content
                 )
             }
-            SpecificEvent::NewDMAndContact((contact, message)) => {
-                write!(
-                    f,
-                    "New DM and Contact: Contact public key: {}, Message: {}",
-                    contact.pubkey(),
-                    message.content
-                )
-            }
+            Event::None => write!(f, "None"),
         }
     }
 }

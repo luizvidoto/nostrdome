@@ -5,7 +5,7 @@ use iced_aw::{Card, Modal};
 
 use crate::components::text_input_group::TextInputGroup;
 use crate::components::{common_scrollable, inform_card, relay_row, RelayRow};
-use crate::consts::{CONTACTS_IMAGE, RELAYS_IMAGE, WELCOME_IMAGE};
+use crate::consts::{RELAYS_IMAGE, WELCOME_IMAGE};
 use crate::db::DbRelay;
 use crate::icon::{regular_circle_icon, solid_circle_icon};
 use crate::net::{self, BackEndConnection};
@@ -505,37 +505,34 @@ impl State {
     }
     pub fn backend_event(&mut self, event: net::events::Event, conn: &mut BackEndConnection) {
         match &mut self.step_view {
-            StepView::DownloadEvents { relays } => match event {
-                net::events::Event::GotRelays(db_relays) => {
-                    for db_r in &db_relays {
-                        conn.send(net::Message::RequestEventsOf(db_r.clone()));
-                    }
-                }
-                net::events::Event::RequestedEventsOf(db_relay) => {
-                    relays.insert(db_relay.url.clone(), EventData::new(&db_relay.url));
-                }
-                net::events::Event::EndOfStoredEvents((relay_url, _sub_id)) => {
-                    if let Some(ev_data) = relays.get_mut(&relay_url) {
-                        ev_data.done();
-                    }
-                }
-                net::events::Event::EventInserted {
-                    specific_event,
-                    db_event,
-                } => {
-                    tracing::warn!("EventInserted: {:?}", &db_event);
-                    match (db_event.from_relay, specific_event) {
-                        (Some(relay_url), Some(specific)) => {
-                            if let Some(ev_data) = relays.get_mut(&relay_url) {
-                                let event_str = format!("{}", specific.to_string());
-                                ev_data.add_event(&event_str);
-                            }
+            StepView::DownloadEvents { relays } => {
+                let event_str = event.to_string();
+                match event {
+                    net::events::Event::GotRelays(db_relays) => {
+                        for db_r in &db_relays {
+                            conn.send(net::Message::RequestEventsOf(db_r.clone()));
                         }
-                        _other => (),
                     }
+                    net::events::Event::RequestedEventsOf(db_relay) => {
+                        relays.insert(db_relay.url.clone(), EventData::new(&db_relay.url));
+                    }
+                    net::events::Event::EndOfStoredEvents((relay_url, _sub_id)) => {
+                        if let Some(ev_data) = relays.get_mut(&relay_url) {
+                            ev_data.done();
+                        }
+                    }
+                    net::events::Event::ReceivedDM { relay_url, .. }
+                    | net::events::Event::ReceivedContactList { relay_url, .. }
+                    | net::events::Event::UpdatedContactMetadata { relay_url, .. }
+                    | net::events::Event::UpdatedUserProfileMeta { relay_url, .. } => {
+                        if let Some(ev_data) = relays.get_mut(&relay_url) {
+                            let event_str = format!("{}", event_str);
+                            ev_data.add_event(&event_str);
+                        }
+                    }
+                    _ => (),
                 }
-                _ => (),
-            },
+            }
             StepView::Relays {
                 relays_added,
                 relays_suggestion,

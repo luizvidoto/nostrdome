@@ -60,8 +60,8 @@ impl DbChannel {
             id: None,
             event_id: db_event.event_id()?,
             event_hash: db_event.event_hash,
-            created_at: db_event.created_at,
-            updated_at: db_event.created_at,
+            created_at: db_event.local_creation,
+            updated_at: db_event.local_creation,
             channel_content,
         })
     }

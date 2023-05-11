@@ -35,7 +35,7 @@ impl EventLike for nostr_sdk::Event {
 
 impl EventLike for DbEvent {
     fn created_at(&self) -> i64 {
-        self.created_at.timestamp_millis()
+        self.local_creation.timestamp_millis()
     }
     fn pubkey(&self) -> XOnlyPublicKey {
         self.pubkey.clone()
@@ -50,7 +50,7 @@ pub struct ChatMessage {
     /// Decrypted message content
     pub content: String,
     pub is_from_user: bool,
-    pub petname: Option<String>,
+    pub select_name: String,
     pub event_id: i64,
     pub event_hash: EventId,
     pub status: MessageStatus,
@@ -58,11 +58,23 @@ pub struct ChatMessage {
 
 impl ChatMessage {
     pub fn from_db_message(
+        keys: &nostr_sdk::Keys,
         db_message: &DbMessage,
-        is_from_user: bool,
+        contact: &DbContact,
+    ) -> Result<Self, Error> {
+        let content = db_message.decrypt_message(keys)?;
+        Ok(Self::from_db_message_content(
+            keys, db_message, contact, &content,
+        )?)
+    }
+
+    pub fn from_db_message_content(
+        keys: &nostr_sdk::Keys,
+        db_message: &DbMessage,
         contact: &DbContact,
         content: &str,
     ) -> Result<Self, Error> {
+        let is_from_user = db_message.im_author(&keys.public_key());
         let msg_id = db_message.id()?;
         let event_id = db_message.event_id()?;
         let event_hash = db_message.event_hash()?;
@@ -70,7 +82,7 @@ impl ChatMessage {
             content: content.to_owned(),
             created_at: db_message.created_at(),
             is_from_user,
-            petname: contact.get_petname(),
+            select_name: contact.select_name(),
             msg_id,
             event_id,
             event_hash,
