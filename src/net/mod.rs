@@ -40,7 +40,7 @@ pub struct BackendState {
 }
 impl BackendState {
     pub fn new(keys: &Keys) -> Self {
-        let (sender, receiver) = mpsc::channel(100);
+        let (sender, receiver) = mpsc::channel(1024);
         Self {
             sender,
             receiver,
@@ -169,12 +169,7 @@ impl BackendState {
                     ),
                     Err(e) => Event::Error(e.to_string()),
                 },
-                Message::SubscribeToEvents => match DbEvent::fetch_last(pool).await {
-                    Ok(last_event) => {
-                        to_nostr_channel(nostr_sender, NostrInput::SubscribeToEvents(last_event))
-                    }
-                    Err(e) => Event::Error(e.to_string()),
-                },
+
                 Message::RefreshContactsProfile => match DbContact::fetch(pool).await {
                     Ok(db_contacts) => {
                         to_nostr_channel(
@@ -329,8 +324,8 @@ pub struct NostrState {
 }
 impl NostrState {
     pub async fn new(keys: &Keys) -> Self {
-        let (in_sender, in_receiver) = mpsc::channel(100);
-        let (out_sender, out_receiver) = mpsc::channel(100);
+        let (in_sender, in_receiver) = mpsc::channel(1024);
+        let (out_sender, out_receiver) = mpsc::channel(1024);
         let (client, notifications_stream) = NostrSdkWrapper::new(&keys).await;
         Self {
             keys: keys.to_owned(),

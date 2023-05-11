@@ -1,10 +1,16 @@
+use std::path::PathBuf;
+
 use chrono::{Datelike, NaiveDateTime};
 use iced::subscription::Subscription;
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Space};
+use iced::widget::{
+    button, column, container, image, row, scrollable, text, text_input, Image, Space,
+};
 use iced::{alignment, Alignment, Command, Length};
+use iced_aw::{Card, Modal};
 
+use crate::components::text::title;
 use crate::components::{common_scrollable, contact_card, status_bar, StatusBar};
-use crate::consts::YMD_FORMAT;
+use crate::consts::{DEFAULT_PROFILE_IMAGE_SMALL, YMD_FORMAT};
 use crate::db::DbContact;
 use crate::icon::{file_icon_regular, menu_bars_icon, send_icon};
 use crate::net::events::frontend::SpecificEvent;
@@ -13,11 +19,96 @@ use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::types::{chat_message, ChatMessage};
 use crate::utils::{contact_matches_search_selected_name, from_naive_utc_to_local};
-use crate::widget::{Button, Column, Container, Element};
+use crate::widget::{Button, Container, Element};
 use once_cell::sync::Lazy;
 
 // static CONTACTS_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
 static CHAT_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
+
+pub enum ModalState {
+    Off,
+    Profile {
+        name: String,
+        profile: nostr_sdk::Metadata,
+        profile_image_handle: image::Handle,
+    },
+}
+impl ModalState {
+    pub fn view<'a>(&'a self, underlay: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+        let view: Element<_> = match self {
+            ModalState::Off => underlay.into(),
+            ModalState::Profile {
+                name,
+                profile,
+                profile_image_handle,
+            } => {
+                let profile_image = Image::new(profile_image_handle.to_owned());
+                let modal = Modal::new(true, underlay, move || {
+                    let title = title(name);
+                    let mut content = column![].spacing(5);
+                    if let Some(name) = &profile.name {
+                        content = content.push(column![text("name"), text(name)].spacing(5));
+                    }
+                    if let Some(display_name) = &profile.display_name {
+                        content = content
+                            .push(column![text("display_name"), text(display_name)].spacing(5));
+                    }
+                    if let Some(picture_url) = &profile.picture {
+                        content = content
+                            .push(column![text("picture_url"), text(picture_url)].spacing(5));
+                    }
+                    if let Some(about) = &profile.about {
+                        content = content.push(column![text("about"), text(about)].spacing(5));
+                    }
+                    if let Some(website) = &profile.website {
+                        content = content.push(column![text("website"), text(website)].spacing(5));
+                    }
+                    if let Some(banner_url) = &profile.banner {
+                        content =
+                            content.push(column![text("banner_url"), text(banner_url)].spacing(5));
+                    }
+                    if let Some(nip05) = &profile.nip05 {
+                        content = content.push(column![text("nip05"), text(nip05)].spacing(5));
+                    }
+                    if let Some(lud06) = &profile.lud06 {
+                        content = content.push(column![text("lud06"), text(lud06)].spacing(5));
+                    }
+                    if let Some(lud16) = &profile.lud16 {
+                        content = content.push(column![text("lud16"), text(lud16)].spacing(5));
+                    }
+
+                    let modal_body = content;
+                    Card::new(title, modal_body)
+                        .max_width(MODAL_WIDTH)
+                        .on_close(Message::CloseModal)
+                        .into()
+                })
+                .backdrop(Message::CloseModal)
+                .on_esc(Message::CloseModal);
+                modal.into()
+            }
+        };
+
+        view
+    }
+
+    fn contact_profile(
+        select_name: String,
+        profile_meta: nostr_sdk::Metadata,
+        profile_image_path: Option<&PathBuf>,
+    ) -> ModalState {
+        let profile_image_handle = if let Some(path) = profile_image_path {
+            image::Handle::from_path(path)
+        } else {
+            image::Handle::from_memory(DEFAULT_PROFILE_IMAGE_SMALL)
+        };
+        Self::Profile {
+            name: select_name,
+            profile: profile_meta,
+            profile_image_handle,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -33,6 +124,7 @@ pub enum Message {
     SearchContactInputChange(String),
     Scrolled(scrollable::RelativeOffset),
     OpenContactProfile,
+    CloseModal,
 }
 
 pub struct State {
@@ -45,6 +137,7 @@ pub struct State {
     show_only_profile: bool,
     current_scroll_offset: scrollable::RelativeOffset,
     status_bar: StatusBar,
+    modal_state: ModalState,
 }
 
 impl State {
@@ -60,6 +153,7 @@ impl State {
             show_only_profile: false,
             current_scroll_offset: scrollable::RelativeOffset::END,
             status_bar: StatusBar::new(),
+            modal_state: ModalState::Off,
         }
     }
 
@@ -152,9 +246,6 @@ impl State {
                 .into()
         };
 
-        // let main_content = container(row![first, second])
-        //     .height(Length::Fill)
-        //     .width(Length::Fill);
         let main_content = iced_aw::split::Split::new(
             first,
             second,
@@ -166,7 +257,9 @@ impl State {
         .min_size_second(300);
         let status_bar = self.status_bar.view().map(Message::StatusBarMessage);
 
-        column![main_content, status_bar].into()
+        let underlay = column![main_content, status_bar];
+
+        self.modal_state.view(underlay)
     }
     pub fn backend_event(
         &mut self,
@@ -286,10 +379,19 @@ impl State {
 
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
         match message {
+            Message::CloseModal => {
+                self.modal_state = ModalState::Off;
+            }
             Message::OpenContactProfile => {
                 if let Some(contact) = &self.active_contact {
-                    // self.profile = Some(contact.clone());
-                    tracing::info!("Open Contact Profile: {}", contact.pubkey());
+                    if let Some(profile_meta) = contact.get_profile_meta() {
+                        let profile_image_path = contact.profile_image_sized(net::ImageSize::Small);
+                        self.modal_state = ModalState::contact_profile(
+                            contact.select_name(),
+                            profile_meta,
+                            profile_image_path.as_ref(),
+                        )
+                    }
                 }
             }
             Message::StatusBarMessage(status_msg) => {
@@ -371,46 +473,6 @@ fn chat_day_divider<Message: 'static>(date: NaiveDateTime) -> Element<'static, M
         .center_y()
         .into()
 }
-
-// fn create_chat_content<'a>(messages: &[ChatMessage]) -> Element<'a, Message> {
-//     let chat_content: Element<_> = if messages.is_empty() {
-//         text("No messages").into()
-//     } else {
-//         let (chat_content, _): (Column<_>, Option<NaiveDateTime>) = messages.iter().fold(
-//             (column![], None),
-//             |(mut col, last_date), msg: &ChatMessage| {
-//                 if let (Some(last_date), msg_date) = (last_date, msg.created_at) {
-//                     if last_date.day() != msg_date.day() {
-//                         col = col.push(chat_day_divider(msg_date.clone()));
-//                     }
-//                 } else {
-//                     col = col.push(chat_day_divider(msg.created_at.clone()));
-//                 }
-
-//                 (
-//                     col.push(msg.view().map(Message::ChatMessage)),
-//                     Some(msg.created_at),
-//                 )
-//             },
-//         );
-
-//         container(
-//             common_scrollable(chat_content)
-//                 .height(Length::Fill)
-//                 .id(CHAT_SCROLLABLE_ID.clone())
-//                 .on_scroll(Message::Scrolled),
-//         )
-//         .into()
-//     };
-
-//     container(chat_content)
-//         .center_x()
-//         .center_y()
-//         .width(Length::Fill)
-//         .height(Length::Fill)
-//         .style(style::Container::ChatContainer)
-//         .into()
-// }
 
 fn create_chat_content<'a>(messages: &[ChatMessage]) -> Element<'a, Message> {
     if messages.is_empty() {
@@ -505,3 +567,4 @@ fn header_action_buttons<'a>() -> Element<'a, Message> {
 const PIC_WIDTH: u16 = 50;
 const NAVBAR_HEIGHT: f32 = 50.0;
 const CHAT_INPUT_HEIGHT: f32 = 50.0;
+const MODAL_WIDTH: f32 = 400.0;

@@ -154,7 +154,6 @@ impl StepView {
     }
     fn download_events_view(conn: &mut BackEndConnection) -> Self {
         conn.send(net::Message::FetchRelays);
-        conn.send(net::Message::SubscribeToEvents);
         Self::DownloadEvents {
             relays: HashMap::new(),
         }
@@ -523,15 +522,18 @@ impl State {
                 net::events::Event::EventInserted {
                     specific_event,
                     db_event,
-                } => match (db_event.from_relay, specific_event) {
-                    (Some(relay_url), Some(specific)) => {
-                        if let Some(ev_data) = relays.get_mut(&relay_url) {
-                            let event_str = format!("{}", specific.to_string());
-                            ev_data.add_event(&event_str);
+                } => {
+                    tracing::warn!("EventInserted: {:?}", &db_event);
+                    match (db_event.from_relay, specific_event) {
+                        (Some(relay_url), Some(specific)) => {
+                            if let Some(ev_data) = relays.get_mut(&relay_url) {
+                                let event_str = format!("{}", specific.to_string());
+                                ev_data.add_event(&event_str);
+                            }
                         }
+                        _other => (),
                     }
-                    _ => (),
-                },
+                }
                 _ => (),
             },
             StepView::Relays {

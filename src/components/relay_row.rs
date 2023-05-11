@@ -129,7 +129,7 @@ impl RelayRow {
             |state| async move {
                 match state {
                     State::Start { id } => {
-                        let (sender, receiver) = mpsc::channel(100);
+                        let (sender, receiver) = mpsc::channel(1024);
                         (
                             MessageWrapper::new(id, Message::Ready(RelayRowConnection(sender))),
                             State::Idle { receiver, id },

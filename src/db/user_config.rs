@@ -20,7 +20,7 @@ pub struct UserConfig {
 
 impl UserConfig {
     pub async fn setup_user_config(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-        tracing::info!("setup_user_config");
+        tracing::debug!("setup_user_config");
         let query = r#"
             INSERT INTO user_config 
                 (id, has_logged_in, profile_meta, 
@@ -33,7 +33,7 @@ impl UserConfig {
     }
 
     pub async fn store_first_login(pool: &SqlitePool) -> Result<(), Error> {
-        tracing::info!("store_first_login");
+        tracing::debug!("store_first_login");
         let query = "UPDATE user_config SET has_logged_in = 1 WHERE id = 1;";
         sqlx::query(query).execute(pool).await?;
         Ok(())
@@ -51,7 +51,7 @@ impl UserConfig {
     }
 
     pub async fn fetch(pool: &SqlitePool) -> Result<Self, Error> {
-        tracing::info!("Fetch UserConfig");
+        tracing::debug!("Fetch UserConfig");
         let query = "SELECT * FROM user_config WHERE id = 1;";
         let user = sqlx::query_as::<_, UserConfig>(query)
             .fetch_one(pool)
@@ -64,6 +64,7 @@ impl UserConfig {
         profile_meta: &nostr_sdk::Metadata,
         last_update: NaiveDateTime,
     ) -> Result<(), Error> {
+        tracing::debug!("update_user_metadata_if_newer");
         if Self::should_update_user_metadata(pool, &last_update).await? {
             Self::update_user_metadata(profile_meta, &last_update, pool).await?;
         }
@@ -75,6 +76,7 @@ impl UserConfig {
         last_update: &NaiveDateTime,
         pool: &SqlitePool,
     ) -> Result<(), Error> {
+        tracing::debug!("update_user_metadata");
         let query =
             "UPDATE user_config SET profile_meta=?, profile_meta_last_update=? WHERE id = 1;";
         sqlx::query(query)
@@ -89,6 +91,7 @@ impl UserConfig {
         pool: &SqlitePool,
         last_update: &NaiveDateTime,
     ) -> Result<bool, Error> {
+        tracing::debug!("should_update_user_metadata");
         let user = Self::fetch(pool).await?;
         let should_update = match user.profile_meta_last_update {
             Some(previous_update) if &previous_update > last_update => {
@@ -105,6 +108,7 @@ impl UserConfig {
         pool: &SqlitePool,
         path: &PathBuf,
     ) -> Result<(), Error> {
+        tracing::debug!("update_user_profile_picture");
         let query = "UPDATE user_config SET local_profile_image=? WHERE id = 1;";
         sqlx::query(query).bind(path.to_str()).execute(pool).await?;
         Ok(())
@@ -114,21 +118,9 @@ impl UserConfig {
         pool: &SqlitePool,
         path: &PathBuf,
     ) -> Result<(), Error> {
+        tracing::debug!("update_user_banner_picture");
         let query = "UPDATE user_config SET local_banner_image=? WHERE id = 1;";
         sqlx::query(query).bind(path.to_str()).execute(pool).await?;
-        Ok(())
-    }
-
-    // insert main_subscription_id
-    pub(crate) async fn update_main_subcription_id(
-        pool: &SqlitePool,
-        subscription_id: nostr_sdk::SubscriptionId,
-    ) -> Result<(), Error> {
-        let query = "UPDATE user_config SET main_subscription_id=? WHERE id = 1;";
-        sqlx::query(query)
-            .bind(subscription_id.to_string())
-            .execute(pool)
-            .await?;
         Ok(())
     }
 }

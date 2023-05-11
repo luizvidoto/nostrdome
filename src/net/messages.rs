@@ -29,7 +29,6 @@ pub enum Message {
     // -------- NOSTR CLIENT MESSAGES
     RequestEventsOf(DbRelay),
     RefreshContactsProfile,
-    SubscribeToEvents,
     FetchRelayServer(nostr_sdk::Url),
     FetchRelayServers,
     AddRelay(DbRelay),

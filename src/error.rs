@@ -1,7 +1,7 @@
 use nostr_sdk::{prelude::TagKind, EventId};
 use thiserror::Error;
 
-use crate::db::DbContactError;
+use crate::{db::DbContactError, net::ImageSize};
 
 // pub type Result<T> = std::result::Result<T, Error>;
 
@@ -15,6 +15,8 @@ pub enum Error {
     ImageInvalidExtension(String),
     #[error("Invalid image format: {0}")]
     ImageInvalidFormat(String),
+    #[error("Invalid image size: {0:?}")]
+    InvalidImageSize(ImageSize),
 
     #[error("GITHUB_TOKEN not found")]
     GitHubTokenNotFound,

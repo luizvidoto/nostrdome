@@ -327,17 +327,16 @@ impl Settings {
             .height(Length::Fill)
             .width(Length::FillPortion(3));
 
-        let content: Element<_> = container(
+        let underlay = container(
             row![menubar, view_ct]
                 .width(Length::Fill)
                 .height(Length::Fill),
         )
         .style(style::Container::Default)
         .width(Length::Fill)
-        .height(Length::Fill)
-        .into();
+        .height(Length::Fill);
 
-        self.modal_state.view(content)
+        self.modal_state.view(underlay)
     }
 }
 
@@ -548,10 +547,12 @@ impl ModalState {
         }
     }
 
-    pub fn view<'a>(&'a self, underlay: Element<'a, Message>) -> Element<'a, Message> {
+    pub fn view<'a>(&'a self, underlay: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
         let view: Element<_> = match self {
-            ModalState::Profile { contact } => profile_view(contact, underlay),
-            ModalState::SendContactList { relays, .. } => send_contact_list_view(relays, underlay),
+            ModalState::Profile { contact } => profile_view(contact, underlay.into()),
+            ModalState::SendContactList { relays, .. } => {
+                send_contact_list_view(relays, underlay.into())
+            }
             ModalState::ContactDetails {
                 db_contact: _,
                 modal_petname_input,
@@ -627,7 +628,7 @@ impl ModalState {
             ModalState::ImportList {
                 imported_contacts,
                 file_importer,
-            } => import_list_view(imported_contacts, file_importer, underlay),
+            } => import_list_view(imported_contacts, file_importer, underlay.into()),
             ModalState::Off => underlay.into(),
         };
 

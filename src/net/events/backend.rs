@@ -113,6 +113,7 @@ async fn handle_profile_picture_update(
     pool: &SqlitePool,
     path: PathBuf,
 ) -> Event {
+    tracing::debug!("handle_profile_picture_update");
     if keys.public_key() == public_key {
         // user
         match UserConfig::update_user_profile_picture(pool, &path).await {
@@ -140,6 +141,7 @@ async fn handle_profile_banner_update(
     pool: &SqlitePool,
     path: PathBuf,
 ) -> Event {
+    tracing::debug!("handle_profile_banner_update");
     if keys.public_key() == public_key {
         // user
         match UserConfig::update_user_banner_picture(pool, &path).await {
@@ -169,6 +171,7 @@ pub async fn insert_specific_kind(
     back_sender: &mut mpsc::Sender<BackEndInput>,
     nostr_sender: &mut mpsc::Sender<NostrInput>,
 ) -> Result<Option<SpecificEvent>, Error> {
+    tracing::debug!("insert_specific_kind");
     let event = match db_event.kind {
         nostr_sdk::Kind::Metadata => {
             handle_metadata_event(pool, keys, back_sender, db_event).await?
@@ -229,7 +232,7 @@ async fn handle_contact_list(
     relay_url: Option<&Url>,
 ) -> Result<Event, Error> {
     if event.pubkey == keys.public_key() {
-        tracing::info!("Received a ContactList");
+        tracing::debug!("Received a ContactList");
 
         if let Some(last_event) =
             DbEvent::fetch_last_kind(pool, nostr_sdk::Kind::ContactList).await?
@@ -254,7 +257,7 @@ async fn handle_contact_list(
         if let Some(url) = relay_url {
             db_event = db_event.with_relay(url);
         }
-        let (row_id, rows_changed) = DbEvent::insert(pool, &db_event).await?;
+        let (row_id, _rows_changed) = DbEvent::insert(pool, &db_event).await?;
         db_event = db_event.with_id(row_id);
 
         let db_contacts: Vec<_> = db_event
@@ -274,14 +277,7 @@ async fn handle_contact_list(
         }
 
         for db_contact in &db_contacts {
-            match insert_contact_from_event(
-                keys,
-                pool,
-                &db_event.created_at_from_relay(),
-                db_contact,
-            )
-            .await
-            {
+            match insert_contact_from_event(keys, pool, db_contact).await {
                 Ok(event) => {
                     if let Err(e) = back_sender.try_send(BackEndInput::Ok(event)) {
                         tracing::error!("Error sending message to backend: {:?}", e);
@@ -312,7 +308,7 @@ async fn handle_contact_list(
 }
 
 fn handle_recommend_relay(db_event: &DbEvent) -> Option<SpecificEvent> {
-    tracing::info!("--- RecommendRelay ---");
+    tracing::debug!("handle_recommend_relay");
     dbg!(&db_event);
     None
 }
@@ -324,48 +320,87 @@ async fn handle_dm(
     keys: &Keys,
     nostr_sender: &mut mpsc::Sender<NostrInput>,
 ) -> Result<Option<SpecificEvent>, Error> {
-    let db_message = DbMessage::from_db_event(db_event, relay_url)?;
-    tracing::debug!("Inserting external message");
-    // Insert message into the database and get the message ID
-    let msg_id = DbMessage::insert_message(pool, &db_message).await?;
-    let db_message = db_message.with_id(msg_id);
+    tracing::debug!("handle_dm");
+    // Parse the event and insert the message into the database
+    let db_message = insert_message_from_event(db_event, relay_url, pool).await?;
 
     // Decrypt the message content
     let content = db_message.decrypt_message(keys)?;
 
-    // Determine if the message is from the user or received from another user
-    let (contact_pubkey, is_from_user) = if db_message.im_author(&keys.public_key()) {
-        (db_message.to_pubkey(), true)
-    } else {
-        (db_message.from_pubkey(), false)
-    };
+    // If the message is from the user to themselves, log the error and return None
+    if db_message.from_pubkey() == db_message.to_pubkey() {
+        tracing::error!("Message is from the user to himself");
+        return Ok(None);
+    }
 
-    // Fetch the associated contact from the database
-    let event = match DbContact::fetch_one(pool, &contact_pubkey).await? {
-        Some(mut db_contact) => {
-            // Update last message and contact in the database
-            let chat_message =
-                ChatMessage::from_db_message(&db_message, is_from_user, &db_contact, &content)?;
-            db_contact = DbContact::new_message(pool, &db_contact, &chat_message).await?;
-            SpecificEvent::ReceivedDM((db_contact, chat_message))
-        }
-        None => {
-            // Create a new contact and insert it into the database
-            let mut db_contact = DbContact::new(&contact_pubkey);
-            insert_contact_from_event(keys, pool, &db_event.created_at_from_relay(), &db_contact)
-                .await?;
+    // Determine the contact's public key and whether the message is from the user
+    let (contact_pubkey, is_from_user) = determine_sender_receiver(&db_message, &keys.public_key());
 
-            // Update last message and contact in the database
-            let chat_message =
-                ChatMessage::from_db_message(&db_message, is_from_user, &db_contact, &content)?;
-            db_contact = DbContact::new_message(pool, &db_contact, &chat_message).await?;
-
-            SpecificEvent::NewDMAndContact((db_contact, chat_message))
-        }
-    };
+    // Fetch or create the associated contact, update the contact's message, and return the event
+    let event = fetch_or_create_contact(
+        pool,
+        keys,
+        &contact_pubkey,
+        &db_message,
+        is_from_user,
+        &content,
+    )
+    .await?;
 
     Ok(Some(event))
 }
+
+async fn insert_message_from_event(
+    db_event: &DbEvent,
+    relay_url: Option<&Url>,
+    pool: &SqlitePool,
+) -> Result<DbMessage, Error> {
+    tracing::debug!("insert_message_from_event");
+    let db_message = DbMessage::from_db_event(db_event, relay_url)?;
+    let msg_id = DbMessage::insert_message(pool, &db_message).await?;
+    Ok(db_message.with_id(msg_id))
+}
+
+fn determine_sender_receiver(
+    db_message: &DbMessage,
+    user_pubkey: &XOnlyPublicKey,
+) -> (XOnlyPublicKey, bool) {
+    tracing::debug!("determine_sender_receiver");
+    if db_message.im_author(user_pubkey) {
+        tracing::info!("Message is from the user");
+        (db_message.to_pubkey(), true)
+    } else {
+        tracing::info!("Message is from contact");
+        (db_message.from_pubkey(), false)
+    }
+}
+
+async fn fetch_or_create_contact(
+    pool: &SqlitePool,
+    keys: &Keys,
+    contact_pubkey: &XOnlyPublicKey,
+    db_message: &DbMessage,
+    is_from_user: bool,
+    content: &str,
+) -> Result<SpecificEvent, Error> {
+    tracing::debug!("fetch_or_create_contact");
+    let mut db_contact = match DbContact::fetch_one(pool, contact_pubkey).await? {
+        Some(db_contact) => db_contact,
+        None => {
+            tracing::info!("Creating new contact with pubkey: {}", contact_pubkey);
+            let db_contact = DbContact::new(contact_pubkey);
+            insert_contact_from_event(keys, pool, &db_contact).await?;
+            db_contact
+        }
+    };
+
+    tracing::debug!("Update last message and contact in the database");
+    let chat_message =
+        ChatMessage::from_db_message(db_message, is_from_user, &db_contact, content)?;
+    db_contact = DbContact::new_message(pool, db_contact, &chat_message).await?;
+    Ok(SpecificEvent::NewDMAndContact((db_contact, chat_message)))
+}
+
 // Handle metadata events and update user profile or contact metadata accordingly.
 async fn handle_metadata_event(
     pool: &SqlitePool,
@@ -373,6 +408,7 @@ async fn handle_metadata_event(
     sender: &mut mpsc::Sender<BackEndInput>,
     db_event: &DbEvent,
 ) -> Result<Option<SpecificEvent>, Error> {
+    tracing::debug!("handle_metadata_event");
     tracing::info!(
         "Received metadata event for public key: {}",
         db_event.pubkey
@@ -402,6 +438,7 @@ async fn handle_user_metadata_event(
     metadata: &Metadata,
     last_update: &NaiveDateTime,
 ) -> Result<Option<SpecificEvent>, Error> {
+    tracing::debug!("handle_user_metadata_event");
     if UserConfig::should_update_user_metadata(pool, last_update).await? {
         UserConfig::update_user_metadata(metadata, last_update, pool).await?;
         Ok(Some(SpecificEvent::UpdatedUserProfileMeta(
@@ -420,6 +457,7 @@ async fn handle_contact_metadata_event(
     pubkey: &XOnlyPublicKey,
     last_update: &NaiveDateTime,
 ) -> Result<Option<SpecificEvent>, Error> {
+    tracing::debug!("handle_contact_metadata_event");
     if let Some(mut db_contact) = DbContact::fetch_one(pool, pubkey).await? {
         if should_update_contact_metadata(&db_contact, last_update) {
             db_contact = db_contact.with_profile_meta(metadata, *last_update);
@@ -449,6 +487,7 @@ async fn download_images(
     metadata: &Metadata,
     public_key: &XOnlyPublicKey,
 ) -> Result<(), Error> {
+    tracing::debug!("download_images");
     // use a tokio::spawn and channel to download images in parallel
     if let Some(picture_url) = &metadata.picture {
         let mut sender_1 = sender.clone();
@@ -457,7 +496,7 @@ async fn download_images(
         tokio::spawn(async move {
             match download_image(&pic_1, &pub_1, ImageKind::Profile).await {
                 Ok(path) => {
-                    tracing::info!("Downloaded profile picture for contact: {:?}", &path);
+                    tracing::info!("Downloaded profile picture for pubkey: {:?}", &path);
                     if let Err(e) =
                         sender_1.try_send(BackEndInput::ProfilePictureDownloaded((pub_1, path)))
                     {
@@ -479,7 +518,7 @@ async fn download_images(
         tokio::spawn(async move {
             match download_image(&banner_1, &pub_1, ImageKind::Banner).await {
                 Ok(path) => {
-                    tracing::info!("Downloaded banner picture for contact: {:?}", &path);
+                    tracing::info!("Downloaded banner picture for pubkey: {:?}", &path);
                     if let Err(e) =
                         sender_1.try_send(BackEndInput::ProfileBannerDownloaded((pub_1, path)))
                     {
@@ -557,6 +596,7 @@ pub async fn insert_event(
     relay_url: &Url,
     event: nostr_sdk::Event,
 ) -> Result<Event, Error> {
+    tracing::debug!("insert_event");
     match event.kind {
         nostr_sdk::Kind::ContactList => {
             handle_contact_list(
@@ -591,6 +631,7 @@ pub async fn insert_pending_event(
     nostr_sender: &mut mpsc::Sender<NostrInput>,
     event: nostr_sdk::Event,
 ) -> Result<Event, Error> {
+    tracing::debug!("insert_pending_event");
     handle_insert_event(pool, keys, back_sender, nostr_sender, event, None, true).await
 }
 
@@ -599,6 +640,7 @@ pub async fn relay_response_ok(
     db_event: &DbEvent,
     relay_url: &Url,
 ) -> Result<Event, Error> {
+    tracing::info!("Updating relay response");
     let mut relay_response = DbRelayResponse::from_response(
         true,
         db_event.event_id()?,
@@ -618,12 +660,13 @@ pub async fn relay_response_ok(
 pub async fn insert_contact_from_event(
     keys: &Keys,
     pool: &SqlitePool,
-    event_date: &NaiveDateTime,
     db_contact: &DbContact,
 ) -> Result<Event, Error> {
+    tracing::debug!("Inserting contact from event");
     // Check if the contact is the same as the user
     if &keys.public_key() == db_contact.pubkey() {
-        return Err(Error::SameContactInsert);
+        tracing::warn!("{:?}", Error::SameContactInsert);
+        return Ok(Event::None);
     }
 
     // Check if the contact is already in the database
@@ -642,6 +685,7 @@ pub async fn update_contact_basic(
     pool: &SqlitePool,
     db_contact: &DbContact,
 ) -> Result<Event, Error> {
+    tracing::debug!("update_contact_basic");
     if &keys.public_key() == db_contact.pubkey() {
         return Err(Error::SameContactUpdate);
     }
@@ -654,6 +698,7 @@ pub async fn update_contact(
     pool: &SqlitePool,
     db_contact: &DbContact,
 ) -> Result<Event, Error> {
+    tracing::debug!("update_contact");
     if &keys.public_key() == db_contact.pubkey() {
         return Err(Error::SameContactUpdate);
     }
@@ -667,9 +712,11 @@ pub async fn add_new_contact(
     db_contact: &DbContact,
     nostr_sender: &mut mpsc::Sender<NostrInput>,
 ) -> Result<Event, Error> {
+    tracing::debug!("add_new_contact");
     // Check if the contact is the same as the user
     if &keys.public_key() == db_contact.pubkey() {
-        return Err(Error::SameContactInsert);
+        tracing::warn!("{:?}", Error::SameContactInsert);
+        return Ok(Event::None);
     }
 
     DbContact::insert(pool, &db_contact).await?;
@@ -678,16 +725,23 @@ pub async fn add_new_contact(
 }
 
 pub async fn delete_contact(pool: &SqlitePool, db_contact: &DbContact) -> Result<Event, Error> {
+    tracing::debug!("delete_contact");
     DbContact::delete(pool, &db_contact).await?;
     Ok(Event::ContactDeleted(db_contact.clone()))
 }
 
 pub async fn prepare_client(pool: &SqlitePool) -> Result<NostrInput, Error> {
-    tracing::info!("Preparing client");
+    tracing::debug!("prepare_client");
+    tracing::info!("Fetching relays and last event to nostr client");
     let relays = DbRelay::fetch(pool, None).await?;
     let last_event = DbEvent::fetch_last(pool).await?;
+    let contact_list = DbContact::fetch(pool).await?;
 
-    Ok(NostrInput::PrepareClient { relays, last_event })
+    Ok(NostrInput::PrepareClient {
+        relays,
+        last_event,
+        contact_list,
+    })
 }
 
 pub async fn on_relay_message(
@@ -780,6 +834,7 @@ pub async fn add_to_unseen_count(
     pool: &SqlitePool,
     mut db_contact: DbContact,
 ) -> Result<Event, Error> {
+    tracing::debug!("add_to_unseen_count");
     db_contact = DbContact::add_to_unseen_count(pool, &mut db_contact).await?;
     Ok(Event::ContactUpdated(db_contact))
 }
@@ -815,25 +870,30 @@ pub async fn fetch_and_decrypt_chat(
 }
 
 pub async fn fetch_relays_responses(pool: &SqlitePool, event_id: i64) -> Result<Event, Error> {
+    tracing::debug!("Fetching relay responses for event: {}", event_id);
     let responses = DbRelayResponse::fetch_by_event(pool, event_id).await?;
     Ok(Event::GotRelayResponses(responses))
 }
 
 pub async fn db_add_relay(pool: &SqlitePool, db_relay: DbRelay) -> Result<Event, Error> {
+    tracing::debug!("Adding relay: {}", db_relay.url);
     DbRelay::insert(pool, &db_relay).await?;
     Ok(Event::RelayCreated(db_relay))
 }
 
 pub async fn fetch_contacts(pool: &SqlitePool) -> Result<Event, Error> {
+    tracing::debug!("fetch_contacts");
     let contacts = DbContact::fetch(pool).await?;
     Ok(Event::GotContacts(contacts))
 }
 
 pub async fn db_delete_relay(pool: &SqlitePool, db_relay: DbRelay) -> Result<Event, Error> {
+    tracing::debug!("db_delete_relay");
     DbRelay::delete(pool, &db_relay).await?;
     Ok(Event::RelayDeleted(db_relay))
 }
 pub async fn fetch_relays(pool: &SqlitePool) -> Result<Event, Error> {
+    tracing::debug!("fetch_relays");
     let relays = DbRelay::fetch(pool, None).await?;
     Ok(Event::GotRelays(relays))
 }

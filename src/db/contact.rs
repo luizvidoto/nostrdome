@@ -275,11 +275,10 @@ impl DbContact {
         })
     }
 
-    pub fn local_profile_image_str_small(&self) -> Option<String> {
+    pub fn profile_image_sized(&self, size: ImageSize) -> Option<PathBuf> {
         self.local_profile_image.as_ref().map(|path| {
-            let small_image_path = get_png_image_path(path, ImageKind::Profile, ImageSize::Small);
-            let path_str = small_image_path.to_str().unwrap_or("");
-            path_str.to_string()
+            let image_path = get_png_image_path(path, ImageKind::Profile, size);
+            image_path
         })
     }
 
@@ -292,11 +291,15 @@ impl DbContact {
 
     pub async fn new_message(
         pool: &SqlitePool,
-        db_contact: &DbContact,
+        mut db_contact: DbContact,
         chat_message: &ChatMessage,
     ) -> Result<DbContact> {
         // do not update unseen count here because we may be in the chat
         if Some(&chat_message.created_at) >= db_contact.last_message_date.as_ref() {
+            db_contact.updated_at = Utc::now().naive_utc();
+            db_contact.last_message_content = Some(chat_message.content.to_owned());
+            db_contact.last_message_date = Some(chat_message.created_at);
+
             let sql = r#"
                 UPDATE contact 
                 SET updated_at=?, last_message_content=?, last_message_date=?
@@ -304,9 +307,14 @@ impl DbContact {
             "#;
 
             sqlx::query(sql)
-                .bind(Utc::now().timestamp_millis())
-                .bind(&chat_message.content)
-                .bind(chat_message.created_at.timestamp_millis())
+                .bind(&db_contact.updated_at.timestamp_millis())
+                .bind(&db_contact.last_message_content)
+                .bind(
+                    &db_contact
+                        .last_message_date
+                        .as_ref()
+                        .map(|d| d.timestamp_millis()),
+                )
                 .bind(&db_contact.pubkey.to_string())
                 .execute(pool)
                 .await?;
@@ -314,11 +322,7 @@ impl DbContact {
             tracing::debug!("Can't update last_message with an older message.");
         }
 
-        let db_contact_updated = Self::fetch_one(pool, &db_contact.pubkey).await?.ok_or(
-            DbContactError::NotFoundContact(db_contact.pubkey().to_string()),
-        )?;
-
-        Ok(db_contact_updated)
+        Ok(db_contact)
     }
 
     pub async fn add_to_unseen_count(

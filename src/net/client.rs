@@ -11,40 +11,53 @@ use std::path::{Path, PathBuf};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
-use crate::consts::{APP_PROJECT_DIRS, SMALL_PROFILE_PIC_HEIGHT, SMALL_PROFILE_PIC_WIDTH};
+use crate::consts::APP_PROJECT_DIRS;
 use crate::error::Error;
 
+#[derive(Debug, Clone, Copy)]
 pub enum ImageSize {
     Small,
-    Large,
+    Medium,
+    Original,
 }
 impl ImageSize {
     pub fn to_str(&self) -> &str {
         match self {
             ImageSize::Small => "small",
-            ImageSize::Large => "large",
+            ImageSize::Medium => "medium",
+            ImageSize::Original => "",
+        }
+    }
+    pub fn get_width_height(&self) -> Option<(u32, u32)> {
+        match self {
+            ImageSize::Small => Some((SMALL_PROFILE_PIC_WIDTH, SMALL_PROFILE_PIC_HEIGHT)),
+            ImageSize::Medium => Some((MEDIUM_PROFILE_PIC_WIDTH, MEDIUM_PROFILE_PIC_HEIGHT)),
+            ImageSize::Original => None,
         }
     }
 }
-
+#[derive(Debug, Clone, Copy)]
 pub enum ImageKind {
     Profile,
     Banner,
 }
 impl ImageKind {
-    pub fn to_str(&self, image_type: &str, image_size: ImageSize) -> String {
+    pub fn to_str(&self) -> &str {
         match self {
-            ImageKind::Profile => format!("profile_1_{}.{}", image_size.to_str(), image_type),
-            ImageKind::Banner => format!("banner_1_{}.{}", image_size.to_str(), image_type),
+            ImageKind::Profile => "profile_1",
+            ImageKind::Banner => "banner_1",
         }
     }
+}
+
+fn image_filename(kind: ImageKind, size: ImageSize, image_type: &str) -> String {
+    format!("{}_{}.{}", kind.to_str(), size.to_str(), image_type)
 }
 
 pub fn get_png_image_path(base_path: &Path, kind: ImageKind, size: ImageSize) -> PathBuf {
     // Always use PNG as the image format for the resized images
     let image_type = "png";
-
-    let file_name = kind.to_str(image_type, size);
+    let file_name = image_filename(kind, size, image_type);
     base_path.with_file_name(file_name)
 }
 
@@ -82,38 +95,35 @@ pub async fn download_image(
         .split("/")
         .nth(1)
         .ok_or(Error::ImageInvalidContentType(content_type_str.to_owned()))?;
-    let image_path = images_dir.join(kind.to_str(image_type, ImageSize::Large));
-    let mut dest = File::create(&image_path).await?;
+    let original_path = images_dir.join(image_filename(kind, ImageSize::Original, image_type));
+    let mut dest = File::create(&original_path).await?;
     let mut stream = response.bytes_stream().map_err(Error::ReqwestStreamError);
     while let Some(item) = stream.next().await {
         let chunk = item?;
         dest.write_all(&chunk).await?;
     }
 
-    let small_image_path = images_dir.join(kind.to_str("png", ImageSize::Small));
-    resize_and_save_image(
-        &image_path,
-        &small_image_path,
-        SMALL_PROFILE_PIC_WIDTH,
-        SMALL_PROFILE_PIC_HEIGHT,
-    )?;
+    resize_and_save_image(&original_path, &images_dir, kind, ImageSize::Medium)?;
+    resize_and_save_image(&original_path, &images_dir, kind, ImageSize::Small)?;
 
-    Ok(image_path)
+    Ok(original_path)
 }
 
 pub fn resize_and_save_image(
-    input_path: &Path,
-    output_path: &Path,
-    desired_width: u32,
-    desired_height: u32,
+    original_path: &PathBuf,
+    images_dir: &PathBuf,
+    kind: ImageKind,
+    size: ImageSize,
 ) -> Result<(), Error> {
-    let image = image::open(input_path)?;
-
-    let resized_image = image.resize(
-        desired_width,
-        desired_height,
-        image::imageops::FilterType::Lanczos3,
-    );
+    let output_filename = image_filename(kind, size, "png");
+    tracing::debug!("file: {}", &output_filename);
+    tracing::debug!("resizing: {} - size: {}", kind.to_str(), size.to_str());
+    let output_path = images_dir.join(output_filename);
+    let image = image::open(original_path)?;
+    let (width, height) = size
+        .get_width_height()
+        .ok_or(Error::InvalidImageSize(size.clone()))?;
+    let resized_image = image.resize(width, height, image::imageops::FilterType::Lanczos3);
 
     // Save the resized image as a PNG, regardless of the input format
     resized_image.save_with_format(output_path, ImageFormat::Png)?;
@@ -182,3 +192,7 @@ pub async fn fetch_latest_version(client: reqwest::Client) -> Result<String, Err
 }
 
 const IMAGES_FOLDER_NAME: &str = "images";
+pub(crate) const SMALL_PROFILE_PIC_WIDTH: u32 = 50;
+pub(crate) const SMALL_PROFILE_PIC_HEIGHT: u32 = 50;
+pub(crate) const MEDIUM_PROFILE_PIC_WIDTH: u32 = 200;
+pub(crate) const MEDIUM_PROFILE_PIC_HEIGHT: u32 = 200;
