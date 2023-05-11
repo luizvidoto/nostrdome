@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::MessageStatus;
 use crate::icon::{check_icon, double_check_icon, xmark_icon};
+use crate::utils::from_naive_utc_to_local;
 use crate::widget::Element;
 use crate::{
     db::{DbContact, DbEvent, DbMessage},
@@ -94,10 +95,15 @@ impl ChatMessage {
         };
 
         // TODO: to local timezone
-        let time_str = self.created_at.time().format("%H:%M").to_string();
+        let local_time = from_naive_utc_to_local(self.created_at);
+        let local_time = local_time.time().format("%H:%M").to_string();
         let data_cp = column![
             // container(text("")).height(10.0),
-            container(text(&time_str).style(style::Text::ChatMessageDate).size(16))
+            container(
+                text(&local_time)
+                    .style(style::Text::ChatMessageDate)
+                    .size(16)
+            )
         ];
 
         let status = {

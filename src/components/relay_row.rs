@@ -1,5 +1,5 @@
 use crate::db::DbRelay;
-use crate::icon::{delete_icon, download_icon, solid_circle_icon};
+use crate::icon::{delete_icon, solid_circle_icon};
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
 use crate::style;

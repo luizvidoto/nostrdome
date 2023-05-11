@@ -6,7 +6,7 @@ use std::{
     str::FromStr,
 };
 
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Local, NaiveDateTime, Offset};
 use nostr_sdk::prelude::*;
 use serde::de::DeserializeOwned;
 
@@ -122,6 +122,10 @@ pub fn contact_matches_search_selected_name(contact: &DbContact, search: &str) -
     selected_name
         .to_lowercase()
         .contains(&search.to_lowercase())
+}
+
+pub fn from_naive_utc_to_local(naive_utc: NaiveDateTime) -> DateTime<Local> {
+    DateTime::from_utc(naive_utc, Local::now().offset().fix())
 }
 
 pub fn contact_matches_search_full(contact: &DbContact, search: &str) -> bool {

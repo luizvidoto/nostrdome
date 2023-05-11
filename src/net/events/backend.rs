@@ -757,7 +757,7 @@ pub async fn on_relay_message(
             Event::None
         }
         RelayMessage::Auth { challenge } => {
-            tracing::info!("Relay message: Auth Challenge: {}", challenge);
+            tracing::warn!("Relay message: Auth Challenge: {}", challenge);
             Event::None
         }
         RelayMessage::Count {

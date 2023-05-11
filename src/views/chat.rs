@@ -4,6 +4,7 @@ use iced::widget::{button, column, container, row, scrollable, text, text_input,
 use iced::{alignment, Alignment, Command, Length};
 
 use crate::components::{common_scrollable, contact_card, status_bar, StatusBar};
+use crate::consts::YMD_FORMAT;
 use crate::db::DbContact;
 use crate::icon::{file_icon_regular, menu_bars_icon, send_icon};
 use crate::net::events::frontend::SpecificEvent;
@@ -11,7 +12,7 @@ use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::types::{chat_message, ChatMessage};
-use crate::utils::contact_matches_search_selected_name;
+use crate::utils::{contact_matches_search_selected_name, from_naive_utc_to_local};
 use crate::widget::{Button, Column, Container, Element};
 use once_cell::sync::Lazy;
 
@@ -359,7 +360,8 @@ impl State {
 }
 
 fn chat_day_divider<Message: 'static>(date: NaiveDateTime) -> Element<'static, Message> {
-    let text_container = container(text(date.format("%Y-%m-%d").to_string()))
+    let local_date = from_naive_utc_to_local(date);
+    let text_container = container(text(local_date.format(YMD_FORMAT).to_string()))
         .style(style::Container::ChatDateDivider)
         .padding([5, 10]);
     container(text_container)
@@ -370,38 +372,81 @@ fn chat_day_divider<Message: 'static>(date: NaiveDateTime) -> Element<'static, M
         .into()
 }
 
+// fn create_chat_content<'a>(messages: &[ChatMessage]) -> Element<'a, Message> {
+//     let chat_content: Element<_> = if messages.is_empty() {
+//         text("No messages").into()
+//     } else {
+//         let (chat_content, _): (Column<_>, Option<NaiveDateTime>) = messages.iter().fold(
+//             (column![], None),
+//             |(mut col, last_date), msg: &ChatMessage| {
+//                 if let (Some(last_date), msg_date) = (last_date, msg.created_at) {
+//                     if last_date.day() != msg_date.day() {
+//                         col = col.push(chat_day_divider(msg_date.clone()));
+//                     }
+//                 } else {
+//                     col = col.push(chat_day_divider(msg.created_at.clone()));
+//                 }
+
+//                 (
+//                     col.push(msg.view().map(Message::ChatMessage)),
+//                     Some(msg.created_at),
+//                 )
+//             },
+//         );
+
+//         container(
+//             common_scrollable(chat_content)
+//                 .height(Length::Fill)
+//                 .id(CHAT_SCROLLABLE_ID.clone())
+//                 .on_scroll(Message::Scrolled),
+//         )
+//         .into()
+//     };
+
+//     container(chat_content)
+//         .center_x()
+//         .center_y()
+//         .width(Length::Fill)
+//         .height(Length::Fill)
+//         .style(style::Container::ChatContainer)
+//         .into()
+// }
+
 fn create_chat_content<'a>(messages: &[ChatMessage]) -> Element<'a, Message> {
-    let chat_content: Element<_> = if messages.is_empty() {
-        text("No messages").into()
-    } else {
-        let (chat_content, _): (Column<_>, Option<NaiveDateTime>) = messages.iter().fold(
-            (column![], None),
-            |(mut col, last_date), msg: &ChatMessage| {
-                if let (Some(last_date), msg_date) = (last_date, msg.created_at) {
-                    if last_date.day() != msg_date.day() {
-                        col = col.push(chat_day_divider(msg_date.clone()));
-                    }
-                } else {
-                    col = col.push(chat_day_divider(msg.created_at.clone()));
-                }
+    if messages.is_empty() {
+        return container(text("No messages"))
+            .center_x()
+            .center_y()
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(style::Container::ChatContainer)
+            .into();
+    }
 
-                (
-                    col.push(msg.view().map(Message::ChatMessage)),
-                    Some(msg.created_at),
-                )
-            },
-        );
+    let mut col = column![];
+    let mut last_date: Option<NaiveDateTime> = None;
 
-        container(
-            common_scrollable(chat_content)
-                .height(Length::Fill)
-                .id(CHAT_SCROLLABLE_ID.clone())
-                .on_scroll(Message::Scrolled),
-        )
-        .into()
-    };
+    for msg in messages {
+        let msg_date = msg.created_at;
 
-    container(chat_content)
+        if let Some(last) = last_date {
+            if last.day() != msg_date.day() {
+                col = col.push(chat_day_divider(msg_date.clone()));
+            }
+        } else {
+            col = col.push(chat_day_divider(msg_date.clone()));
+        }
+
+        col = col.push(msg.view().map(Message::ChatMessage));
+        last_date = Some(msg_date);
+    }
+
+    let scrollable = common_scrollable(col)
+        .height(Length::Fill)
+        .id(CHAT_SCROLLABLE_ID.clone())
+        .on_scroll(Message::Scrolled);
+
+    container(scrollable)
         .center_x()
         .center_y()
         .width(Length::Fill)
@@ -421,9 +466,10 @@ fn chat_navbar<'a>(active_contact: &'a DbContact) -> Container<'a, Message> {
 }
 
 fn header_details<'a>(db_contact: &'a DbContact) -> Button<'a, Message> {
-    let last_message_date = db_contact
+    let local_message_date = db_contact
         .last_message_date()
-        .map(|date| format!("last seen {}", date.format("%Y-%m-%d")))
+        .map(from_naive_utc_to_local)
+        .map(|date| format!("last seen {}", date.format(YMD_FORMAT)))
         .unwrap_or("".into());
     let user_name: Element<_> = if let Some(petname) = db_contact.get_petname() {
         row![
@@ -439,7 +485,7 @@ fn header_details<'a>(db_contact: &'a DbContact) -> Button<'a, Message> {
         text(db_contact.select_name()).size(20).into()
     };
 
-    button(column![user_name, text(last_message_date).size(16)])
+    button(column![user_name, text(local_message_date).size(16)])
         .padding([5, 0, 0, 5])
         .style(style::Button::Invisible)
         .on_press(Message::OpenContactProfile)

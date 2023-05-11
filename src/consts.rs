@@ -6,3 +6,4 @@ pub(crate) const CONTACTS_IMAGE: &[u8] = include_bytes!("../assets/contacts_img_
 
 pub(crate) const SMALL_PROFILE_PIC_WIDTH: u32 = 50;
 pub(crate) const SMALL_PROFILE_PIC_HEIGHT: u32 = 50;
+pub(crate) const YMD_FORMAT: &'static str = "%Y-%m-%d";

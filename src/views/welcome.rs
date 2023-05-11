@@ -160,7 +160,7 @@ impl StepView {
         }
     }
     fn loading_client(conn: &mut BackEndConnection) -> StepView {
-        // conn.send(net::Message::PrepareClient);
+        conn.send(net::Message::PrepareClient);
         Self::LoadingClient
     }
     fn get_step(&self) -> u8 {

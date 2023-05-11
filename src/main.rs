@@ -21,7 +21,7 @@ use iced::{
 };
 use net::{backend_connect, events::Event, BackEndConnection};
 use nostr_sdk::Keys;
-use tracing_appender::{non_blocking, rolling};
+// use tracing_appender::{non_blocking, rolling};
 use tracing_subscriber::{
     fmt::SubscriberBuilder, prelude::__tracing_subscriber_SubscriberExt, EnvFilter,
 };

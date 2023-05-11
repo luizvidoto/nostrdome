@@ -3,10 +3,10 @@ use iced::widget::{button, column, container, image, row, text};
 use iced::{alignment, Length};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::consts::{SMALL_PROFILE_PIC_HEIGHT, SMALL_PROFILE_PIC_WIDTH};
+use crate::consts::{SMALL_PROFILE_PIC_HEIGHT, SMALL_PROFILE_PIC_WIDTH, YMD_FORMAT};
 use crate::db::DbContact;
 use crate::style;
-use crate::utils::format_pubkey;
+use crate::utils::{format_pubkey, from_naive_utc_to_local};
 use crate::widget::Element;
 
 #[derive(Debug, Clone)]
@@ -66,22 +66,7 @@ impl ContactCard {
             }
             CardMode::Full => {
                 // --- TOP ROW ---
-                let last_date_cp: Element<_> = match self.contact.last_message_date() {
-                    Some(date) => {
-                        let now = Utc::now().naive_utc();
-                        let date_format = if date.day() == now.day() {
-                            "%H:%M"
-                        } else {
-                            "%Y-%m-%d"
-                        };
-
-                        container(text(&date.format(date_format)).size(18.0))
-                            .align_x(alignment::Horizontal::Right)
-                            .width(Length::Fill)
-                            .into()
-                    }
-                    None => text("").into(),
-                };
+                let last_date_cp = self.make_last_date();
                 let card_top_row = container(
                     row![text(self.contact.select_name()).size(24), last_date_cp,].spacing(5),
                 )
@@ -135,6 +120,28 @@ impl ContactCard {
                 style::Button::ContactCard
             })
             .into()
+    }
+
+    fn make_last_date<'a>(&'a self) -> Element<'a, Message> {
+        match self.contact.last_message_date() {
+            Some(date) => {
+                let local_day = from_naive_utc_to_local(date);
+                let local_now = from_naive_utc_to_local(Utc::now().naive_utc());
+                let date_format = if local_day.day() == local_now.day() {
+                    "%H:%M"
+                } else {
+                    // TODO: get local system language
+                    // settings menu to change it
+                    YMD_FORMAT
+                };
+
+                container(text(&local_day.format(date_format)).size(18.0))
+                    .align_x(alignment::Horizontal::Right)
+                    .width(Length::Fill)
+                    .into()
+            }
+            None => text("").into(),
+        }
     }
 
     fn name_element(&self, is_pic: bool) -> Element<'static, Message> {

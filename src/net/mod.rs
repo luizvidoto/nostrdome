@@ -162,9 +162,13 @@ impl BackendState {
                         .await
                 }
                 // --------- NOSTR MESSAGES ------------
-                Message::RequestEventsOf(db_relay) => {
-                    to_nostr_channel(nostr_sender, NostrInput::RequestEventsOf(db_relay))
-                }
+                Message::RequestEventsOf(db_relay) => match DbContact::fetch(pool).await {
+                    Ok(contact_list) => to_nostr_channel(
+                        nostr_sender,
+                        NostrInput::RequestEventsOf((db_relay, contact_list)),
+                    ),
+                    Err(e) => Event::Error(e.to_string()),
+                },
                 Message::SubscribeToEvents => match DbEvent::fetch_last(pool).await {
                     Ok(last_event) => {
                         to_nostr_channel(nostr_sender, NostrInput::SubscribeToEvents(last_event))
