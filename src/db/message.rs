@@ -9,10 +9,46 @@ use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
 use super::{DbEvent, UserConfig};
 
+pub struct TagInfo {
+    pub from_pubkey: XOnlyPublicKey,
+    pub to_pubkey: XOnlyPublicKey,
+    pub event_id: i64,
+    pub event_hash: EventId,
+}
+
+impl TagInfo {
+    pub fn from_db_event(db_event: &DbEvent) -> Result<Self, FromDbEventError> {
+        let tag = db_event.tags.get(0).ok_or(FromDbEventError::NoTags)?;
+        match tag {
+            nostr_sdk::Tag::PubKey(to_pub, _url) => Ok(Self {
+                from_pubkey: db_event.pubkey,
+                to_pubkey: to_pub.clone(),
+                event_id: db_event.event_id()?,
+                event_hash: db_event.event_hash,
+            }),
+            _ => Err(FromDbEventError::WrongTag),
+        }
+    }
+    pub fn contact_pubkey(&self, keys: &Keys) -> Result<XOnlyPublicKey, Error> {
+        let user_pubkey = &keys.public_key();
+        if user_pubkey == &self.from_pubkey {
+            Ok(self.to_pubkey.to_owned())
+        } else if user_pubkey == &self.to_pubkey {
+            Ok(self.from_pubkey.to_owned())
+        } else {
+            Err(Error::UnknownChatMessage(
+                self.from_pubkey.to_string(),
+                self.to_pubkey.to_string(),
+            ))
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbMessage {
     id: Option<i64>,
     encrypted_content: String,
+    contact_pubkey: XOnlyPublicKey,
     from_pubkey: XOnlyPublicKey,
     to_pubkey: XOnlyPublicKey,
     created_at: chrono::NaiveDateTime,
@@ -32,6 +68,9 @@ impl DbMessage {
     }
     pub fn is_unseen(&self) -> bool {
         self.status.is_unseen()
+    }
+    pub fn contact_chat(&self) -> XOnlyPublicKey {
+        self.contact_pubkey.to_owned()
     }
     pub fn to_pubkey(&self) -> XOnlyPublicKey {
         self.to_pubkey.to_owned()
@@ -77,15 +116,16 @@ impl DbMessage {
         self
     }
 
-    pub fn new(db_event: &DbEvent) -> Result<Self, Error> {
-        let (to_pub, event_id, event_hash) = Self::info_from_tags(&db_event)?;
+    pub fn new(db_event: &DbEvent, contact_pubkey: &XOnlyPublicKey) -> Result<Self, Error> {
+        let info = TagInfo::from_db_event(&db_event)?;
         Ok(Self {
             id: None,
+            contact_pubkey: contact_pubkey.to_owned(),
             encrypted_content: db_event.content.to_owned(),
-            from_pubkey: db_event.pubkey.clone(),
-            to_pubkey: to_pub,
-            event_id: Some(event_id),
-            event_hash: Some(event_hash),
+            from_pubkey: info.from_pubkey,
+            to_pubkey: info.to_pubkey,
+            event_id: Some(info.event_id),
+            event_hash: Some(info.event_hash),
             relay_url: None,
             status: MessageStatus::Offline,
             created_at: db_event.local_creation,
@@ -93,9 +133,12 @@ impl DbMessage {
         })
     }
 
-    pub(crate) fn confirmed_message(db_event: &DbEvent) -> Result<Self, Error> {
+    pub(crate) fn confirmed_message(
+        db_event: &DbEvent,
+        contact_pubkey: &XOnlyPublicKey,
+    ) -> Result<Self, Error> {
         let confirmed_at = db_event.remote_creation().ok_or(Error::NotConfirmedEvent)?;
-        let msg = Self::new(db_event)?
+        let msg = Self::new(db_event, contact_pubkey)?
             .with_relay_url(db_event.relay_url.as_ref())
             .with_status(MessageStatus::Delivered)
             .with_confirmed_at(confirmed_at);
@@ -110,19 +153,6 @@ impl DbMessage {
         } else {
             nip04::decrypt(&secret_key, &self.from_pubkey, &self.encrypted_content)
                 .map_err(|e| Error::DecryptionError(e.to_string()))
-        }
-    }
-
-    fn info_from_tags(
-        db_event: &DbEvent,
-    ) -> Result<(XOnlyPublicKey, i64, EventId), FromDbEventError> {
-        let tag = db_event.tags.get(0).ok_or(FromDbEventError::NoTags)?;
-        match tag {
-            nostr_sdk::Tag::PubKey(to_pub, _url) => {
-                let event_id = db_event.event_id()?;
-                Ok((to_pub.clone(), event_id, db_event.event_hash))
-            }
-            _ => Err(FromDbEventError::WrongTag),
         }
     }
 
@@ -147,12 +177,13 @@ impl DbMessage {
 
     pub async fn insert_message(pool: &SqlitePool, db_message: &DbMessage) -> Result<i64, Error> {
         let sql = r#"
-            INSERT OR IGNORE INTO message (content, from_pubkey, to_pubkey, created_at, confirmed_at, status, relay_url, event_id, event_hash)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            INSERT OR IGNORE INTO message (content, contact_pubkey, from_pubkey, to_pubkey, created_at, confirmed_at, status, relay_url, event_id, event_hash)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
         "#;
 
         let output = sqlx::query(sql)
             .bind(&db_message.encrypted_content)
+            .bind(&db_message.contact_pubkey.to_string())
             .bind(&db_message.from_pubkey.to_string())
             .bind(&db_message.to_pubkey.to_string())
             .bind(&db_message.created_at.timestamp_millis())
@@ -177,7 +208,8 @@ impl DbMessage {
         relay_url: &nostr_sdk::Url,
         mut db_message: DbMessage,
     ) -> Result<DbMessage, Error> {
-        tracing::info!("Confirming message: {:?}", &db_message);
+        tracing::info!("Confirming message");
+        tracing::debug!("{:?}", &db_message);
         let now_utc = UserConfig::get_corrected_time(pool)
             .await
             .unwrap_or(Utc::now().naive_utc());
@@ -205,8 +237,26 @@ impl DbMessage {
             .bind(&msg_id)
             .execute(pool)
             .await?;
-        tracing::info!("confirmed message: {:?}", &db_message);
         Ok(db_message)
+    }
+
+    pub async fn fetch_chat(
+        pool: &SqlitePool,
+        contact_pubkey: &XOnlyPublicKey,
+    ) -> Result<Vec<DbMessage>, Error> {
+        let sql = r#"
+            SELECT *
+            FROM message
+            WHERE contact_pubkey=?
+            ORDER BY created_at
+        "#;
+
+        let messages = sqlx::query_as::<_, DbMessage>(sql)
+            .bind(&contact_pubkey.to_string())
+            .fetch_all(pool)
+            .await?;
+
+        Ok(messages)
     }
 
     pub async fn message_seen(pool: &SqlitePool, db_message: &mut DbMessage) -> Result<(), Error> {
@@ -249,6 +299,10 @@ impl sqlx::FromRow<'_, SqliteRow> for DbMessage {
             .map(|url| url_or_err(&url, "relay_url"))
             .transpose()?;
 
+        let contact_pubkey = pubkey_or_err(
+            &row.try_get::<String, &str>("contact_pubkey")?,
+            "contact_pubkey",
+        )?;
         let from_pubkey =
             pubkey_or_err(&row.try_get::<String, &str>("from_pubkey")?, "from_pubkey")?;
         let to_pubkey = pubkey_or_err(&row.try_get::<String, &str>("to_pubkey")?, "to_pubkey")?;
@@ -260,6 +314,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbMessage {
             id: row.get::<Option<i64>, &str>("msg_id"),
             event_id: Some(row.try_get::<i64, &str>("event_id")?),
             encrypted_content: row.try_get::<String, &str>("content")?,
+            contact_pubkey,
             from_pubkey,
             to_pubkey,
             created_at,
@@ -304,36 +359,5 @@ impl MessageStatus {
             MessageStatus::Delivered => false,
             MessageStatus::Seen => false,
         }
-    }
-}
-
-pub struct DbChat<'a> {
-    pub from_pubkey: &'a XOnlyPublicKey,
-    pub to_pubkey: &'a XOnlyPublicKey,
-}
-
-impl<'a> DbChat<'a> {
-    pub fn new(from_pubkey: &'a XOnlyPublicKey, to_pubkey: &'a XOnlyPublicKey) -> Self {
-        Self {
-            from_pubkey,
-            to_pubkey,
-        }
-    }
-
-    pub async fn fetch_chat(&self, pool: &SqlitePool) -> Result<Vec<DbMessage>, Error> {
-        let sql = r#"
-            SELECT *
-            FROM message
-            WHERE (from_pubkey = ?1 AND to_pubkey = ?2) OR (from_pubkey = ?2 AND to_pubkey = ?1)
-            ORDER BY created_at
-        "#;
-
-        let messages = sqlx::query_as::<_, DbMessage>(sql)
-            .bind(self.from_pubkey.to_string())
-            .bind(self.to_pubkey.to_string())
-            .fetch_all(pool)
-            .await?;
-
-        Ok(messages)
     }
 }

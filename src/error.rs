@@ -57,6 +57,8 @@ pub enum Error {
     SystemTimeBeforeUnixEpoch,
 
     // General errors
+    #[error("Unkown chat message: from_pubkey:{0} - to_pubkey:{1}")]
+    UnknownChatMessage(String, String),
     #[error("Event need to be confirmed")]
     NotConfirmedEvent,
     #[error("Event is pending: {0}")]

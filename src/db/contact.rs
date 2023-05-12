@@ -299,7 +299,6 @@ impl DbContact {
             let now_utc = UserConfig::get_corrected_time(pool)
                 .await
                 .unwrap_or(Utc::now().naive_utc());
-
             db_contact.updated_at = now_utc;
             db_contact.last_message_content = Some(chat_message.content.to_owned());
             db_contact.last_message_date = Some(chat_message.display_time);
@@ -323,7 +322,7 @@ impl DbContact {
                 .execute(pool)
                 .await?;
         } else {
-            tracing::debug!("Can't update last_message with an older message.");
+            tracing::info!("Can't update last_message with an older message.");
         }
 
         Ok(db_contact)

@@ -290,7 +290,11 @@ impl State {
                     Command::none()
                 }
             }
-            Event::UpdateWithRelayResponse { db_message, .. } => {
+            Event::RelayConfirmation {
+                db_message,
+                db_contact,
+                ..
+            } => {
                 if let Some(msg) = &db_message {
                     if let Ok(msg_id) = msg.id() {
                         self.messages
@@ -298,6 +302,11 @@ impl State {
                             .find(|m| m.msg_id == msg_id)
                             .map(|chat_msg| chat_msg.confirm_msg(msg));
                     }
+                    self.messages
+                        .sort_by(|a, b| a.display_time.cmp(&b.display_time));
+                }
+                if let Some(db_contact) = db_contact {
+                    self.update_contact(db_contact);
                 }
                 Command::none()
             }
@@ -308,8 +317,7 @@ impl State {
             Event::PendingDM((db_contact, msg)) => {
                 self.update_contact(db_contact.clone());
                 self.messages.push(msg.clone());
-                self.messages
-                    .sort_by(|a, b| a.display_time.cmp(&b.display_time));
+
                 self.current_scroll_offset = scrollable::RelativeOffset::END;
                 //COMMAND
                 scrollable::snap_to(CHAT_SCROLLABLE_ID.clone(), self.current_scroll_offset)
@@ -322,13 +330,10 @@ impl State {
                 self.update_contact(db_contact.clone());
 
                 if self.active_contact.as_ref() == Some(&db_contact) {
-                    // if msg.status.is_offline() {
-                    //     conn.send(net::Message::SendDMToRelays(msg.clone()));
-                    // }
                     // estou na conversa
                     self.messages.push(msg.clone());
-                    self.messages
-                        .sort_by(|a, b| a.display_time.cmp(&b.display_time));
+                    // self.messages
+                    //     .sort_by(|a, b| a.display_time.cmp(&b.display_time));
                     self.current_scroll_offset = scrollable::RelativeOffset::END;
 
                     //COMMAND

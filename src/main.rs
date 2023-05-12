@@ -195,8 +195,15 @@ impl Application for App {
                 self.state = State::login();
             }
             Message::WelcomeMessage(welcome_msg) => {
-                if let State::Welcome { state, conn, .. } = &mut self.state {
+                if let State::Welcome {
+                    state, conn, keys, ..
+                } = &mut self.state
+                {
                     match welcome_msg {
+                        welcome::Message::Exit => {
+                            conn.send(net::Message::Logout);
+                            self.state = State::logging_out(keys, conn);
+                        }
                         welcome::Message::ToApp => {
                             conn.send(net::Message::StoreFirstLogin);
                             conn.send(net::Message::PrepareClient);

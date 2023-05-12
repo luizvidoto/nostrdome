@@ -23,6 +23,7 @@ pub enum Message {
     ToNextStep,
     ToPreviousStep,
     ToApp,
+    Exit,
     AddRelay(nostr_sdk::Url),
     AddOtherPress,
 
@@ -189,9 +190,12 @@ impl StepView {
 
     fn make_btns(&self) -> Element<'static, Message> {
         match self {
-            StepView::Welcome => row![button("Next").on_press(Message::ToNextStep)]
-                .spacing(10)
-                .into(),
+            StepView::Welcome => row![
+                button("Cancel").on_press(Message::Exit),
+                button("Next").on_press(Message::ToNextStep)
+            ]
+            .spacing(10)
+            .into(),
             StepView::Relays { .. } => row![
                 button("Back").on_press(Message::ToPreviousStep),
                 button("Next").on_press(Message::ToNextStep)
@@ -446,9 +450,10 @@ impl State {
                     }
                 }
             }
+            Message::Exit => (),
+            Message::ToApp => (),
             Message::ToNextStep => self.to_next_step(conn),
             Message::ToPreviousStep => self.to_previous_step(conn),
-            Message::ToApp => (),
             Message::AddRelay(relay_url) => {
                 if let StepView::Relays { .. } = &mut self.step_view {
                     let db_relay = DbRelay::new(relay_url);

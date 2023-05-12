@@ -23,10 +23,11 @@ pub enum Event {
     ContactDeleted(DbContact),
     OtherKindEventInserted(DbEvent),
     OtherPendingEvent(DbEvent),
-    UpdateWithRelayResponse {
+    RelayConfirmation {
         relay_response: DbRelayResponse,
         db_event: DbEvent,
         db_message: Option<DbMessage>,
+        db_contact: Option<DbContact>,
     },
     GotUserProfileMeta(Option<nostr_sdk::Metadata>),
     FileContactsImported(Vec<DbContact>),
@@ -139,7 +140,7 @@ impl std::fmt::Display for Event {
             Event::ContactUpdated(contact) => write!(f, "Contact Updated: {}", contact.pubkey()),
             Event::ContactDeleted(contact) => write!(f, "Contact Deleted: {}", contact.pubkey()),
             Event::OtherKindEventInserted(_) => write!(f, "Confirmed Event Inserted"),
-            Event::UpdateWithRelayResponse { relay_response, .. } => write!(
+            Event::RelayConfirmation { relay_response, .. } => write!(
                 f,
                 "Update With Relay Response: {}",
                 relay_response.relay_url

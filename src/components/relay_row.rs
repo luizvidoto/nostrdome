@@ -201,7 +201,8 @@ impl RelayRow {
                     }
                 }
             }
-            Event::UpdateWithRelayResponse { relay_response, .. } => {
+            //TODO: check kind of event
+            Event::RelayConfirmation { relay_response, .. } => {
                 if relay_response.relay_url == self.db_relay.url {
                     self.mode.success()
                 }

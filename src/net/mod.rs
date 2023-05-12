@@ -4,8 +4,6 @@ use crate::net::client::fetch_latest_version;
 use crate::net::events::backend::{self, backend_processing};
 use crate::net::events::frontend::Event;
 use crate::net::events::nostr::NostrSdkWrapper;
-use crate::ntp::ntp_request;
-use crate::views::login::BasicProfile;
 use chrono::Utc;
 use futures::channel::mpsc;
 use futures::{Future, StreamExt};
@@ -146,19 +144,12 @@ impl BackendState {
                         &self.keys,
                         pool,
                         db_contacts,
-                        nostr_sender,
                         is_replace,
                     ))
                     .await
                 }
                 Message::AddContact(db_contact) => {
-                    process_async_with_event(add_new_contact(
-                        &self.keys,
-                        pool,
-                        &db_contact,
-                        nostr_sender,
-                    ))
-                    .await
+                    process_async_with_event(add_new_contact(&self.keys, pool, &db_contact)).await
                 }
                 Message::UpdateContact(db_contact) => {
                     process_async_with_event(update_contact(&self.keys, pool, &db_contact)).await
@@ -233,7 +224,7 @@ impl BackendState {
                         Err(e) => Event::Error(e.to_string()),
                     }
                 }
-                Message::SendContactListToRelay(db_relay) => match DbContact::fetch(pool).await {
+                Message::SendContactListToRelay(_db_relay) => match DbContact::fetch(pool).await {
                     Ok(list) => match build_contact_list_event(pool, &self.keys, &list).await {
                         Ok(input) => to_backend_channel(&mut self.sender, input),
                         Err(e) => Event::Error(e.to_string()),
@@ -442,13 +433,12 @@ async fn import_contacts(
     keys: &Keys,
     pool: &SqlitePool,
     db_contacts: Vec<DbContact>,
-    nostr_sender: &mut mpsc::Sender<NostrInput>,
     is_replace: bool,
 ) -> Result<Event, Error> {
     for db_contact in &db_contacts {
         if is_replace {
             DbContact::delete(pool, db_contact).await?;
-            add_new_contact(keys, pool, db_contact, nostr_sender).await?;
+            add_new_contact(keys, pool, db_contact).await?;
         } else {
             update_contact(keys, pool, db_contact).await?;
         }

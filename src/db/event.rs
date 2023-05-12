@@ -191,7 +191,8 @@ impl DbEvent {
         relay_url: &nostr_sdk::Url,
         mut db_event: DbEvent,
     ) -> Result<DbEvent, Error> {
-        tracing::info!("Confirming event: {:?}", &db_event);
+        tracing::info!("Confirming event");
+        tracing::debug!("{:?}", &db_event);
         let now_utc = UserConfig::get_corrected_time(pool)
             .await
             .unwrap_or(Utc::now().naive_utc());
@@ -220,7 +221,6 @@ impl DbEvent {
             .bind(&event_id)
             .execute(pool)
             .await?;
-        tracing::info!("confirmed event: {:?}", &db_event);
         Ok(db_event)
     }
 
