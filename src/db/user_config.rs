@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use crate::{
     error::Error,
+    ntp::{correct_time_with_offset, system_now_total_microseconds, system_time_to_naive_utc},
     utils::{millis_to_naive_or_err, profile_meta_or_err},
 };
 
@@ -15,7 +16,7 @@ pub struct UserConfig {
     pub profile_meta_last_update: Option<NaiveDateTime>,
     pub local_profile_image: Option<PathBuf>,
     pub local_banner_image: Option<PathBuf>,
-    pub main_subscription_id: Option<nostr_sdk::SubscriptionId>,
+    pub ntp_offset: i64,
 }
 
 impl UserConfig {
@@ -25,8 +26,8 @@ impl UserConfig {
             INSERT INTO user_config 
                 (id, has_logged_in, profile_meta, 
                 profile_meta_last_update, local_profile_image, 
-                local_banner_image, main_subscription_id) 
-            VALUES (1, 0, "", 0, "", "", "");
+                local_banner_image, ntp_offset) 
+            VALUES (1, 0, "", 0, "", "", 0);
         "#;
         sqlx::query(query).execute(pool).await?;
         Ok(())
@@ -123,6 +124,42 @@ impl UserConfig {
         sqlx::query(query).bind(path.to_str()).execute(pool).await?;
         Ok(())
     }
+
+    pub(crate) async fn update_ntp_offset(
+        pool: &SqlitePool,
+        ntp_total_microseconds: u64,
+    ) -> Result<(), Error> {
+        tracing::debug!("update_ntp_offset");
+
+        let system_total_microseconds =
+            system_now_total_microseconds().map_err(|_| Error::SystemTimeBeforeUnixEpoch)?;
+
+        let offset = ntp_total_microseconds as i64 - system_total_microseconds as i64;
+
+        let query = "UPDATE user_config SET ntp_offset = ?1 WHERE id = 1;";
+        sqlx::query(query).bind(offset).execute(pool).await?;
+        Ok(())
+    }
+
+    pub(crate) async fn get_corrected_time(
+        pool: &SqlitePool,
+    ) -> Result<(NaiveDateTime, i64), Error> {
+        tracing::debug!("get_corrected_time");
+
+        // Query the database for the offset
+        let query = "SELECT ntp_offset FROM user_config WHERE id = 1;";
+        let offset: i64 = sqlx::query_scalar(query).fetch_one(pool).await?;
+
+        // Get the current system time in total microseconds
+        let system_total_microseconds =
+            system_now_total_microseconds().map_err(|_| Error::SystemTimeBeforeUnixEpoch)?;
+
+        // Correct the system time with the offset and convert to NaiveDateTime
+        let corrected_system_time = correct_time_with_offset(system_total_microseconds, offset);
+        let corrected_time = system_time_to_naive_utc(corrected_system_time)?;
+
+        Ok((corrected_time, offset))
+    }
 }
 
 impl sqlx::FromRow<'_, SqliteRow> for UserConfig {
@@ -140,16 +177,13 @@ impl sqlx::FromRow<'_, SqliteRow> for UserConfig {
         let local_banner_image: Option<String> = row.get("local_banner_image");
         let local_banner_image = local_banner_image.map(|path| PathBuf::from(path));
 
-        let main_subscription_id: Option<String> = row.get("main_subscription_id");
-        let main_subscription_id = main_subscription_id.map(|s| nostr_sdk::SubscriptionId::new(s));
-
         Ok(Self {
             profile_meta,
             profile_meta_last_update,
             local_profile_image,
             local_banner_image,
             has_logged_in: row.try_get::<bool, &str>("has_logged_in")?,
-            main_subscription_id,
+            ntp_offset: row.try_get::<i64, &str>("ntp_offset")?,
         })
     }
 }

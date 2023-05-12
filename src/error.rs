@@ -45,6 +45,17 @@ pub enum Error {
     #[error("Failed to send to nostr input channel: {0}")]
     FailedToSendNostrInput(String),
 
+    // #[error("NTP Error: {0}")]
+    // NtpError(#[from] ntp::errors::Error),
+    #[error("Sntpc Error")]
+    SntpcError,
+    #[error("Sntpc Error: Unable to bind to any port")]
+    NtpUnableToBindPort,
+    #[error("Sntpc Error: Unable to set read timeout")]
+    NtpUnableToSetReadTimeout,
+    #[error("System time before unix epoch")]
+    SystemTimeBeforeUnixEpoch,
+
     // General errors
     #[error("Event need to be confirmed")]
     NotConfirmedEvent,
@@ -70,6 +81,8 @@ pub enum Error {
     AssertionFailed(String),
     #[error("Invalid Unix timestamp: {0}")]
     InvalidTimestamp(i64),
+    #[error("Invalid Unix timestamp: secs {0}, nanos {1}")]
+    InvalidTimestampNanos(i64, u32),
     #[error("Database setup error: {0}")]
     DatabaseSetup(String),
     #[error("Not found project directory")]

@@ -15,6 +15,7 @@ use crate::{
         events::nostr::NostrInput,
         process_async_with_event,
     },
+    ntp::ntp_request,
     types::ChatMessage,
 };
 
@@ -22,6 +23,7 @@ use super::Event;
 
 #[derive(Debug, Clone)]
 pub enum BackEndInput {
+    NtpTime(u64),
     ToggleRelayRead((DbRelay, bool)),
     ToggleRelayWrite((DbRelay, bool)),
     AddRelayToDb(DbRelay),
@@ -58,6 +60,13 @@ pub async fn backend_processing(
         BackEndInput::LatestVersion(version) => Event::LatestVersion(version),
         BackEndInput::Shutdown => Event::None,
         // --- TO DATABASE ---
+        BackEndInput::NtpTime(total_microseconds) => {
+            tracing::info!("NTP time: {}", total_microseconds);
+            match UserConfig::update_ntp_offset(pool, total_microseconds).await {
+                Ok(_) => Event::SyncedWithNtpServer,
+                Err(e) => Event::Error(e.to_string()),
+            }
+        }
         BackEndInput::FinishedPreparingNostr => {
             // donwload images?
             if let Ok(contact_list) = DbContact::fetch(pool).await {
@@ -547,7 +556,8 @@ async fn handle_contact_metadata_event(
         if should_update_contact_metadata(&db_contact, last_update) {
             db_contact = db_contact.with_profile_meta(metadata, *last_update);
             DbContact::update(pool, &db_contact).await?;
-            tracing::info!("Updated contact with profile metadata: {:?}", db_contact);
+            tracing::info!("Updated contact with profile metadata");
+            tracing::debug!("{:?}", db_contact);
             Ok(Event::UpdatedContactMetadata {
                 db_contact,
                 relay_url: relay_url.clone(),
@@ -858,12 +868,18 @@ pub async fn delete_contact(pool: &SqlitePool, db_contact: &DbContact) -> Result
     Ok(Event::ContactDeleted(db_contact.clone()))
 }
 
-pub async fn prepare_client(pool: &SqlitePool) -> Result<NostrInput, Error> {
+pub async fn prepare_client(
+    pool: &SqlitePool,
+    back_sender: &mut mpsc::Sender<BackEndInput>,
+) -> Result<NostrInput, Error> {
     tracing::debug!("prepare_client");
     tracing::info!("Fetching relays and last event to nostr client");
     let relays = DbRelay::fetch(pool).await?;
     let last_event = DbEvent::fetch_last(pool).await?;
     let contact_list = DbContact::fetch(pool).await?;
+
+    tracing::info!("Fetching NTP time to sync with system time");
+    ntp_request(back_sender);
 
     Ok(NostrInput::PrepareClient {
         relays,

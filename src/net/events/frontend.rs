@@ -32,6 +32,7 @@ pub enum Event {
     FileContactsImported(Vec<DbContact>),
     UserProfilePictureUpdated,
     UserBannerPictureUpdated,
+    SystemTime((chrono::NaiveDateTime, i64)),
     // --- Nostr ---
     EndOfStoredEvents((nostr_sdk::Url, nostr_sdk::SubscriptionId)),
     SubscribedToEvents,
@@ -49,6 +50,7 @@ pub enum Event {
     RequestedEvents,
     SentDirectMessage(nostr_sdk::EventId),
     // --- Config ---
+    SyncedWithNtpServer,
     FirstLogin,
     Connected(BackEndConnection),
     Disconnected,
@@ -85,6 +87,8 @@ pub enum Event {
 impl std::fmt::Display for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Event::SystemTime(_) => write!(f, "System Time"),
+            Event::SyncedWithNtpServer => write!(f, "Synced with NTP Server"),
             Event::SentEventToRelays(event_id) => write!(f, "Sent Event to Relays: {}", event_id),
             Event::PendingMetadata(_) => write!(f, "Pending Metadata"),
             Event::PendingContactList(_) => write!(f, "Pending Contact List"),

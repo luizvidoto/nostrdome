@@ -131,6 +131,7 @@ impl State {
             tooltip::Position::Top,
         )
         .style(style::Container::TooltipBg);
+
         let add_row = row![empty, add_btn];
         let content: Element<_> = container(column![title, add_row, relays])
             .width(Length::Fill)

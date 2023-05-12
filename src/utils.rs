@@ -82,6 +82,10 @@ pub fn event_tt_to_naive(timestamp: nostr_sdk::Timestamp) -> Result<NaiveDateTim
     Ok(millis_to_naive(as_milli)?)
 }
 
+pub fn naive_to_event_tt(naive_utc: NaiveDateTime) -> nostr_sdk::Timestamp {
+    nostr_sdk::Timestamp::from(naive_utc.timestamp() as u64)
+}
+
 pub fn handle_decode_error<E>(error: E, index: &str) -> sqlx::Error
 where
     E: std::error::Error + 'static + Send + Sync,

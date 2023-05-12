@@ -1,6 +1,5 @@
 use crate::{
     db::{DbContact, DbRelay},
-    types::ChatMessage,
     views::login::BasicProfile,
 };
 

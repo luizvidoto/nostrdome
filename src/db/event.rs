@@ -146,7 +146,7 @@ impl DbEvent {
     }
 
     pub async fn insert(pool: &SqlitePool, db_event: &DbEvent) -> Result<(i64, u8), Error> {
-        tracing::info!("inserting event {:?}", db_event);
+        tracing::debug!("inserting event {:?}", db_event);
         let sql = r#"
             INSERT INTO 
                 event (event_hash, pubkey, kind, content, sig, tags, 

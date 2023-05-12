@@ -4,6 +4,7 @@ use crate::net::client::fetch_latest_version;
 use crate::net::events::backend::{self, backend_processing};
 use crate::net::events::frontend::Event;
 use crate::net::events::nostr::NostrSdkWrapper;
+use crate::ntp::ntp_request;
 use crate::views::login::BasicProfile;
 use chrono::Utc;
 use futures::channel::mpsc;
@@ -109,11 +110,13 @@ impl BackendState {
                     Ok(_) => Event::FirstLoginStored,
                     Err(e) => Event::Error(e.to_string()),
                 },
-                Message::QueryFirstLogin => match handle_first_login(pool, nostr_sender).await {
-                    Ok(event) => event,
-                    Err(e) => Event::Error(e.to_string()),
-                },
-                Message::PrepareClient => match prepare_client(pool).await {
+                Message::QueryFirstLogin => {
+                    match handle_first_login(pool, &mut self.sender, nostr_sender).await {
+                        Ok(event) => event,
+                        Err(e) => Event::Error(e.to_string()),
+                    }
+                }
+                Message::PrepareClient => match prepare_client(pool, &mut self.sender).await {
                     Ok(input) => to_nostr_channel(nostr_sender, input),
                     Err(e) => Event::Error(e.to_string()),
                 },
@@ -225,13 +228,13 @@ impl BackendState {
                 // -- TO BACKEND CHANNEL --
                 Message::SendDM((db_contact, content)) => {
                     // to backend channel, create a pending event and await confirmation of relays
-                    match build_dm(&self.keys, db_contact, content) {
+                    match build_dm(pool, &self.keys, db_contact, content).await {
                         Ok(input) => to_backend_channel(&mut self.sender, input),
                         Err(e) => Event::Error(e.to_string()),
                     }
                 }
                 Message::SendContactListToRelay(db_relay) => match DbContact::fetch(pool).await {
-                    Ok(list) => match build_contact_list_event(&self.keys, &list).await {
+                    Ok(list) => match build_contact_list_event(pool, &self.keys, &list).await {
                         Ok(input) => to_backend_channel(&mut self.sender, input),
                         Err(e) => Event::Error(e.to_string()),
                     },
@@ -261,61 +264,6 @@ impl BackendState {
 
         Event::None
     }
-}
-
-async fn update_user_metadata(
-    pool: &SqlitePool,
-    keys: &Keys,
-    back_sender: &mut mpsc::Sender<backend::BackEndInput>,
-    profile_meta: nostr_sdk::Metadata,
-) -> Event {
-    match UserConfig::update_user_metadata_if_newer(pool, &profile_meta, Utc::now().naive_utc())
-        .await
-    {
-        Ok(_) => match build_profile_event(keys, profile_meta).await {
-            Ok(input) => to_backend_channel(back_sender, input),
-            Err(e) => Event::Error(e.to_string()),
-        },
-        Err(e) => Event::Error(e.to_string()),
-    }
-}
-
-async fn import_contacts(
-    keys: &Keys,
-    pool: &SqlitePool,
-    db_contacts: Vec<DbContact>,
-    nostr_sender: &mut mpsc::Sender<NostrInput>,
-    is_replace: bool,
-) -> Result<Event, Error> {
-    for db_contact in &db_contacts {
-        if is_replace {
-            DbContact::delete(pool, db_contact).await?;
-            add_new_contact(keys, pool, db_contact, nostr_sender).await?;
-        } else {
-            update_contact(keys, pool, db_contact).await?;
-        }
-    }
-    Ok(Event::FileContactsImported(db_contacts))
-}
-
-fn handle_fetch_last_version(
-    req_client: &mut reqwest::Client,
-    sender: &mut mpsc::Sender<BackEndInput>,
-) -> Event {
-    tracing::info!("Fetching latest version");
-    let req_client_clone = req_client.clone();
-    let mut sender_clone = sender.clone();
-    tokio::spawn(async move {
-        match fetch_latest_version(req_client_clone).await {
-            Ok(version) => {
-                if let Err(e) = sender_clone.try_send(BackEndInput::LatestVersion(version)) {
-                    tracing::error!("Error sending latest version: {}", e);
-                }
-            }
-            Err(e) => tracing::error!("{}", e),
-        }
-    });
-    Event::FetchingLatestVersion
 }
 
 pub struct NostrState {
@@ -473,6 +421,71 @@ pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
     vec![database_sub]
 }
 
+async fn update_user_metadata(
+    pool: &SqlitePool,
+    keys: &Keys,
+    back_sender: &mut mpsc::Sender<backend::BackEndInput>,
+    profile_meta: nostr_sdk::Metadata,
+) -> Event {
+    match UserConfig::update_user_metadata_if_newer(pool, &profile_meta, Utc::now().naive_utc())
+        .await
+    {
+        Ok(_) => match build_profile_event(pool, keys, profile_meta).await {
+            Ok(input) => to_backend_channel(back_sender, input),
+            Err(e) => Event::Error(e.to_string()),
+        },
+        Err(e) => Event::Error(e.to_string()),
+    }
+}
+
+async fn import_contacts(
+    keys: &Keys,
+    pool: &SqlitePool,
+    db_contacts: Vec<DbContact>,
+    nostr_sender: &mut mpsc::Sender<NostrInput>,
+    is_replace: bool,
+) -> Result<Event, Error> {
+    for db_contact in &db_contacts {
+        if is_replace {
+            DbContact::delete(pool, db_contact).await?;
+            add_new_contact(keys, pool, db_contact, nostr_sender).await?;
+        } else {
+            update_contact(keys, pool, db_contact).await?;
+        }
+    }
+    Ok(Event::FileContactsImported(db_contacts))
+}
+
+fn handle_fetch_last_version(
+    req_client: &mut reqwest::Client,
+    sender: &mut mpsc::Sender<BackEndInput>,
+) -> Event {
+    tracing::info!("Fetching latest version");
+    let req_client_clone = req_client.clone();
+    let mut sender_clone = sender.clone();
+    tokio::spawn(async move {
+        match fetch_latest_version(req_client_clone).await {
+            Ok(version) => {
+                if let Err(e) = sender_clone.try_send(BackEndInput::LatestVersion(version)) {
+                    tracing::error!("Error sending latest version: {}", e);
+                }
+            }
+            Err(e) => tracing::error!("{}", e),
+        }
+    });
+    Event::FetchingLatestVersion
+}
+
+// match remote_time.checked_sub(local_time) {
+//     Some(offset) => {
+//         match update_ntp_offset(offset) {
+//             Ok(()) => println!("NTP offset updated in the database."),
+//             Err(e) => eprintln!("Failed to update NTP offset: {}", e),
+//         }
+//     },
+//     None => panic!("Time calculation overflow!"),
+// }
+
 // ---------------------------------
 
 async fn process_async_with_event<E>(op: impl Future<Output = Result<Event, E>>) -> Event
@@ -520,10 +533,11 @@ fn to_backend_channel(
 
 async fn handle_first_login(
     pool: &SqlitePool,
+    back_sender: &mut mpsc::Sender<BackEndInput>,
     nostr_sender: &mut mpsc::Sender<NostrInput>,
 ) -> Result<Event, Error> {
     if UserConfig::query_has_logged_in(pool).await? {
-        let input = prepare_client(pool).await?;
+        let input = prepare_client(pool, back_sender).await?;
         to_nostr_channel(nostr_sender, input);
         Ok(Event::None)
     } else {

@@ -132,6 +132,7 @@ impl StepView {
             "wss://relay.nostr.info",
             "wss://relay.snort.social",
             "ws://192.168.15.151:8080",
+            "ws://192.168.15.119:8080",
         ]
         .iter()
         .filter_map(|s| nostr_sdk::Url::parse(s).ok())

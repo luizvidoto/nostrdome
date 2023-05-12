@@ -1,7 +1,11 @@
+use sqlx::SqlitePool;
 use std::str::FromStr;
 use std::time::Duration;
 use url::Url;
 
+use crate::db::{DbContact, DbEvent, DbRelay, UserConfig};
+use crate::error::Error;
+use crate::utils::naive_to_event_tt;
 use async_stream::stream;
 use futures::channel::mpsc;
 use futures::{Future, Stream, StreamExt};
@@ -11,9 +15,6 @@ use nostr_sdk::{
     Client, Contact, EventBuilder, Filter, Keys, Kind, Metadata, RelayPoolNotification, Timestamp,
 };
 use std::pin::Pin;
-
-use crate::db::{DbContact, DbEvent, DbRelay};
-use crate::error::Error;
 
 use super::{backend::BackEndInput, Event};
 
@@ -475,31 +476,40 @@ pub fn nostr_kinds() -> Vec<Kind> {
 //
 //
 
-pub async fn build_profile_event(keys: &Keys, metadata: Metadata) -> Result<BackEndInput, Error> {
+pub async fn build_profile_event(
+    pool: &SqlitePool,
+    keys: &Keys,
+    metadata: Metadata,
+) -> Result<BackEndInput, Error> {
     tracing::debug!("send_profile");
     let builder = EventBuilder::set_metadata(metadata.clone());
-    let ns_event = builder.to_event(keys)?;
+    let mut ns_event = builder.to_event(keys)?;
+    if let Ok((ntp_time, _)) = UserConfig::get_corrected_time(pool).await {
+        ns_event.created_at = naive_to_event_tt(ntp_time);
+    }
     Ok(BackEndInput::StorePendingMetadata((ns_event, metadata)))
 }
 
 pub async fn build_contact_list_event(
+    pool: &SqlitePool,
     keys: &Keys,
     list: &[DbContact],
 ) -> Result<BackEndInput, Error> {
     tracing::debug!("build_contact_list_event");
     let c_list: Vec<Contact> = list.iter().map(|c| c.into()).collect();
     let builder = EventBuilder::set_contact_list(c_list);
-    let ns_event = builder.to_event(keys)?;
-    // client
-    //     .send_event_to(url.to_owned(), ns_event.clone())
-    //     .await?;
+    let mut ns_event = builder.to_event(keys)?;
+    if let Ok((ntp_time, _)) = UserConfig::get_corrected_time(pool).await {
+        ns_event.created_at = naive_to_event_tt(ntp_time);
+    }
     Ok(BackEndInput::StorePendingContactList((
         ns_event,
         list.to_owned(),
     )))
 }
 
-pub fn build_dm(
+pub async fn build_dm(
+    pool: &SqlitePool,
     keys: &Keys,
     db_contact: DbContact,
     content: String,
@@ -507,7 +517,10 @@ pub fn build_dm(
     tracing::debug!("build_dm");
     let builder =
         EventBuilder::new_encrypted_direct_msg(&keys, db_contact.pubkey().to_owned(), &content)?;
-    let ns_event = builder.to_event(keys)?;
+    let mut ns_event = builder.to_event(keys)?;
+    if let Ok((ntp_time, _)) = UserConfig::get_corrected_time(pool).await {
+        ns_event.created_at = naive_to_event_tt(ntp_time);
+    }
     Ok(BackEndInput::StorePendingMessage {
         ns_event,
         content,

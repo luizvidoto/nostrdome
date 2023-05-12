@@ -47,3 +47,4 @@ async-recursion = "1"
 dotenv = "0.15.0"
 image = {version = "0.24.6", features = ["webp"]}
 simplelog = "0.12.1"
+sntpc = "0.3.4"
