@@ -12,13 +12,15 @@ use nostr_sdk::{
     EventId, Kind, Tag, Timestamp,
 };
 
+use super::UserConfig;
+
 #[derive(Debug, Clone)]
 pub struct DbEvent {
     event_id: Option<i64>,
     pub event_hash: EventId,
     pub pubkey: XOnlyPublicKey,
     pub local_creation: NaiveDateTime, // this is the time when the event was created at the app
-    pub confirmed_at: Option<NaiveDateTime>, // if confirmed, this is the time when the event was received from some relay
+    pub received_at: Option<NaiveDateTime>, // this is the time when the event was received at the app
     remote_creation: Option<NaiveDateTime>, // this is the time that the relay says the event was created at
     pub relay_url: Option<nostr_sdk::Url>,
     pub tags: Vec<nostr_sdk::Tag>,
@@ -48,7 +50,7 @@ impl DbEvent {
         event: nostr_sdk::Event,
         relay_url: Option<&nostr_sdk::Url>,
     ) -> Result<Self, Error> {
-        let (confirmed_at, remote_creation, relay_url) = if let Some(relay_url) = relay_url {
+        let (received_at, remote_creation, relay_url) = if let Some(relay_url) = relay_url {
             // the difference between remote creation and confirmed at
             (
                 Some(Utc::now().naive_utc()),
@@ -63,7 +65,7 @@ impl DbEvent {
             event_id: None,
             event_hash: event.id,
             pubkey: event.pubkey,
-            confirmed_at,
+            received_at: received_at,
             local_creation: Utc::now().naive_utc(),
             remote_creation,
             relay_url: relay_url.cloned(),
@@ -81,13 +83,13 @@ impl DbEvent {
         Ok(Self::from_event(event, Some(relay_url))?)
     }
 
-    pub fn remote_creation(&self) -> Option<NaiveDateTime> {
-        self.remote_creation
-    }
-
     // pending event is not confirmed yet
     pub fn pending_event(event: nostr_sdk::Event) -> Result<Self, Error> {
         Ok(Self::from_event(event, None)?)
+    }
+
+    pub fn remote_creation(&self) -> Option<NaiveDateTime> {
+        self.remote_creation
     }
 
     pub fn event_id(&self) -> Result<i64, FromDbEventError> {
@@ -150,7 +152,7 @@ impl DbEvent {
         let sql = r#"
             INSERT INTO 
                 event (event_hash, pubkey, kind, content, sig, tags, 
-                relay_url, local_creation, remote_creation, confirmed_at)
+                relay_url, local_creation, remote_creation, received_at)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
         "#;
 
@@ -171,7 +173,7 @@ impl DbEvent {
             )
             .bind(
                 &db_event
-                    .confirmed_at
+                    .received_at
                     .as_ref()
                     .map(|date| date.timestamp_millis()),
             )
@@ -189,18 +191,21 @@ impl DbEvent {
         relay_url: &nostr_sdk::Url,
         mut db_event: DbEvent,
     ) -> Result<DbEvent, Error> {
-        let sql =
-            "UPDATE event SET confirmed_at=?, remote_creation=?, relay_url=? WHERE event_id=?";
+        let now_utc = UserConfig::get_corrected_time(pool)
+            .await
+            .unwrap_or(Utc::now().naive_utc());
+
+        let sql = "UPDATE event SET received_at=?, remote_creation=?, relay_url=? WHERE event_id=?";
 
         let event_id = db_event.event_id()?;
-        db_event.confirmed_at = Some(Utc::now().naive_utc());
-        db_event.remote_creation = Some(Utc::now().naive_utc());
+        db_event.received_at = Some(now_utc);
+        db_event.remote_creation = Some(now_utc);
         db_event.relay_url = Some(relay_url.clone());
 
         sqlx::query(sql)
             .bind(
                 &db_event
-                    .confirmed_at
+                    .received_at
                     .as_ref()
                     .map(|date| date.timestamp_millis()),
             )
@@ -272,9 +277,9 @@ impl sqlx::FromRow<'_, SqliteRow> for DbEvent {
             .map(|n| millis_to_naive_or_err(n, "remote_creation"))
             .transpose()?;
 
-        let confirmed_at = row
-            .get::<Option<i64>, &str>("confirmed_at")
-            .map(|n| millis_to_naive_or_err(n, "confirmed_at"))
+        let received_at = row
+            .get::<Option<i64>, &str>("received_at")
+            .map(|n| millis_to_naive_or_err(n, "received_at"))
             .transpose()?;
 
         Ok(DbEvent {
@@ -283,7 +288,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbEvent {
             pubkey,
             local_creation,
             relay_url,
-            confirmed_at,
+            received_at: received_at,
             remote_creation,
             kind,
             tags,

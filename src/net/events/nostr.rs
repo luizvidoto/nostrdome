@@ -484,8 +484,8 @@ pub async fn build_profile_event(
     tracing::debug!("send_profile");
     let builder = EventBuilder::set_metadata(metadata.clone());
     let mut ns_event = builder.to_event(keys)?;
-    if let Ok((ntp_time, _)) = UserConfig::get_corrected_time(pool).await {
-        ns_event.created_at = naive_to_event_tt(ntp_time);
+    if let Ok(now_utc) = UserConfig::get_corrected_time(pool).await {
+        ns_event.created_at = naive_to_event_tt(now_utc);
     }
     Ok(BackEndInput::StorePendingMetadata((ns_event, metadata)))
 }
@@ -499,8 +499,8 @@ pub async fn build_contact_list_event(
     let c_list: Vec<Contact> = list.iter().map(|c| c.into()).collect();
     let builder = EventBuilder::set_contact_list(c_list);
     let mut ns_event = builder.to_event(keys)?;
-    if let Ok((ntp_time, _)) = UserConfig::get_corrected_time(pool).await {
-        ns_event.created_at = naive_to_event_tt(ntp_time);
+    if let Ok(now_utc) = UserConfig::get_corrected_time(pool).await {
+        ns_event.created_at = naive_to_event_tt(now_utc);
     }
     Ok(BackEndInput::StorePendingContactList((
         ns_event,
@@ -518,8 +518,8 @@ pub async fn build_dm(
     let builder =
         EventBuilder::new_encrypted_direct_msg(&keys, db_contact.pubkey().to_owned(), &content)?;
     let mut ns_event = builder.to_event(keys)?;
-    if let Ok((ntp_time, _)) = UserConfig::get_corrected_time(pool).await {
-        ns_event.created_at = naive_to_event_tt(ntp_time);
+    if let Ok(now_utc) = UserConfig::get_corrected_time(pool).await {
+        ns_event.created_at = naive_to_event_tt(now_utc);
     }
     Ok(BackEndInput::StorePendingMessage {
         ns_event,

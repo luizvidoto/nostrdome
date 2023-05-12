@@ -11,7 +11,7 @@ use nostr_sdk::{
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
-use super::DbEvent;
+use super::{DbEvent, UserConfig};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbMessage {
@@ -176,6 +176,10 @@ impl DbMessage {
         pool: &SqlitePool,
         mut db_message: DbMessage,
     ) -> Result<DbMessage, Error> {
+        let now_utc = UserConfig::get_corrected_time(pool)
+            .await
+            .unwrap_or(Utc::now().naive_utc());
+
         let sql = r#"
             UPDATE message 
             SET status = ?, updated_at = ?
@@ -184,7 +188,7 @@ impl DbMessage {
 
         let msg_id = db_message.id()?;
         db_message.status = MessageStatus::Delivered;
-        db_message.updated_at = Utc::now().naive_utc();
+        db_message.updated_at = now_utc;
 
         sqlx::query(sql)
             .bind(&db_message.status.to_i32())

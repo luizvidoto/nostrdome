@@ -141,10 +141,8 @@ impl UserConfig {
         Ok(())
     }
 
-    pub(crate) async fn get_corrected_time(
-        pool: &SqlitePool,
-    ) -> Result<(NaiveDateTime, i64), Error> {
-        tracing::debug!("get_corrected_time");
+    pub(crate) async fn get_corrected_time(pool: &SqlitePool) -> Result<NaiveDateTime, Error> {
+        tracing::info!("get_corrected_time");
 
         // Query the database for the offset
         let query = "SELECT ntp_offset FROM user_config WHERE id = 1;";
@@ -158,7 +156,7 @@ impl UserConfig {
         let corrected_system_time = correct_time_with_offset(system_total_microseconds, offset);
         let corrected_time = system_time_to_naive_utc(corrected_system_time)?;
 
-        Ok((corrected_time, offset))
+        Ok(corrected_time)
     }
 }
 

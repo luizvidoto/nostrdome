@@ -7,6 +7,7 @@ use std::str::FromStr;
 use std::{path::PathBuf, result::Result as StdResult};
 use thiserror::Error;
 
+use crate::db::UserConfig;
 use crate::net::{get_png_image_path, ImageKind, ImageSize};
 use crate::{
     types::{ChatMessage, RelayUrl},
@@ -295,7 +296,11 @@ impl DbContact {
     ) -> Result<DbContact> {
         // do not update unseen count here because we may be in the chat
         if Some(&chat_message.created_at) >= db_contact.last_message_date.as_ref() {
-            db_contact.updated_at = Utc::now().naive_utc();
+            let now_utc = UserConfig::get_corrected_time(pool)
+                .await
+                .unwrap_or(Utc::now().naive_utc());
+
+            db_contact.updated_at = now_utc;
             db_contact.last_message_content = Some(chat_message.content.to_owned());
             db_contact.last_message_date = Some(chat_message.created_at);
 
@@ -328,6 +333,10 @@ impl DbContact {
         pool: &SqlitePool,
         mut db_contact: DbContact,
     ) -> Result<DbContact> {
+        let now_utc = UserConfig::get_corrected_time(pool)
+            .await
+            .unwrap_or(Utc::now().naive_utc());
+
         db_contact.unseen_messages += 1;
 
         let sql = r#"
@@ -337,7 +346,7 @@ impl DbContact {
             "#;
 
         sqlx::query(sql)
-            .bind(Utc::now().timestamp_millis())
+            .bind(now_utc.timestamp_millis())
             .bind(&db_contact.unseen_messages)
             .bind(&db_contact.pubkey.to_string())
             .execute(pool)
@@ -352,6 +361,9 @@ impl DbContact {
         count: u8,
     ) -> Result<DbContact> {
         tracing::info!("updated contact count: {}", count);
+        let now_utc = UserConfig::get_corrected_time(pool)
+            .await
+            .unwrap_or(Utc::now().naive_utc());
         let sql = r#"
                 UPDATE contact 
                 SET updated_at=?, unseen_messages=?
@@ -359,7 +371,7 @@ impl DbContact {
             "#;
 
         sqlx::query(sql)
-            .bind(Utc::now().timestamp_millis())
+            .bind(now_utc.timestamp_millis())
             .bind(count)
             .bind(&db_contact.pubkey.to_string())
             .execute(pool)
@@ -488,6 +500,10 @@ impl DbContact {
     pub async fn update(pool: &SqlitePool, contact: &DbContact) -> Result<()> {
         tracing::info!("Updating Contact {}", contact.pubkey().to_string());
         tracing::debug!("{:?}", contact); //todo: replace with debug
+        let now_utc = UserConfig::get_corrected_time(pool)
+            .await
+            .unwrap_or(Utc::now().naive_utc());
+
         let sql = r#"
             UPDATE contact 
             SET relay_url=?, petname=?, 
@@ -516,7 +532,7 @@ impl DbContact {
                     .as_ref()
                     .map(|date| date.timestamp_millis()),
             )
-            .bind(Utc::now().timestamp_millis())
+            .bind(now_utc.timestamp_millis())
             .bind(contact.local_profile_image_str())
             .bind(contact.local_banner_image_str())
             .bind(&contact.pubkey.to_string())

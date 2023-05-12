@@ -9,6 +9,8 @@ use crate::{
     utils::{millis_to_naive_or_err, url_or_err},
 };
 
+use super::UserConfig;
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DbRelayStatus(pub RelayStatus);
 impl DbRelayStatus {
@@ -115,13 +117,17 @@ impl DbRelay {
     }
 
     pub async fn update(pool: &SqlitePool, relay: &DbRelay) -> Result<(), Error> {
+        let now_utc = UserConfig::get_corrected_time(pool)
+            .await
+            .unwrap_or(Utc::now().naive_utc());
+
         let sql = "UPDATE relay SET read=?, write=?, advertise=?, updated_at=? WHERE url=?";
 
         sqlx::query(sql)
             .bind(&relay.read)
             .bind(&relay.write)
             .bind(&relay.advertise)
-            .bind(Utc::now().naive_utc().timestamp_millis())
+            .bind(now_utc.timestamp_millis())
             .bind(&relay.url.to_string())
             .execute(pool)
             .await?;

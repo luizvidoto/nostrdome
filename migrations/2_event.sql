@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS event (
     pubkey BLOB NOT NULL,
     local_creation INTEGER NOT NULL,
     remote_creation INTEGER,
-    confirmed_at INTEGER,
+    received_at INTEGER,
     -- event kind
     kind INTEGER NOT NULL,
     -- serialized json of event object 
