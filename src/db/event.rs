@@ -32,17 +32,17 @@ pub struct DbEvent {
 impl DbEvent {
     const FETCH_QUERY: &'static str = "SELECT * FROM event";
 
-    pub fn nostr_event(&self) -> nostr_sdk::Event {
-        nostr_sdk::Event {
-            id: self.event_hash,
-            pubkey: self.pubkey,
-            created_at: Timestamp::from(self.local_creation.timestamp() as u64),
-            tags: self.tags.to_owned(),
-            kind: self.kind,
-            content: self.content.to_owned(),
-            sig: self.sig,
-        }
-    }
+    // pub fn nostr_event(&self) -> nostr_sdk::Event {
+    //     nostr_sdk::Event {
+    //         id: self.event_hash,
+    //         pubkey: self.pubkey,
+    //         created_at: Timestamp::from(self.local_creation.timestamp() as u64),
+    //         tags: self.tags.to_owned(),
+    //         kind: self.kind,
+    //         content: self.content.to_owned(),
+    //         sig: self.sig,
+    //     }
+    // }
 
     // when the app creates the event, there is no relay_url
     // when it receives from a relay there is

@@ -32,7 +32,7 @@ pub enum NostrInput {
     ToggleRelayRead((DbRelay, bool)),
     ToggleRelayWrite((DbRelay, bool)),
     ConnectToRelay((DbRelay, Option<DbEvent>)),
-    SendEventToRelays(DbEvent),
+    SendEventToRelays(nostr_sdk::Event),
     GetContactProfile(DbContact),
     GetContactListProfiles(Vec<DbContact>),
     CreateChannel,
@@ -114,9 +114,9 @@ impl NostrSdkWrapper {
                 });
             }
 
-            NostrInput::SendEventToRelays(db_event) => {
+            NostrInput::SendEventToRelays(ns_event) => {
                 tokio::spawn(async move {
-                    run_and_send(send_event_to_relays(&client, db_event), &mut channel).await;
+                    run_and_send(send_event_to_relays(&client, ns_event), &mut channel).await;
                 });
             }
 
@@ -303,9 +303,10 @@ pub async fn client_with_stream(
     (nostr_client, notifications_stream)
 }
 
-async fn send_event_to_relays(client: &Client, db_event: DbEvent) -> Result<Event, Error> {
-    tracing::debug!("send_event_to_relays: {}", db_event.event_hash);
-    let event_hash = client.send_event(db_event.nostr_event()).await?;
+async fn send_event_to_relays(client: &Client, ns_event: nostr_sdk::Event) -> Result<Event, Error> {
+    tracing::info!("send_event_to_relays: {}", ns_event.id);
+    tracing::debug!("{:?}", ns_event);
+    let event_hash = client.send_event(ns_event).await?;
     Ok(Event::SentEventToRelays(event_hash))
 }
 
@@ -521,7 +522,6 @@ pub async fn build_dm(
         EventBuilder::new_encrypted_direct_msg(&keys, db_contact.pubkey().to_owned(), &content)?;
     let mut ns_event = builder.to_event(keys)?;
     if let Ok(now_utc) = UserConfig::get_corrected_time(pool).await {
-        tracing::info!("UPDATING DM CREATED AT => now_utc: {}", now_utc);
         ns_event.created_at = naive_to_event_tt(now_utc);
     }
     Ok(BackEndInput::StorePendingMessage {
