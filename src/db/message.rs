@@ -248,7 +248,6 @@ impl DbMessage {
             SELECT *
             FROM message
             WHERE contact_pubkey=?
-            ORDER BY created_at
         "#;
 
         let messages = sqlx::query_as::<_, DbMessage>(sql)

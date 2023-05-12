@@ -4,6 +4,7 @@ use crate::net::client::fetch_latest_version;
 use crate::net::events::backend::{self, backend_processing};
 use crate::net::events::frontend::Event;
 use crate::net::events::nostr::NostrSdkWrapper;
+use crate::ntp::ntp_request;
 use chrono::Utc;
 use futures::channel::mpsc;
 use futures::{Future, StreamExt};
@@ -40,7 +41,8 @@ pub struct BackendState {
 }
 impl BackendState {
     pub fn new(keys: &Keys) -> Self {
-        let (sender, receiver) = mpsc::channel(1024);
+        let (mut sender, receiver) = mpsc::channel(1024);
+
         Self {
             sender,
             receiver,
@@ -108,13 +110,11 @@ impl BackendState {
                     Ok(_) => Event::FirstLoginStored,
                     Err(e) => Event::Error(e.to_string()),
                 },
-                Message::QueryFirstLogin => {
-                    match handle_first_login(pool, &mut self.sender, nostr_sender).await {
-                        Ok(event) => event,
-                        Err(e) => Event::Error(e.to_string()),
-                    }
-                }
-                Message::PrepareClient => match prepare_client(pool, &mut self.sender).await {
+                Message::QueryFirstLogin => match handle_first_login(pool, nostr_sender).await {
+                    Ok(event) => event,
+                    Err(e) => Event::Error(e.to_string()),
+                },
+                Message::PrepareClient => match prepare_client(pool).await {
                     Ok(input) => to_nostr_channel(nostr_sender, input),
                     Err(e) => Event::Error(e.to_string()),
                 },
@@ -356,7 +356,10 @@ pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
                     };
 
                     let backend = backend.with_db(db_client);
-                    let backend = backend.with_req(req_client);
+                    let mut backend = backend.with_req(req_client);
+
+                    tracing::info!("Fetching NTP time to sync with system time");
+                    ntp_request(&mut backend.sender);
 
                     (
                         Event::Connected(BackEndConnection::new(sender)),
@@ -523,11 +526,10 @@ fn to_backend_channel(
 
 async fn handle_first_login(
     pool: &SqlitePool,
-    back_sender: &mut mpsc::Sender<BackEndInput>,
     nostr_sender: &mut mpsc::Sender<NostrInput>,
 ) -> Result<Event, Error> {
     if UserConfig::query_has_logged_in(pool).await? {
-        let input = prepare_client(pool, back_sender).await?;
+        let input = prepare_client(pool).await?;
         to_nostr_channel(nostr_sender, input);
         Ok(Event::None)
     } else {

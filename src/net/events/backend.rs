@@ -877,18 +877,12 @@ pub async fn delete_contact(pool: &SqlitePool, db_contact: &DbContact) -> Result
     Ok(Event::ContactDeleted(db_contact.clone()))
 }
 
-pub async fn prepare_client(
-    pool: &SqlitePool,
-    back_sender: &mut mpsc::Sender<BackEndInput>,
-) -> Result<NostrInput, Error> {
+pub async fn prepare_client(pool: &SqlitePool) -> Result<NostrInput, Error> {
     tracing::debug!("prepare_client");
     tracing::info!("Fetching relays and last event to nostr client");
     let relays = DbRelay::fetch(pool).await?;
     let last_event = DbEvent::fetch_last(pool).await?;
     let contact_list = DbContact::fetch(pool).await?;
-
-    tracing::info!("Fetching NTP time to sync with system time");
-    ntp_request(back_sender);
 
     Ok(NostrInput::PrepareClient {
         relays,
@@ -915,6 +909,7 @@ async fn confirm_event_and_message(
                 if let Some(db_message) = DbMessage::fetch_one(pool, db_event.event_id()?).await? {
                     let confirmed_db_message =
                         DbMessage::relay_confirmation(pool, relay_url, db_message).await?;
+                    // add relay confirmation
 
                     if let Some(db_contact) =
                         DbContact::fetch_one(pool, &confirmed_db_message.contact_chat()).await?

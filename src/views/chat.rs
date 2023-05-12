@@ -295,15 +295,15 @@ impl State {
                 db_contact,
                 ..
             } => {
-                if let Some(msg) = &db_message {
-                    if let Ok(msg_id) = msg.id() {
+                if let Some(db_message) = &db_message {
+                    if let Ok(msg_id) = db_message.id() {
                         self.messages
                             .iter_mut()
                             .find(|m| m.msg_id == msg_id)
-                            .map(|chat_msg| chat_msg.confirm_msg(msg));
+                            .map(|chat_msg| chat_msg.confirm_msg(db_message));
                     }
-                    self.messages
-                        .sort_by(|a, b| a.display_time.cmp(&b.display_time));
+                    // self.messages
+                    //     .sort_by(|a, b| a.display_time.cmp(&b.display_time));
                 }
                 if let Some(db_contact) = db_contact {
                     self.update_contact(db_contact);

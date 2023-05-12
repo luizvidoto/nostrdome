@@ -408,7 +408,7 @@ impl DbContact {
         contact: &DbContact,
     ) -> Result<()> {
         tracing::info!("Inserting Contact");
-        tracing::info!("{:?}", contact); //todo: replace with debug
+        tracing::debug!("{:?}", contact); //todo: replace with debug
         let sql = r#"
             INSERT INTO contact 
                 (pubkey, relay_url, petname, status, 
