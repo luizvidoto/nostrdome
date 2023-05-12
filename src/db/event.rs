@@ -191,6 +191,7 @@ impl DbEvent {
         relay_url: &nostr_sdk::Url,
         mut db_event: DbEvent,
     ) -> Result<DbEvent, Error> {
+        tracing::info!("Confirming event: {:?}", &db_event);
         let now_utc = UserConfig::get_corrected_time(pool)
             .await
             .unwrap_or(Utc::now().naive_utc());
@@ -199,7 +200,7 @@ impl DbEvent {
 
         let event_id = db_event.event_id()?;
         db_event.received_at = Some(now_utc);
-        db_event.remote_creation = Some(now_utc);
+        db_event.remote_creation = Some(db_event.local_creation.clone());
         db_event.relay_url = Some(relay_url.clone());
 
         sqlx::query(sql)
@@ -219,7 +220,7 @@ impl DbEvent {
             .bind(&event_id)
             .execute(pool)
             .await?;
-
+        tracing::info!("confirmed event: {:?}", &db_event);
         Ok(db_event)
     }
 

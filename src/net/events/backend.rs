@@ -435,7 +435,7 @@ async fn insert_message_from_event(
     pool: &SqlitePool,
 ) -> Result<DbMessage, Error> {
     tracing::debug!("insert_message_from_event");
-    let db_message = DbMessage::confirmed_message(db_event, relay_url)?;
+    let db_message = DbMessage::confirmed_message(db_event)?;
     let msg_id = DbMessage::insert_message(pool, &db_message).await?;
     Ok(db_message.with_id(msg_id))
 }
@@ -747,7 +747,7 @@ async fn insert_pending_dm(
     }
     pending_event = pending_event.with_id(row_id);
 
-    let pending_msg = DbMessage::pending_message(&pending_event)?;
+    let pending_msg = DbMessage::new(&pending_event)?;
     let row_id = DbMessage::insert_message(pool, &pending_msg).await?;
     let pending_msg = pending_msg.with_id(row_id);
     let chat_msg = ChatMessage::from_db_message_content(keys, &pending_msg, &db_contact, &content)?;
@@ -903,7 +903,8 @@ async fn confirm_event_and_message(
         if let nostr_sdk::Kind::EncryptedDirectMessage = db_event.kind {
             db_message =
                 if let Some(db_message) = DbMessage::fetch_one(pool, db_event.event_id()?).await? {
-                    let confirmed_db_message = DbMessage::confirm_message(pool, db_message).await?;
+                    let confirmed_db_message =
+                        DbMessage::relay_confirmation(pool, relay_url, db_message).await?;
                     Some(confirmed_db_message)
                 } else {
                     None
@@ -925,13 +926,12 @@ pub async fn fetch_and_decrypt_chat(
     let mut chat_messages = vec![];
 
     tracing::info!("Updating unseen messages to marked as seen");
-    for m in db_messages.iter_mut().filter(|m| m.is_unseen()) {
-        m.update_status(MessageStatus::Seen);
-        DbMessage::update_message_status(pool, m).await?;
+    for db_message in db_messages.iter_mut().filter(|m| m.is_unseen()) {
+        DbMessage::message_seen(pool, db_message).await?;
     }
 
     tracing::info!("Decrypting messages");
-    for db_message in &mut db_messages {
+    for db_message in &db_messages {
         let chat_message = ChatMessage::from_db_message(keys, &db_message, &db_contact)?;
         chat_messages.push(chat_message);
     }

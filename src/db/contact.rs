@@ -295,14 +295,14 @@ impl DbContact {
         chat_message: &ChatMessage,
     ) -> Result<DbContact> {
         // do not update unseen count here because we may be in the chat
-        if Some(&chat_message.created_at) >= db_contact.last_message_date.as_ref() {
+        if Some(&chat_message.display_time) >= db_contact.last_message_date.as_ref() {
             let now_utc = UserConfig::get_corrected_time(pool)
                 .await
                 .unwrap_or(Utc::now().naive_utc());
 
             db_contact.updated_at = now_utc;
             db_contact.last_message_content = Some(chat_message.content.to_owned());
-            db_contact.last_message_date = Some(chat_message.created_at);
+            db_contact.last_message_date = Some(chat_message.display_time);
 
             let sql = r#"
                 UPDATE contact 

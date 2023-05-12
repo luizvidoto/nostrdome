@@ -282,7 +282,7 @@ impl State {
                 if self.active_contact.as_ref() == Some(&db_contact) {
                     self.messages = chat_msgs;
                     self.messages
-                        .sort_by(|a, b| a.created_at.cmp(&b.created_at));
+                        .sort_by(|a, b| a.display_time.cmp(&b.display_time));
 
                     self.current_scroll_offset = scrollable::RelativeOffset::END;
                     scrollable::snap_to(CHAT_SCROLLABLE_ID.clone(), self.current_scroll_offset)
@@ -309,7 +309,7 @@ impl State {
                 self.update_contact(db_contact.clone());
                 self.messages.push(msg.clone());
                 self.messages
-                    .sort_by(|a, b| a.created_at.cmp(&b.created_at));
+                    .sort_by(|a, b| a.display_time.cmp(&b.display_time));
                 self.current_scroll_offset = scrollable::RelativeOffset::END;
                 //COMMAND
                 scrollable::snap_to(CHAT_SCROLLABLE_ID.clone(), self.current_scroll_offset)
@@ -328,7 +328,7 @@ impl State {
                     // estou na conversa
                     self.messages.push(msg.clone());
                     self.messages
-                        .sort_by(|a, b| a.created_at.cmp(&b.created_at));
+                        .sort_by(|a, b| a.display_time.cmp(&b.display_time));
                     self.current_scroll_offset = scrollable::RelativeOffset::END;
 
                     //COMMAND
@@ -487,7 +487,7 @@ fn create_chat_content<'a>(messages: &[ChatMessage]) -> Element<'a, Message> {
     let mut last_date: Option<NaiveDateTime> = None;
 
     for msg in messages {
-        let msg_date = msg.created_at;
+        let msg_date = msg.display_time;
 
         if let Some(last) = last_date {
             if last.day() != msg_date.day() {

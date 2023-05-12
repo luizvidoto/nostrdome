@@ -45,9 +45,7 @@ impl EventLike for DbEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub msg_id: i64,
-    /// Message created at using unix timestamp
-    pub created_at: NaiveDateTime,
-    /// Decrypted message content
+    pub display_time: NaiveDateTime,
     pub content: String,
     pub is_from_user: bool,
     pub select_name: String,
@@ -80,7 +78,7 @@ impl ChatMessage {
         let event_hash = db_message.event_hash()?;
         Ok(Self {
             content: content.to_owned(),
-            created_at: db_message.created_at(),
+            display_time: db_message.display_time(),
             is_from_user,
             select_name: contact.select_name(),
             msg_id,
@@ -107,7 +105,7 @@ impl ChatMessage {
         };
 
         // TODO: to local timezone
-        let local_time = from_naive_utc_to_local(self.created_at);
+        let local_time = from_naive_utc_to_local(self.display_time);
         let local_time = local_time.time().format("%H:%M").to_string();
         let data_cp = column![
             // container(text("")).height(10.0),

@@ -1,13 +1,9 @@
-use std::str::FromStr;
-
 use crate::{
     error::{Error, FromDbEventError},
-    utils::{event_hash_or_err, handle_decode_error, millis_to_naive_or_err, pubkey_or_err},
+    utils::{event_hash_or_err, millis_to_naive_or_err, pubkey_or_err, url_or_err},
 };
 use chrono::{NaiveDateTime, Utc};
-use nostr_sdk::{
-    nips::nip04, prelude::UncheckedUrl, secp256k1::XOnlyPublicKey, EventId, Keys, Url,
-};
+use nostr_sdk::{nips::nip04, secp256k1::XOnlyPublicKey, EventId, Keys};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
@@ -20,17 +16,16 @@ pub struct DbMessage {
     from_pubkey: XOnlyPublicKey,
     to_pubkey: XOnlyPublicKey,
     created_at: chrono::NaiveDateTime,
-    updated_at: chrono::NaiveDateTime,
+    confirmed_at: Option<chrono::NaiveDateTime>,
     status: MessageStatus,
-    relay_url: Option<UncheckedUrl>,
+    relay_url: Option<nostr_sdk::Url>,
     // option because we can create the struct before inserting into the database
     event_id: Option<i64>,
     event_hash: Option<EventId>,
 }
 
 impl DbMessage {
-    const FETCH_QUERY: &'static str =
-        "SELECT msg_id, content, from_pubkey, to_pubkey, created_at, updated_at, status, relay_url, event_id, event_hash FROM message";
+    const FETCH_QUERY: &'static str = "SELECT * FROM message";
 
     pub fn im_author(&self, own_pubkey: &XOnlyPublicKey) -> bool {
         own_pubkey == &self.from_pubkey
@@ -54,15 +49,19 @@ impl DbMessage {
     pub fn event_hash(&self) -> Result<EventId, Error> {
         Ok(self.event_hash.ok_or(Error::MessageNotInDatabase)?)
     }
-    pub fn created_at(&self) -> NaiveDateTime {
-        self.created_at.to_owned()
-    }
+
     pub fn status(&self) -> MessageStatus {
         self.status.to_owned()
     }
 
-    pub fn update_status(&mut self, status: MessageStatus) {
+    fn with_status(mut self, status: MessageStatus) -> Self {
         self.status = status;
+        self
+    }
+
+    fn with_confirmed_at(mut self, confirmed_at: NaiveDateTime) -> Self {
+        self.confirmed_at = Some(confirmed_at);
+        self
     }
 
     pub fn with_id(mut self, id: i64) -> Self {
@@ -73,12 +72,12 @@ impl DbMessage {
         self.event_id = Some(event_id);
         self
     }
+    pub fn with_relay_url(mut self, relay_url: Option<&nostr_sdk::Url>) -> Self {
+        self.relay_url = relay_url.cloned();
+        self
+    }
 
-    fn from_db_event(
-        db_event: &DbEvent,
-        relay_url: Option<&Url>,
-        created_at: NaiveDateTime,
-    ) -> Result<Self, Error> {
+    pub fn new(db_event: &DbEvent) -> Result<Self, Error> {
         let (to_pub, event_id, event_hash) = Self::info_from_tags(&db_event)?;
         Ok(Self {
             id: None,
@@ -87,24 +86,20 @@ impl DbMessage {
             to_pubkey: to_pub,
             event_id: Some(event_id),
             event_hash: Some(event_hash),
-            updated_at: created_at.clone(),
-            created_at,
-            status: MessageStatus::from_db_event(&db_event),
-            relay_url: relay_url.map(|url| url.to_owned().into()),
+            relay_url: None,
+            status: MessageStatus::Offline,
+            created_at: db_event.local_creation,
+            confirmed_at: None,
         })
     }
 
-    pub(crate) fn confirmed_message(db_event: &DbEvent, relay_url: &Url) -> Result<Self, Error> {
-        let created_at = db_event.remote_creation().ok_or(Error::NotConfirmedEvent)?;
-        Ok(Self::from_db_event(db_event, Some(relay_url), created_at)?)
-    }
-
-    pub(crate) fn pending_message(pending_event: &DbEvent) -> Result<Self, Error> {
-        Ok(Self::from_db_event(
-            pending_event,
-            None,
-            Utc::now().naive_utc(),
-        )?)
+    pub(crate) fn confirmed_message(db_event: &DbEvent) -> Result<Self, Error> {
+        let confirmed_at = db_event.remote_creation().ok_or(Error::NotConfirmedEvent)?;
+        let msg = Self::new(db_event)?
+            .with_relay_url(db_event.relay_url.as_ref())
+            .with_status(MessageStatus::Delivered)
+            .with_confirmed_at(confirmed_at);
+        Ok(msg)
     }
 
     pub fn decrypt_message(&self, keys: &Keys) -> Result<String, Error> {
@@ -152,7 +147,7 @@ impl DbMessage {
 
     pub async fn insert_message(pool: &SqlitePool, db_message: &DbMessage) -> Result<i64, Error> {
         let sql = r#"
-            INSERT OR IGNORE INTO message (content, from_pubkey, to_pubkey, created_at, updated_at, status, relay_url, event_id, event_hash)
+            INSERT OR IGNORE INTO message (content, from_pubkey, to_pubkey, created_at, confirmed_at, status, relay_url, event_id, event_hash)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
         "#;
 
@@ -161,7 +156,12 @@ impl DbMessage {
             .bind(&db_message.from_pubkey.to_string())
             .bind(&db_message.to_pubkey.to_string())
             .bind(&db_message.created_at.timestamp_millis())
-            .bind(&db_message.updated_at.timestamp_millis())
+            .bind(
+                &db_message
+                    .confirmed_at
+                    .as_ref()
+                    .map(|date| date.timestamp_millis()),
+            )
             .bind(&db_message.status.to_i32())
             .bind(&db_message.relay_url.as_ref().map(|url| url.to_string()))
             .bind(&db_message.event_id()?)
@@ -172,38 +172,44 @@ impl DbMessage {
         Ok(output.last_insert_rowid())
     }
 
-    pub async fn confirm_message(
+    pub async fn relay_confirmation(
         pool: &SqlitePool,
+        relay_url: &nostr_sdk::Url,
         mut db_message: DbMessage,
     ) -> Result<DbMessage, Error> {
+        tracing::info!("Confirming message: {:?}", &db_message);
         let now_utc = UserConfig::get_corrected_time(pool)
             .await
             .unwrap_or(Utc::now().naive_utc());
 
         let sql = r#"
             UPDATE message 
-            SET status = ?, updated_at = ?
+            SET status = ?, confirmed_at=?, relay_url=?
             WHERE msg_id = ?
         "#;
 
         let msg_id = db_message.id()?;
         db_message.status = MessageStatus::Delivered;
-        db_message.updated_at = now_utc;
+        db_message.confirmed_at = Some(now_utc);
+        db_message.relay_url = Some(relay_url.to_owned());
 
         sqlx::query(sql)
             .bind(&db_message.status.to_i32())
-            .bind(&db_message.updated_at.timestamp_millis())
+            .bind(
+                &db_message
+                    .confirmed_at
+                    .as_ref()
+                    .map(|date| date.timestamp_millis()),
+            )
+            .bind(&db_message.relay_url.as_ref().map(|url| url.to_string()))
             .bind(&msg_id)
             .execute(pool)
             .await?;
-
+        tracing::info!("confirmed message: {:?}", &db_message);
         Ok(db_message)
     }
 
-    pub async fn update_message_status(
-        pool: &SqlitePool,
-        db_message: &DbMessage,
-    ) -> Result<(), Error> {
+    pub async fn message_seen(pool: &SqlitePool, db_message: &mut DbMessage) -> Result<(), Error> {
         let sql = r#"
             UPDATE message 
             SET status = ?1
@@ -211,6 +217,7 @@ impl DbMessage {
             "#;
 
         let msg_id = db_message.id()?;
+        db_message.status = MessageStatus::Seen;
 
         sqlx::query(sql)
             .bind(&db_message.status.to_i32())
@@ -220,14 +227,28 @@ impl DbMessage {
 
         Ok(())
     }
+
+    pub(crate) fn display_time(&self) -> NaiveDateTime {
+        self.confirmed_at.unwrap_or(self.created_at)
+    }
 }
 
 impl sqlx::FromRow<'_, SqliteRow> for DbMessage {
     fn from_row(row: &'_ SqliteRow) -> Result<Self, sqlx::Error> {
-        let created_at =
-            millis_to_naive_or_err(row.try_get::<i64, &str>("created_at")?, "created_at")?;
-        let updated_at =
-            millis_to_naive_or_err(row.try_get::<i64, &str>("updated_at")?, "updated_at")?;
+        let confirmed_at = row.get::<Option<i64>, &str>("confirmed_at");
+        let confirmed_at = confirmed_at
+            .as_ref()
+            .map(|date| millis_to_naive_or_err(*date, "confirmed_at"))
+            .transpose()?;
+
+        let created_at = row.try_get::<i64, &str>("created_at")?;
+        let created_at = millis_to_naive_or_err(created_at, "created_at")?;
+
+        let relay_url = row
+            .get::<Option<String>, &str>("relay_url")
+            .map(|url| url_or_err(&url, "relay_url"))
+            .transpose()?;
+
         let from_pubkey =
             pubkey_or_err(&row.try_get::<String, &str>("from_pubkey")?, "from_pubkey")?;
         let to_pubkey = pubkey_or_err(&row.try_get::<String, &str>("to_pubkey")?, "to_pubkey")?;
@@ -242,15 +263,10 @@ impl sqlx::FromRow<'_, SqliteRow> for DbMessage {
             from_pubkey,
             to_pubkey,
             created_at,
-            updated_at,
+            confirmed_at,
             event_hash: Some(event_hash),
             status: MessageStatus::from_i32(row.try_get::<i32, &str>("status")?),
-            relay_url: row
-                .get::<Option<String>, &str>("relay_url")
-                .map(|s| {
-                    UncheckedUrl::from_str(&s).map_err(|e| handle_decode_error(e, "relay_url"))
-                })
-                .transpose()?,
+            relay_url,
         })
     }
 }
@@ -263,13 +279,6 @@ pub enum MessageStatus {
 }
 
 impl MessageStatus {
-    pub fn from_db_event(db_event: &DbEvent) -> Self {
-        if db_event.relay_url.is_some() {
-            Self::Delivered
-        } else {
-            Self::Offline
-        }
-    }
     pub fn from_i32(value: i32) -> Self {
         match value {
             0 => MessageStatus::Offline,

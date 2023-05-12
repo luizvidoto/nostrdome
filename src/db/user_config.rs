@@ -142,7 +142,7 @@ impl UserConfig {
     }
 
     pub(crate) async fn get_corrected_time(pool: &SqlitePool) -> Result<NaiveDateTime, Error> {
-        tracing::info!("get_corrected_time");
+        tracing::debug!("get_corrected_time");
 
         // Query the database for the offset
         let query = "SELECT ntp_offset FROM user_config WHERE id = 1;";

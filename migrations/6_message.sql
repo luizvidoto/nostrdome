@@ -9,7 +9,7 @@ CREATE TABLE message (
     event_hash BLOB NOT NULL,
     -- UNIX timestamp as integer milliseconds
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
+    confirmed_at INTEGER,
     status INTEGER NOT NULL,
     relay_url TEXT
 );
