@@ -1,5 +1,6 @@
 #![allow(unused_imports)]
 use iced::{application, widget::tooltip};
+use iced_style::rule::FillMode;
 
 use self::pallete::AppPalette;
 
@@ -48,6 +49,19 @@ impl application::StyleSheet for Theme {
         application::Appearance {
             background_color: self.pallete().background.into(),
             text_color: self.pallete().text_color.into(),
+        }
+    }
+}
+
+impl iced::widget::rule::StyleSheet for Theme {
+    type Style = ();
+
+    fn appearance(&self, _style: &Self::Style) -> iced_style::rule::Appearance {
+        iced_style::rule::Appearance {
+            color: self.pallete().placeholder.into(),
+            width: 1,
+            radius: 2.0,
+            fill_mode: FillMode::Full,
         }
     }
 }

@@ -69,6 +69,7 @@ impl BackendState {
         if let Some(db_client) = &mut self.db_client {
             backend_processing(
                 &db_client.pool,
+                &db_client.cache_pool,
                 &self.keys,
                 backend_input,
                 &mut self.sender,

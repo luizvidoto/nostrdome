@@ -12,6 +12,7 @@ pub type Scrollable<'a, Message> = iced::widget::Scrollable<'a, Message, Rendere
 pub type Button<'a, Message> = iced::widget::Button<'a, Message, Renderer>;
 pub type Text<'a> = iced::widget::Text<'a, Renderer>;
 pub type Column<'a, Message> = iced::widget::Column<'a, Message, Renderer>;
+pub type Rule = iced::widget::Rule<Renderer>;
 
 /// Creates a new [`Button`] with the provided content.
 ///

@@ -1,17 +1,21 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use directories::ProjectDirs;
 use futures::TryStreamExt;
 use futures_util::StreamExt;
 use image::ImageFormat;
-use nostr_sdk::secp256k1::XOnlyPublicKey;
-use reqwest::Url;
+use nostr_sdk::{secp256k1::XOnlyPublicKey, Url};
 use serde::Deserialize;
+use sqlx::SqlitePool;
 use std::env;
 use std::path::{Path, PathBuf};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
-use crate::consts::APP_PROJECT_DIRS;
+use crate::consts::{
+    APP_PROJECT_DIRS, MEDIUM_PROFILE_PIC_HEIGHT, MEDIUM_PROFILE_PIC_WIDTH,
+    SMALL_PROFILE_PIC_HEIGHT, SMALL_PROFILE_PIC_WIDTH,
+};
+use crate::db::Cache;
 use crate::error::Error;
 
 #[derive(Debug, Clone, Copy)]
@@ -62,12 +66,30 @@ pub fn get_png_image_path(base_path: &Path, kind: ImageKind, size: ImageSize) ->
 }
 
 pub async fn download_image(
+    cache_pool: &SqlitePool,
     image_url: &str,
+    event_date: &NaiveDateTime,
     public_key: &XOnlyPublicKey,
     kind: ImageKind,
 ) -> Result<PathBuf, Error> {
-    let url = Url::parse(image_url)?;
-    let response = reqwest::get(url.clone()).await?;
+    let image_url = Url::parse(image_url)?;
+
+    if let Some(img_cache) = Cache::fetch_by_public_key(cache_pool, public_key).await? {
+        if event_date < &img_cache.updated_at {
+            if let Some(path_of_kind) = img_cache.get_path(kind) {
+                return Ok(path_of_kind);
+            }
+        }
+        if let Some(url_of_kind) = img_cache.get_url(kind) {
+            if image_url == url_of_kind {
+                if let Some(path_of_kind) = img_cache.get_path(kind) {
+                    return Ok(path_of_kind);
+                }
+            }
+        }
+    }
+
+    let response = reqwest::get(image_url.clone()).await?;
 
     let content_type = response
         .headers()
@@ -105,6 +127,16 @@ pub async fn download_image(
 
     resize_and_save_image(&original_path, &images_dir, kind, ImageSize::Medium)?;
     resize_and_save_image(&original_path, &images_dir, kind, ImageSize::Small)?;
+
+    Cache::insert_by_public_key(
+        cache_pool,
+        public_key,
+        event_date,
+        kind,
+        &original_path,
+        &image_url,
+    )
+    .await?;
 
     Ok(original_path)
 }
@@ -192,7 +224,3 @@ pub async fn fetch_latest_version(client: reqwest::Client) -> Result<String, Err
 }
 
 const IMAGES_FOLDER_NAME: &str = "images";
-pub(crate) const SMALL_PROFILE_PIC_WIDTH: u32 = 50;
-pub(crate) const SMALL_PROFILE_PIC_HEIGHT: u32 = 50;
-pub(crate) const MEDIUM_PROFILE_PIC_WIDTH: u32 = 200;
-pub(crate) const MEDIUM_PROFILE_PIC_HEIGHT: u32 = 200;

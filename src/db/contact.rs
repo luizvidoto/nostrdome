@@ -1,4 +1,5 @@
 use chrono::{NaiveDateTime, Utc};
+use iced::widget::image::Handle;
 use nostr_sdk::{prelude::UncheckedUrl, secp256k1::XOnlyPublicKey, Tag};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
@@ -7,12 +8,16 @@ use std::str::FromStr;
 use std::{path::PathBuf, result::Result as StdResult};
 use thiserror::Error;
 
+use crate::consts::{default_profile_image, DEFAULT_PROFILE_IMAGE_SMALL};
 use crate::db::UserConfig;
+use crate::error::Error;
 use crate::net::{get_png_image_path, ImageKind, ImageSize};
 use crate::{
     types::{ChatMessage, RelayUrl},
     utils::{millis_to_naive_or_err, profile_meta_or_err, unchecked_url_or_err},
 };
+
+use super::Cache;
 
 type Result<T> = std::result::Result<T, DbContactError>;
 
@@ -30,6 +35,8 @@ pub enum DbContactError {
     TagToContactError,
     #[error("Sqlx error: {0}")]
     SqlxError(#[from] sqlx::Error),
+    #[error("Invalid path UTF-8 Error: {0}")]
+    InvalidPath(PathBuf),
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -282,6 +289,14 @@ impl DbContact {
         })
     }
 
+    pub fn profile_image(&self, size: ImageSize) -> Handle {
+        if let Some(path) = self.profile_image_sized(size) {
+            Handle::from_path(path)
+        } else {
+            Handle::from_memory(default_profile_image(size))
+        }
+    }
+
     pub fn local_banner_image_str(&self) -> Option<String> {
         self.local_banner_image.as_ref().map(|path| {
             let path_str = path.to_str().unwrap_or("");
@@ -440,8 +455,26 @@ impl DbContact {
                     .as_ref()
                     .map(|date| date.timestamp_millis()),
             )
-            .bind(contact.local_profile_image_str())
-            .bind(contact.local_banner_image_str())
+            .bind(
+                contact
+                    .local_profile_image
+                    .as_ref()
+                    .map(|p| {
+                        p.to_str()
+                            .ok_or_else(|| DbContactError::InvalidPath(p.clone()))
+                    })
+                    .transpose()?,
+            )
+            .bind(
+                contact
+                    .local_banner_image
+                    .as_ref()
+                    .map(|p| {
+                        p.to_str()
+                            .ok_or_else(|| DbContactError::InvalidPath(p.clone()))
+                    })
+                    .transpose()?,
+            )
             .execute(tx)
             .await?;
 
@@ -532,8 +565,26 @@ impl DbContact {
                     .map(|date| date.timestamp_millis()),
             )
             .bind(now_utc.timestamp_millis())
-            .bind(contact.local_profile_image_str())
-            .bind(contact.local_banner_image_str())
+            .bind(
+                contact
+                    .local_profile_image
+                    .as_ref()
+                    .map(|p| {
+                        p.to_str()
+                            .ok_or_else(|| DbContactError::InvalidPath(p.clone()))
+                    })
+                    .transpose()?,
+            )
+            .bind(
+                contact
+                    .local_banner_image
+                    .as_ref()
+                    .map(|p| {
+                        p.to_str()
+                            .ok_or_else(|| DbContactError::InvalidPath(p.clone()))
+                    })
+                    .transpose()?,
+            )
             .bind(&contact.pubkey.to_string())
             .execute(pool)
             .await?;
@@ -578,6 +629,31 @@ impl DbContact {
             .ok();
         Ok(result.is_some())
     }
+
+    pub(crate) async fn update_with_cache(
+        pool: &SqlitePool,
+        cache_pool: &SqlitePool,
+        mut db_contact: DbContact,
+    ) -> StdResult<DbContact, Error> {
+        if let Some(last_cache) =
+            Cache::fetch_by_public_key(cache_pool, db_contact.pubkey()).await?
+        {
+            if let Some(profile_image_path) = last_cache.get_path(ImageKind::Profile) {
+                db_contact.local_profile_image = Some(profile_image_path);
+            }
+            if let Some(banner_image_path) = last_cache.get_path(ImageKind::Banner) {
+                db_contact.local_banner_image = Some(banner_image_path);
+            }
+
+            DbContact::update(pool, &db_contact).await?;
+        } else {
+            tracing::info!(
+                "No cache found for contact {}",
+                db_contact.pubkey().to_string()
+            );
+        }
+        Ok(db_contact)
+    }
 }
 
 impl sqlx::FromRow<'_, SqliteRow> for DbContact {
@@ -595,6 +671,10 @@ impl sqlx::FromRow<'_, SqliteRow> for DbContact {
             .transpose()?;
 
         let pubkey = row.try_get::<String, &str>("pubkey")?;
+        let pubkey = XOnlyPublicKey::from_str(&pubkey).map_err(|e| sqlx::Error::ColumnDecode {
+            index: "pubkey".into(),
+            source: Box::new(e),
+        })?;
         let created_at =
             millis_to_naive_or_err(row.try_get::<i64, &str>("created_at")?, "created_at")?;
         let updated_at =
@@ -618,10 +698,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbContact {
             profile_meta_last_update,
             local_profile_image,
             local_banner_image,
-            pubkey: XOnlyPublicKey::from_str(&pubkey).map_err(|e| sqlx::Error::ColumnDecode {
-                index: "pubkey".into(),
-                source: Box::new(e),
-            })?,
+            pubkey,
             created_at,
             updated_at,
             petname,

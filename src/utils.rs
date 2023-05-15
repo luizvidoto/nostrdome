@@ -104,8 +104,8 @@ pub fn millis_to_naive_or_err(millis: i64, index: &str) -> Result<NaiveDateTime,
         })?,
     )
 }
-pub fn pubkey_or_err(pubkey_str: &str, index: &str) -> Result<XOnlyPublicKey, sqlx::Error> {
-    XOnlyPublicKey::from_str(pubkey_str).map_err(|e| handle_decode_error(e, index))
+pub fn public_key_or_err(public_key: &str, index: &str) -> Result<XOnlyPublicKey, sqlx::Error> {
+    XOnlyPublicKey::from_str(public_key).map_err(|e| handle_decode_error(e, index))
 }
 pub fn event_hash_or_err(event_id: &str, index: &str) -> Result<EventId, sqlx::Error> {
     EventId::from_str(event_id).map_err(|e| handle_decode_error(e, index))

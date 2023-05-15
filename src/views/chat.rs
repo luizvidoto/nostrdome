@@ -35,8 +35,8 @@ pub enum ModalState {
     },
 }
 impl ModalState {
-    pub fn basic_profile(contact: DbContact) -> Self {
-        Self::BasicProfile(ContactDetails::new(Some(contact)))
+    pub fn basic_profile(contact: &DbContact) -> Self {
+        Self::BasicProfile(ContactDetails::viewer(contact))
     }
     pub fn view<'a>(&'a self, underlay: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
         let view: Element<_> = match self {
@@ -422,16 +422,17 @@ impl State {
             }
             Message::OpenContactProfile => {
                 if let Some(contact) = &self.active_contact {
-                    if let Some(profile_meta) = contact.get_profile_meta() {
-                        let profile_image_path = contact.profile_image_sized(net::ImageSize::Small);
-                        self.modal_state = ModalState::contact_profile(
-                            contact.select_name(),
-                            profile_meta,
-                            profile_image_path.as_ref(),
-                        )
-                    } else {
-                        self.modal_state = ModalState::basic_profile(contact.to_owned())
-                    }
+                    // if let Some(profile_meta) = contact.get_profile_meta() {
+                    //     let profile_image_path = contact.profile_image_sized(net::ImageSize::Small);
+                    //     self.modal_state = ModalState::contact_profile(
+                    //         contact.select_name(),
+                    //         profile_meta,
+                    //         profile_image_path.as_ref(),
+                    //     )
+                    // } else {
+                    //     self.modal_state = ModalState::basic_profile(contact)
+                    // }
+                    self.modal_state = ModalState::basic_profile(contact);
                 }
             }
             Message::StatusBarMessage(status_msg) => {
@@ -582,16 +583,21 @@ fn header_details<'a>(db_contact: &'a DbContact) -> Button<'a, Message> {
         .map(from_naive_utc_to_local)
         .map(|date| format!("last seen {}", date.format(YMD_FORMAT)))
         .unwrap_or("".into());
+
     let user_name: Element<_> = if let Some(petname) = db_contact.get_petname() {
-        row![
-            text(petname).size(20),
-            text(db_contact.get_display_name().unwrap_or("".into()))
-                .size(14)
-                .style(style::Text::ChatMessageStatus)
-        ]
-        .align_items(Alignment::End)
-        .spacing(5)
-        .into()
+        if !petname.is_empty() {
+            row![
+                text(petname).size(20),
+                text(db_contact.get_display_name().unwrap_or("".into()))
+                    .size(14)
+                    .style(style::Text::ChatMessageStatus)
+            ]
+            .align_items(Alignment::End)
+            .spacing(5)
+            .into()
+        } else {
+            text(db_contact.select_name()).size(20).into()
+        }
     } else {
         text(db_contact.select_name()).size(20).into()
     };

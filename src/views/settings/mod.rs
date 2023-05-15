@@ -1,7 +1,6 @@
 use iced::widget::{button, column, container, row, Space};
 use iced::{Command, Length, Subscription};
 
-use crate::components::relay_row;
 use crate::db::DbContact;
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
@@ -255,7 +254,7 @@ impl Settings {
         if let MenuState::Contacts { state } = &mut self.menu_state {
             match msg {
                 contacts::Message::OpenAddContactModal => {
-                    self.modal_state = ModalState::add_contact(None);
+                    self.modal_state = ModalState::ContactDetails(ContactDetails::new());
                 }
                 contacts::Message::OpenImportContactModal => {
                     self.modal_state = ModalState::import_contacts();
@@ -267,7 +266,8 @@ impl Settings {
                     if let Some(received_msg) = state.update(other, conn) {
                         match received_msg {
                             contacts::Message::OpenEditContactModal(contact) => {
-                                self.modal_state = ModalState::add_contact(Some(contact))
+                                self.modal_state =
+                                    ModalState::ContactDetails(ContactDetails::edit(&contact))
                             }
                             contacts::Message::OpenProfileModal(contact) => {
                                 self.modal_state = ModalState::profile(contact);
@@ -374,9 +374,6 @@ impl ModalState {
     }
     pub fn load_send_contacts(conn: &mut BackEndConnection) -> Self {
         Self::SendContactList(SendContactList::new(conn))
-    }
-    pub fn add_contact(db_contact: Option<DbContact>) -> Self {
-        Self::ContactDetails(ContactDetails::new(db_contact))
     }
     pub fn import_contacts() -> Self {
         Self::ImportList(ImportContactList::new())

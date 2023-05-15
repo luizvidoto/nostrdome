@@ -183,7 +183,7 @@ pub async fn on_relay_message(
     relay_url: &Url,
     relay_message: &RelayMessage,
 ) -> Result<Event, Error> {
-    tracing::info!("New relay message: {}", relay_url);
+    tracing::debug!("New relay message: {}", relay_url);
     tracing::debug!("{:?}", relay_message);
     let event = match relay_message {
         RelayMessage::Ok {

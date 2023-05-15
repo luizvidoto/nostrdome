@@ -1,6 +1,6 @@
 use crate::{
     error::{Error, FromDbEventError},
-    utils::{event_hash_or_err, millis_to_naive_or_err, pubkey_or_err, url_or_err},
+    utils::{event_hash_or_err, millis_to_naive_or_err, public_key_or_err, url_or_err},
 };
 use chrono::{NaiveDateTime, Utc};
 use nostr_sdk::{nips::nip04, secp256k1::XOnlyPublicKey, EventId, Keys};
@@ -298,13 +298,13 @@ impl sqlx::FromRow<'_, SqliteRow> for DbMessage {
             .map(|url| url_or_err(&url, "relay_url"))
             .transpose()?;
 
-        let contact_pubkey = pubkey_or_err(
+        let contact_pubkey = public_key_or_err(
             &row.try_get::<String, &str>("contact_pubkey")?,
             "contact_pubkey",
         )?;
         let from_pubkey =
-            pubkey_or_err(&row.try_get::<String, &str>("from_pubkey")?, "from_pubkey")?;
-        let to_pubkey = pubkey_or_err(&row.try_get::<String, &str>("to_pubkey")?, "to_pubkey")?;
+            public_key_or_err(&row.try_get::<String, &str>("from_pubkey")?, "from_pubkey")?;
+        let to_pubkey = public_key_or_err(&row.try_get::<String, &str>("to_pubkey")?, "to_pubkey")?;
 
         let event_hash = row.try_get::<String, &str>("event_hash")?;
         let event_hash = event_hash_or_err(&event_hash, "event_hash")?;

@@ -5,7 +5,7 @@ use nostr_sdk::{secp256k1::XOnlyPublicKey, Keys};
 use sqlx::SqlitePool;
 
 use crate::{
-    db::{DbContact, DbRelay, UserConfig},
+    db::{Cache, DbContact, DbRelay, UserConfig},
     error::Error,
     net::{
         events::nostr::NostrInput,
@@ -50,6 +50,7 @@ pub enum BackEndInput {
 
 pub async fn backend_processing(
     pool: &SqlitePool,
+    cache_pool: &SqlitePool,
     keys: &Keys,
     input: BackEndInput,
     back_sender: &mut mpsc::Sender<BackEndInput>,
@@ -72,9 +73,39 @@ pub async fn backend_processing(
         BackEndInput::FinishedPreparingNostr => {
             // donwload images?
             if let Ok(contact_list) = DbContact::fetch(pool).await {
-                for c in contact_list {
-                    if let Some(metadata) = c.get_profile_meta() {
-                        download_profile_image(back_sender, &metadata, c.pubkey()).await
+                for db_contact in contact_list {
+                    match (
+                        db_contact.get_profile_meta(),
+                        db_contact.get_profile_meta_last_update(),
+                    ) {
+                        (Some(metadata), Some(event_date)) => {
+                            download_profile_image(
+                                cache_pool,
+                                back_sender,
+                                &metadata,
+                                &event_date,
+                                db_contact.pubkey(),
+                            )
+                            .await
+                        }
+                        _ => {
+                            match DbContact::update_with_cache(pool, cache_pool, db_contact).await {
+                                Ok(db_contact) => {
+                                    if let Err(e) = back_sender.try_send(BackEndInput::Ok(
+                                        Event::ContactUpdated(db_contact),
+                                    )) {
+                                        tracing::error!("Error sending back message: {}", e);
+                                    }
+                                }
+                                Err(e) => {
+                                    if let Err(e) =
+                                        back_sender.try_send(BackEndInput::Error(e.to_string()))
+                                    {
+                                        tracing::error!("Error sending back message: {}", e);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

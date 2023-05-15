@@ -7,42 +7,77 @@ use std::cmp::Ordering;
 #[derive(Debug, Clone)]
 pub struct Database {
     pub pool: SqlitePool,
+    pub cache_pool: SqlitePool,
 }
 
 impl Database {
     pub async fn new(pubkey: &str) -> Result<Self, Error> {
-        tracing::info!("NEW DATABASE_pubkey {:?}", pubkey);
-        let dirs = ProjectDirs::from(APP_PROJECT_DIRS.0, APP_PROJECT_DIRS.1, APP_PROJECT_DIRS.2)
-            .ok_or(Error::NotFoundProjectDirectory)?;
-        tracing::debug!("Creating project directory");
-        let project_dir = dirs.data_dir();
-        std::fs::create_dir_all(project_dir)?;
-
-        tracing::debug!("Creating database");
-        let db_url = if IN_MEMORY {
-            "sqlite::memory:".to_owned()
-        } else {
-            let mut path_ext = String::new();
-            for dir in project_dir.iter() {
-                if let Some(p) = dir.to_str() {
-                    if p.contains("\\") || p.contains("/") {
-                        continue;
-                    }
-                    path_ext.push_str(&format!("/{}", p));
-                }
-            }
-            format!("sqlite://{}/{}.db3?mode=rwc", &path_ext, pubkey)
-        };
-
-        tracing::info!("Connecting database");
-        let pool = SqlitePool::connect(&db_url).await?;
-
-        let s = Self { pool };
-
-        upgrade_db(&s.pool).await?;
-
+        let pool = db_pool(pubkey).await?;
+        let cache_pool = get_cache_pool().await?;
+        let s = Self { pool, cache_pool };
         Ok(s)
     }
+}
+
+async fn db_pool(pubkey: &str) -> Result<SqlitePool, Error> {
+    tracing::info!("NEW DATABASE_pubkey {:?}", pubkey);
+    let dirs = ProjectDirs::from(APP_PROJECT_DIRS.0, APP_PROJECT_DIRS.1, APP_PROJECT_DIRS.2)
+        .ok_or(Error::NotFoundProjectDirectory)?;
+    tracing::debug!("Creating data directory");
+    let project_dir = dirs.data_dir();
+    std::fs::create_dir_all(project_dir)?;
+
+    tracing::debug!("Creating database");
+    let db_url = if IN_MEMORY {
+        "sqlite::memory:".to_owned()
+    } else {
+        let mut path_ext = String::new();
+        for dir in project_dir.iter() {
+            if let Some(p) = dir.to_str() {
+                if p.contains("\\") || p.contains("/") {
+                    continue;
+                }
+                path_ext.push_str(&format!("/{}", p));
+            }
+        }
+        format!("sqlite://{}/{}.db3?mode=rwc", &path_ext, pubkey)
+    };
+
+    tracing::info!("Connecting database");
+    let pool = SqlitePool::connect(&db_url).await?;
+    upgrade_db(&pool).await?;
+    Ok(pool)
+}
+
+async fn get_cache_pool() -> Result<SqlitePool, Error> {
+    let dirs = ProjectDirs::from(APP_PROJECT_DIRS.0, APP_PROJECT_DIRS.1, APP_PROJECT_DIRS.2)
+        .ok_or(Error::NotFoundProjectDirectory)?;
+    tracing::debug!("Creating cache directory");
+    let project_dir = dirs.cache_dir();
+    std::fs::create_dir_all(project_dir)?;
+
+    tracing::debug!("Creating cache database");
+    let mut path_ext = String::new();
+    for dir in project_dir.iter() {
+        if let Some(p) = dir.to_str() {
+            if p.contains("\\") || p.contains("/") {
+                continue;
+            }
+            path_ext.push_str(&format!("/{}", p));
+        }
+    }
+    let db_url = format!("sqlite://{}.db3?mode=rwc", &path_ext);
+
+    tracing::info!("Connecting to cache database");
+    let pool = SqlitePool::connect(&db_url).await?;
+
+    tracing::info!("Cache setup");
+
+    for sql in CACHE_SETUP {
+        sqlx::query(sql).execute(&pool).await?;
+    }
+
+    Ok(pool)
 }
 
 /// Upgrade DB to latest version, and execute pragma settings
@@ -142,6 +177,11 @@ const INITIAL_SETUP: [&str; 8] = [
     include_str!("../../migrations/6_message.sql"),
     include_str!("../../migrations/7_user_config.sql"),
     include_str!("../../migrations/8_relay_response.sql"),
+];
+
+const CACHE_SETUP: [&str; 2] = [
+    include_str!("../../migrations/cache/1_setup.sql"),
+    include_str!("../../migrations/cache/2_cache_history.sql"),
 ];
 
 const IN_MEMORY: bool = true;

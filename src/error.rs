@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use nostr_sdk::{prelude::TagKind, EventId};
 use thiserror::Error;
 
@@ -174,6 +176,9 @@ pub enum Error {
     // UTF-8 error
     #[error("UTF-8 Error: {0}")]
     Utf8Error(#[from] std::str::Utf8Error),
+
+    #[error("Invalid path UTF-8 Error: {0}")]
+    InvalidPath(PathBuf),
 }
 
 #[derive(Debug, Error)]

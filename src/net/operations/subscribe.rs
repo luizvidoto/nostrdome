@@ -62,10 +62,7 @@ fn make_nostr_filters(
         .iter()
         .map(|c| c.pubkey().to_string())
         .collect::<Vec<_>>();
-    let contact_list_filter = Filter::new()
-        .authors(all_pubkeys)
-        .since(Timestamp::from(last_timestamp_secs))
-        .kind(Kind::Metadata);
+    let metadata_filter = Filter::new().authors(all_pubkeys).kind(Kind::Metadata);
 
     let sent_msgs_sub_past = Filter::new()
         .kinds(nostr_kinds())
@@ -76,7 +73,7 @@ fn make_nostr_filters(
         .pubkey(public_key)
         .since(Timestamp::from(last_timestamp_secs));
 
-    vec![sent_msgs_sub_past, recv_msgs_sub_past, contact_list_filter]
+    vec![sent_msgs_sub_past, recv_msgs_sub_past, metadata_filter]
 }
 
 pub async fn send_event_to_relays(

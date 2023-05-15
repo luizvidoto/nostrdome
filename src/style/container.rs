@@ -13,6 +13,7 @@ pub enum Container {
     ChatContainer,
     ChatDateDivider,
     ContactList,
+    ChatSearchCopy,
     StatusBar,
     TooltipBg,
     WelcomeBg1,
@@ -37,6 +38,13 @@ impl container::StyleSheet for Theme {
                 border_color: self.pallete().text_color,
                 border_width: 1.0,
                 border_radius: 4.0,
+                ..def
+            },
+            Container::ChatSearchCopy => container::Appearance {
+                background: self.pallete().chat_search_input_bg.into(),
+                border_color: self.pallete().background,
+                border_radius: 4.0,
+                border_width: 1.0,
                 ..def
             },
             Container::TooltipIcon => container::Appearance {
