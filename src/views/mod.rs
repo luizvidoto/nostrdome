@@ -97,12 +97,16 @@ impl Router {
                             status_bar::Message::GoToNetwork => {
                                 self.next_state(ViewState::settings_network(conn))
                             }
-                            other => state.update(chat::Message::StatusBarMessage(other), conn),
+                            other => {
+                                return state
+                                    .update(chat::Message::StatusBarMessage(other), conn)
+                                    .map(Message::ChatMsg)
+                            }
                         },
                         chat::Message::NavSettingsPress => {
                             self.next_state(ViewState::settings(conn))
                         }
-                        msg => state.update(msg, conn),
+                        msg => return state.update(msg, conn).map(Message::ChatMsg),
                     }
                 }
             }

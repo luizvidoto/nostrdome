@@ -21,6 +21,7 @@ use once_cell::sync::Lazy;
 
 // static CONTACTS_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
 static CHAT_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
+static CHAT_INPUT_ID: Lazy<text_input::Id> = Lazy::new(text_input::Id::unique);
 
 pub enum ModalState {
     Off,
@@ -113,7 +114,7 @@ pub enum Message {
     OnVerResize(u16),
     GoToChannelsPress,
     NavSettingsPress,
-    ContactCardMessage(contact_card::Message),
+    ContactCardMessage(contact_card::MessageWrapper),
     DMNMessageChange(String),
     DMSentPress,
     AddContactPress,
@@ -212,7 +213,8 @@ impl State {
         let chat_messages = create_chat_content(&self.messages);
         let message_input = text_input("Write a message...", &self.dm_msg)
             .on_submit(Message::DMSentPress)
-            .on_input(Message::DMNMessageChange);
+            .on_input(Message::DMNMessageChange)
+            .id(CHAT_INPUT_ID.clone());
         let send_btn = button(send_icon().style(style::Text::Primary))
             .style(style::Button::Invisible)
             .on_press(Message::DMSentPress);
@@ -268,7 +270,8 @@ impl State {
             Event::GotContacts(db_contacts) => {
                 self.contacts = db_contacts
                     .iter()
-                    .map(|c| contact_card::ContactCard::from_db_contact(c))
+                    .enumerate()
+                    .map(|(idx, c)| contact_card::ContactCard::from_db_contact(idx as i32, c))
                     .collect();
                 Command::none()
             }
@@ -346,7 +349,10 @@ impl State {
             }
             Event::ContactCreated(db_contact) => {
                 self.contacts
-                    .push(contact_card::ContactCard::from_db_contact(&db_contact));
+                    .push(contact_card::ContactCard::from_db_contact(
+                        self.contacts.len() as i32,
+                        &db_contact,
+                    ));
                 Command::none()
             }
             Event::ContactUpdated(db_contact) => {
@@ -376,11 +382,15 @@ impl State {
             found_card.update(contact_card::Message::ContactUpdated(db_contact.clone()));
         } else {
             self.contacts
-                .push(contact_card::ContactCard::from_db_contact(&db_contact));
+                .push(contact_card::ContactCard::from_db_contact(
+                    self.contacts.len() as i32,
+                    &db_contact,
+                ));
         }
     }
 
-    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
+    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Command<Message> {
+        let mut command = Command::none();
         match message {
             Message::CloseModal => {
                 self.modal_state = ModalState::Off;
@@ -446,21 +456,30 @@ impl State {
                 }
             }
             Message::NavSettingsPress => (),
-            Message::ContactCardMessage(card_msg) => {
-                if let contact_card::Message::UpdateActiveContact(contact) = &card_msg {
+            Message::ContactCardMessage(wrapped) => {
+                if let contact_card::Message::ContactPress(contact) = &wrapped.message.clone() {
                     if self.active_contact.as_ref() != Some(&contact) {
                         conn.send(net::Message::FetchMessages(contact.clone()));
                         self.messages = vec![];
+                        command = text_input::focus(CHAT_INPUT_ID.clone());
                     }
                     self.dm_msg = "".into();
                     self.active_contact = Some(contact.clone());
-                }
 
-                for c in &mut self.contacts {
-                    c.update(card_msg.clone());
+                    for c in &mut self.contacts {
+                        c.update(contact_card::Message::TurnOffActive);
+                    }
+
+                    if let Some(contact_card) =
+                        self.contacts.iter_mut().find(|c| c.id == wrapped.from)
+                    {
+                        contact_card.update(contact_card::Message::TurnOnActive);
+                    }
                 }
             }
         }
+
+        command
     }
 }
 

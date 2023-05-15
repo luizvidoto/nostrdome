@@ -11,9 +11,22 @@ use crate::utils::from_naive_utc_to_local;
 use crate::widget::Element;
 
 #[derive(Debug, Clone)]
+pub struct MessageWrapper {
+    pub message: Message,
+    pub from: i32,
+}
+impl MessageWrapper {
+    pub fn new(from: i32, message: Message) -> Self {
+        Self { from, message }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Message {
     ContactUpdated(DbContact),
-    UpdateActiveContact(DbContact),
+    ContactPress(DbContact),
+    TurnOffActive,
+    TurnOnActive,
     ShowOnlyProfileImage,
     ShowFullCard,
 }
@@ -26,32 +39,30 @@ pub enum CardMode {
 
 #[derive(Debug, Clone)]
 pub struct ContactCard {
-    active_contact: Option<DbContact>,
+    pub id: i32,
+    card_active: bool,
     mode: CardMode,
     pub contact: DbContact,
     profile_img_handle: Option<image::Handle>,
 }
 
 impl ContactCard {
-    pub fn from_db_contact(db_contact: &DbContact) -> Self {
+    pub fn from_db_contact(id: i32, db_contact: &DbContact) -> Self {
         let mut profile_img_handle = None;
         let size = ImageSize::Small;
         if let Some(profile_img_str) = db_contact.profile_image_sized(size) {
             profile_img_handle = Some(image::Handle::from_path(profile_img_str));
         }
         Self {
-            active_contact: None,
+            id,
+            card_active: false,
             mode: CardMode::Full,
             contact: db_contact.clone(),
             profile_img_handle,
         }
     }
-    pub fn view(&self) -> Element<Message> {
-        let mut is_active = false;
+    pub fn view(&self) -> Element<MessageWrapper> {
         let size = ImageSize::Small;
-        if let Some(contact) = &self.active_contact {
-            is_active = contact == &self.contact;
-        }
 
         let pic_element = match &self.profile_img_handle {
             Some(handle) => image::Image::new(handle.clone()).into(),
@@ -116,8 +127,11 @@ impl ContactCard {
         button(btn_content)
             .width(Length::Fill)
             .height(CARD_HEIGHT)
-            .on_press(Message::UpdateActiveContact(self.contact.clone()))
-            .style(if is_active {
+            .on_press(MessageWrapper::new(
+                self.id,
+                Message::ContactPress(self.contact.clone()),
+            ))
+            .style(if self.card_active {
                 style::Button::ActiveContactCard
             } else {
                 style::Button::ContactCard
@@ -125,7 +139,7 @@ impl ContactCard {
             .into()
     }
 
-    fn make_last_date<'a>(&'a self) -> Element<'a, Message> {
+    fn make_last_date<'a>(&'a self) -> Element<'a, MessageWrapper> {
         match self.contact.last_message_date() {
             Some(date) => {
                 let local_day = from_naive_utc_to_local(date);
@@ -147,27 +161,6 @@ impl ContactCard {
         }
     }
 
-    // fn name_element(&self, is_pic: bool) -> Element<'static, Message> {
-    //     let pub_string = self.contact.pubkey().to_string();
-    //     let formatted_pubstring = format_pubkey(&pub_string);
-    //     let extracted_name = if is_pic {
-    //         &pub_string[0..2]
-    //     } else {
-    //         &formatted_pubstring
-    //     };
-
-    //     match self.contact.get_petname() {
-    //         Some(name) => {
-    //             if is_pic {
-    //                 text(&name[0..2]).into()
-    //             } else {
-    //                 text(name).into()
-    //             }
-    //         }
-    //         None => text(format!("{}", extracted_name)).into(),
-    //     }
-    // }
-
     pub fn update(&mut self, message: Message) {
         match message {
             Message::ContactUpdated(db_contact) => {
@@ -178,8 +171,12 @@ impl ContactCard {
                 self.profile_img_handle = profile_img_handle;
                 self.contact = db_contact;
             }
-            Message::UpdateActiveContact(contact) => {
-                self.active_contact = Some(contact.clone());
+            Message::ContactPress(_) => (),
+            Message::TurnOffActive => {
+                self.card_active = false;
+            }
+            Message::TurnOnActive => {
+                self.card_active = true;
             }
             Message::ShowOnlyProfileImage => {
                 self.mode = CardMode::Small;
@@ -188,7 +185,7 @@ impl ContactCard {
         }
     }
 
-    fn make_notifications<'a>(&self) -> Element<'a, Message> {
+    fn make_notifications<'a>(&self) -> Element<'a, MessageWrapper> {
         match self.contact.unseen_messages() {
             0 => text("").into(),
             count => container(
