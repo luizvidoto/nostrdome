@@ -11,6 +11,7 @@ pub struct TextInputGroup<'a, Message: Clone + 'a> {
     on_submit: Option<Message>,
     is_invalid: bool,
     invalid_message: String,
+    is_disabled: bool,
 }
 
 impl<'a, Message: Clone + 'a> TextInputGroup<'a, Message> {
@@ -28,6 +29,7 @@ impl<'a, Message: Clone + 'a> TextInputGroup<'a, Message> {
             on_submit: None,
             is_invalid: false,
             invalid_message: String::from(""),
+            is_disabled: false,
         }
     }
 
@@ -52,6 +54,11 @@ impl<'a, Message: Clone + 'a> TextInputGroup<'a, Message> {
         self
     }
 
+    pub(crate) fn disabled(mut self) -> Self {
+        self.is_disabled = true;
+        self
+    }
+
     pub fn build(self) -> Element<'a, Message> {
         text_input_group(
             self.label_str,
@@ -62,6 +69,7 @@ impl<'a, Message: Clone + 'a> TextInputGroup<'a, Message> {
             self.on_submit,
             self.is_invalid,
             &self.invalid_message,
+            self.is_disabled,
         )
     }
 }
@@ -75,6 +83,7 @@ fn text_input_group<'a, Message: Clone + 'a>(
     on_submit: Option<Message>,
     is_invalid: bool,
     invalid_message: &str,
+    is_disabled: bool,
 ) -> Element<'a, Message> {
     let text_input_style = if is_invalid {
         style::TextInput::Invalid
@@ -100,11 +109,13 @@ fn text_input_group<'a, Message: Clone + 'a>(
         text("").into()
     };
     let label_row = row![label, tooltip].spacing(4);
-    let mut txt_input = text_input(placeholder, value)
-        .on_input(on_change)
-        .style(text_input_style);
-    if let Some(on_submit) = on_submit {
-        txt_input = txt_input.on_submit(on_submit);
+
+    let mut txt_input = text_input(placeholder, value).style(text_input_style);
+    if !is_disabled {
+        txt_input = txt_input.on_input(on_change);
+        if let Some(on_submit) = on_submit {
+            txt_input = txt_input.on_submit(on_submit);
+        }
     }
 
     let invalid_message_text = text(invalid_message).size(16).style(style::Text::Danger);

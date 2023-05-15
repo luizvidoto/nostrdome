@@ -10,6 +10,7 @@ use crate::{
 mod channels;
 mod chat;
 pub(crate) mod login;
+pub(crate) mod modal;
 pub(crate) mod settings;
 pub(crate) mod welcome;
 

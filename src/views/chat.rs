@@ -19,12 +19,15 @@ use crate::utils::{contact_matches_search_selected_name, from_naive_utc_to_local
 use crate::widget::{Button, Container, Element};
 use once_cell::sync::Lazy;
 
+use super::modal::{basic_contact, ContactDetails};
+
 // static CONTACTS_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
 static CHAT_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
 static CHAT_INPUT_ID: Lazy<text_input::Id> = Lazy::new(text_input::Id::unique);
 
 pub enum ModalState {
     Off,
+    BasicProfile(ContactDetails),
     Profile {
         name: String,
         profile: nostr_sdk::Metadata,
@@ -32,9 +35,15 @@ pub enum ModalState {
     },
 }
 impl ModalState {
+    pub fn basic_profile(contact: DbContact) -> Self {
+        Self::BasicProfile(ContactDetails::new(Some(contact)))
+    }
     pub fn view<'a>(&'a self, underlay: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
         let view: Element<_> = match self {
             ModalState::Off => underlay.into(),
+            ModalState::BasicProfile(state) => state
+                .view(underlay)
+                .map(|m| Message::BasicContactMessage(Box::new(m))),
             ModalState::Profile {
                 name,
                 profile,
@@ -94,7 +103,7 @@ impl ModalState {
         select_name: String,
         profile_meta: nostr_sdk::Metadata,
         profile_image_path: Option<&PathBuf>,
-    ) -> ModalState {
+    ) -> Self {
         let profile_image_handle = if let Some(path) = profile_image_path {
             image::Handle::from_path(path)
         } else {
@@ -110,6 +119,7 @@ impl ModalState {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    BasicContactMessage(Box<basic_contact::CMessage<Message>>),
     StatusBarMessage(status_bar::Message),
     OnVerResize(u16),
     GoToChannelsPress,
@@ -395,6 +405,21 @@ impl State {
             Message::CloseModal => {
                 self.modal_state = ModalState::Off;
             }
+            Message::BasicContactMessage(modal_msg) => {
+                if let ModalState::BasicProfile(state) = &mut self.modal_state {
+                    match *modal_msg {
+                        basic_contact::CMessage::UnderlayMessage(message) => {
+                            return self.update(message, conn);
+                        }
+                        other => {
+                            let close_modal = state.update(other, conn);
+                            if close_modal {
+                                self.modal_state = ModalState::Off;
+                            }
+                        }
+                    }
+                }
+            }
             Message::OpenContactProfile => {
                 if let Some(contact) = &self.active_contact {
                     if let Some(profile_meta) = contact.get_profile_meta() {
@@ -404,6 +429,8 @@ impl State {
                             profile_meta,
                             profile_image_path.as_ref(),
                         )
+                    } else {
+                        self.modal_state = ModalState::basic_profile(contact.to_owned())
                     }
                 }
             }
