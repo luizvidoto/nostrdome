@@ -90,6 +90,9 @@ pub enum Error {
     #[error("Not found project directory")]
     NotFoundProjectDirectory,
 
+    #[error("Signing error: {0}")]
+    SigningEventError(String),
+
     // FromDbContactError
     #[error("{0}")]
     FromDbContactError(#[from] DbContactError),

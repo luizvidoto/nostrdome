@@ -156,10 +156,6 @@ impl UserConfig {
         let corrected_system_time = correct_time_with_offset(system_total_microseconds, offset);
         let corrected_time = system_time_to_naive_utc(corrected_system_time)?;
 
-        tracing::info!("Offset: {}", &offset);
-        tracing::info!("System time: {}", &chrono::Utc::now().naive_utc());
-        tracing::info!("Corrected time: {}", &corrected_time);
-
         Ok(corrected_time)
     }
 }

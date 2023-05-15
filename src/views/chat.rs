@@ -39,7 +39,7 @@ impl ModalState {
                 profile,
                 profile_image_handle,
             } => {
-                let profile_image = Image::new(profile_image_handle.to_owned());
+                let _profile_image = Image::new(profile_image_handle.to_owned());
                 let modal = Modal::new(true, underlay, move || {
                     let title = title(name);
                     let mut content = column![].spacing(5);

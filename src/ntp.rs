@@ -69,10 +69,10 @@ pub fn ntp_request(back_sender: &mut mpsc::Sender<BackEndInput>) {
 
     tokio::spawn(async move {
         loop {
-            tracing::info!("Starting NTP request");
+            tracing::debug!("Starting NTP request");
             let ntp_addrs = ntp_addrs();
             let random_port = rand::random::<u16>().saturating_add(1024); // Avoid well-known ports;
-            tracing::info!(
+            tracing::debug!(
                 "Trying to get time from NTP servers using port: {}",
                 random_port
             );

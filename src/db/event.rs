@@ -9,7 +9,7 @@ use crate::{
 };
 use nostr_sdk::{
     secp256k1::{schnorr::Signature, XOnlyPublicKey},
-    EventId, Kind, Tag, Timestamp,
+    EventId, Kind, Tag,
 };
 
 use super::UserConfig;

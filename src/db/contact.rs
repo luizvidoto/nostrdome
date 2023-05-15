@@ -322,7 +322,7 @@ impl DbContact {
                 .execute(pool)
                 .await?;
         } else {
-            tracing::info!("Can't update last_message with an older message.");
+            tracing::debug!("Can't update last_message with an older message.");
         }
 
         Ok(db_contact)
@@ -359,7 +359,7 @@ impl DbContact {
         db_contact: &DbContact,
         count: u8,
     ) -> Result<DbContact> {
-        tracing::info!("updated contact count: {}", count);
+        tracing::debug!("updated contact count: {}", count);
         let now_utc = UserConfig::get_corrected_time(pool)
             .await
             .unwrap_or(Utc::now().naive_utc());

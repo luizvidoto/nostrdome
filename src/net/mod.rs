@@ -1,11 +1,10 @@
 use crate::db::{Database, DbContact, DbEvent, DbRelay, DbRelayResponse, UserConfig};
 use crate::error::Error;
-use crate::net::client::fetch_latest_version;
 use crate::net::events::backend::{self, backend_processing};
 use crate::net::events::frontend::Event;
 use crate::net::events::nostr::NostrSdkWrapper;
+use crate::net::reqwest_client::fetch_latest_version;
 use crate::ntp::ntp_request;
-use chrono::Utc;
 use futures::channel::mpsc;
 use futures::{Future, StreamExt};
 use iced::futures::stream::Fuse;
@@ -16,20 +15,21 @@ use sqlx::SqlitePool;
 use std::pin::Pin;
 
 mod back_channel;
-mod client;
 pub(crate) mod events;
 mod messages;
+mod operations;
+mod reqwest_client;
 
-pub(crate) use client::{get_png_image_path, ImageKind, ImageSize};
+pub(crate) use reqwest_client::{get_png_image_path, ImageKind, ImageSize};
 
 pub(crate) use self::back_channel::BackEndConnection;
-use self::events::backend::{
-    add_new_contact, delete_contact, fetch_and_decrypt_chat, prepare_client, update_contact,
-    BackEndInput,
+use self::events::backend::BackEndInput;
+use self::events::nostr::{prepare_client, NostrInput, NostrOutput};
+use self::operations::builder::{build_contact_list_event, build_dm};
+use self::operations::contact::{
+    add_new_contact, delete_contact, fetch_and_decrypt_chat, import_contacts, update_contact,
 };
-use self::events::nostr::{
-    build_contact_list_event, build_dm, build_profile_event, NostrInput, NostrOutput,
-};
+use self::operations::metadata::update_user_metadata;
 pub(crate) use messages::Message;
 
 pub struct BackendState {
@@ -41,7 +41,7 @@ pub struct BackendState {
 }
 impl BackendState {
     pub fn new(keys: &Keys) -> Self {
-        let (mut sender, receiver) = mpsc::channel(1024);
+        let (sender, receiver) = mpsc::channel(1024);
 
         Self {
             sender,
@@ -219,14 +219,24 @@ impl BackendState {
                 // -- TO BACKEND CHANNEL --
                 Message::SendDM((db_contact, content)) => {
                     // to backend channel, create a pending event and await confirmation of relays
-                    match build_dm(pool, &self.keys, db_contact, content).await {
-                        Ok(input) => to_backend_channel(&mut self.sender, input),
+                    match build_dm(pool, &self.keys, &db_contact, &content).await {
+                        Ok(ns_event) => to_backend_channel(
+                            &mut self.sender,
+                            BackEndInput::StorePendingMessage {
+                                ns_event,
+                                content,
+                                db_contact,
+                            },
+                        ),
                         Err(e) => Event::Error(e.to_string()),
                     }
                 }
                 Message::SendContactListToRelay(_db_relay) => match DbContact::fetch(pool).await {
                     Ok(list) => match build_contact_list_event(pool, &self.keys, &list).await {
-                        Ok(input) => to_backend_channel(&mut self.sender, input),
+                        Ok(ns_event) => to_backend_channel(
+                            &mut self.sender,
+                            BackEndInput::StorePendingContactList((ns_event, list.to_owned())),
+                        ),
                         Err(e) => Event::Error(e.to_string()),
                     },
                     Err(e) => Event::Error(e.to_string()),
@@ -415,40 +425,6 @@ pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
     vec![database_sub]
 }
 
-async fn update_user_metadata(
-    pool: &SqlitePool,
-    keys: &Keys,
-    back_sender: &mut mpsc::Sender<backend::BackEndInput>,
-    profile_meta: nostr_sdk::Metadata,
-) -> Event {
-    match UserConfig::update_user_metadata_if_newer(pool, &profile_meta, Utc::now().naive_utc())
-        .await
-    {
-        Ok(_) => match build_profile_event(pool, keys, profile_meta).await {
-            Ok(input) => to_backend_channel(back_sender, input),
-            Err(e) => Event::Error(e.to_string()),
-        },
-        Err(e) => Event::Error(e.to_string()),
-    }
-}
-
-async fn import_contacts(
-    keys: &Keys,
-    pool: &SqlitePool,
-    db_contacts: Vec<DbContact>,
-    is_replace: bool,
-) -> Result<Event, Error> {
-    for db_contact in &db_contacts {
-        if is_replace {
-            DbContact::delete(pool, db_contact).await?;
-            add_new_contact(keys, pool, db_contact).await?;
-        } else {
-            update_contact(keys, pool, db_contact).await?;
-        }
-    }
-    Ok(Event::FileContactsImported(db_contacts))
-}
-
 fn handle_fetch_last_version(
     req_client: &mut reqwest::Client,
     sender: &mut mpsc::Sender<BackEndInput>,
@@ -469,16 +445,21 @@ fn handle_fetch_last_version(
     Event::FetchingLatestVersion
 }
 
-// match remote_time.checked_sub(local_time) {
-//     Some(offset) => {
-//         match update_ntp_offset(offset) {
-//             Ok(()) => println!("NTP offset updated in the database."),
-//             Err(e) => eprintln!("Failed to update NTP offset: {}", e),
-//         }
-//     },
-//     None => panic!("Time calculation overflow!"),
-// }
+async fn handle_first_login(
+    pool: &SqlitePool,
+    nostr_sender: &mut mpsc::Sender<NostrInput>,
+) -> Result<Event, Error> {
+    if UserConfig::query_has_logged_in(pool).await? {
+        let input = prepare_client(pool).await?;
+        to_nostr_channel(nostr_sender, input);
+        Ok(Event::None)
+    } else {
+        Ok(Event::FirstLogin)
+    }
+}
 
+// ---------------------------------
+// ---------------------------------
 // ---------------------------------
 
 async fn process_async_with_event<E>(op: impl Future<Output = Result<Event, E>>) -> Event
@@ -512,7 +493,7 @@ fn to_nostr_channel(nostr_sender: &mut mpsc::Sender<NostrInput>, input: NostrInp
     )
 }
 
-fn to_backend_channel(
+pub fn to_backend_channel(
     backend_channel: &mut mpsc::Sender<BackEndInput>,
     input: BackEndInput,
 ) -> Event {
@@ -522,17 +503,4 @@ fn to_backend_channel(
         Event::None,
         "Error sending to Backend channel",
     )
-}
-
-async fn handle_first_login(
-    pool: &SqlitePool,
-    nostr_sender: &mut mpsc::Sender<NostrInput>,
-) -> Result<Event, Error> {
-    if UserConfig::query_has_logged_in(pool).await? {
-        let input = prepare_client(pool).await?;
-        to_nostr_channel(nostr_sender, input);
-        Ok(Event::None)
-    } else {
-        Ok(Event::FirstLogin)
-    }
 }
