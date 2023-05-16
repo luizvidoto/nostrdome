@@ -1,11 +1,14 @@
 use std::time::Duration;
 
-use nostr_sdk::{secp256k1::XOnlyPublicKey, Client, Filter, Keys, Kind, Timestamp};
+use futures::channel::mpsc;
+use nostr_sdk::{
+    secp256k1::XOnlyPublicKey, Client, ClientMessage, Filter, Keys, Kind, RelayStatus, Timestamp,
+};
 
 use crate::{
     db::{DbContact, DbEvent, DbRelay},
     error::Error,
-    net::events::Event,
+    net::events::{nostr::NostrOutput, Event},
 };
 
 pub async fn request_events_of(
@@ -14,8 +17,8 @@ pub async fn request_events_of(
     db_relay: DbRelay,
     contact_list: Vec<DbContact>,
 ) -> Result<Event, Error> {
-    tracing::info!("Requesting events of {}", db_relay.url);
-    tracing::info!("contact_list: {}", contact_list.len());
+    tracing::debug!("Requesting events of {}", db_relay.url);
+    tracing::debug!("contact_list: {}", contact_list.len());
     if let Some(relay) = client.relays().await.get(&db_relay.url) {
         let filters = make_nostr_filters(keys.public_key().clone(), None, &contact_list);
         let timeout = Some(Duration::from_secs(10));
@@ -30,7 +33,7 @@ pub async fn subscribe_to_events(
     last_event: Option<DbEvent>,
     contact_list: Vec<DbContact>,
 ) -> Result<Event, Error> {
-    tracing::info!("Subscribing to events");
+    tracing::debug!("Subscribing to events");
 
     let client = client.clone();
     let public_key = keys.public_key().clone();
@@ -62,7 +65,10 @@ fn make_nostr_filters(
         .iter()
         .map(|c| c.pubkey().to_string())
         .collect::<Vec<_>>();
-    let metadata_filter = Filter::new().authors(all_pubkeys).kind(Kind::Metadata);
+    let metadata_filter = Filter::new()
+        .authors(all_pubkeys)
+        .kind(Kind::Metadata)
+        .since(Timestamp::from(last_timestamp_secs));
 
     let sent_msgs_sub_past = Filter::new()
         .kinds(nostr_kinds())
@@ -78,12 +84,26 @@ fn make_nostr_filters(
 
 pub async fn send_event_to_relays(
     client: &Client,
+    channel: &mut mpsc::Sender<NostrOutput>,
     ns_event: nostr_sdk::Event,
 ) -> Result<Event, Error> {
-    tracing::info!("send_event_to_relays: {}", ns_event.id);
+    tracing::debug!("send_event_to_relays ID: {}", ns_event.id);
     tracing::debug!("{:?}", ns_event);
-    let event_hash = client.send_event(ns_event).await?;
-    Ok(Event::SentEventToRelays(event_hash))
+    for (url, relay) in client.relays().await {
+        let status = relay.status().await;
+        if let RelayStatus::Connected = status {
+            let msg = ClientMessage::Event(Box::new(ns_event.clone()));
+            relay.send_msg(msg, false).await?;
+            if let Err(e) = channel.try_send(NostrOutput::Ok(Event::SentEventTo((
+                url,
+                ns_event.id.clone(),
+            )))) {
+                tracing::error!("Error sending event to back: {}", e);
+            }
+        }
+    }
+    // let event_hash = client.send_event(ns_event).await?;
+    Ok(Event::SentEventToRelays(ns_event.id))
 }
 
 pub fn nostr_kinds() -> Vec<Kind> {

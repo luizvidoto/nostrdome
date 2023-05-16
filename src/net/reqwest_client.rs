@@ -15,7 +15,7 @@ use crate::consts::{
     APP_PROJECT_DIRS, MEDIUM_PROFILE_PIC_HEIGHT, MEDIUM_PROFILE_PIC_WIDTH,
     SMALL_PROFILE_PIC_HEIGHT, SMALL_PROFILE_PIC_WIDTH,
 };
-use crate::db::Cache;
+use crate::db::ProfileCache;
 use crate::error::Error;
 
 #[derive(Debug, Clone, Copy)]
@@ -65,30 +65,18 @@ pub fn get_png_image_path(base_path: &Path, kind: ImageKind, size: ImageSize) ->
     base_path.with_file_name(file_name)
 }
 
+pub fn sized_image(filename: &Path, kind: ImageKind, size: ImageSize) -> PathBuf {
+    let new_file_name = image_filename(kind, size, "png");
+    // replace filename with new
+    filename.with_file_name(new_file_name)
+}
+
 pub async fn download_image(
-    cache_pool: &SqlitePool,
     image_url: &str,
-    event_date: &NaiveDateTime,
     public_key: &XOnlyPublicKey,
     kind: ImageKind,
 ) -> Result<PathBuf, Error> {
     let image_url = Url::parse(image_url)?;
-
-    if let Some(img_cache) = Cache::fetch_by_public_key(cache_pool, public_key).await? {
-        if event_date < &img_cache.updated_at {
-            if let Some(path_of_kind) = img_cache.get_path(kind) {
-                return Ok(path_of_kind);
-            }
-        }
-        if let Some(url_of_kind) = img_cache.get_url(kind) {
-            if image_url == url_of_kind {
-                if let Some(path_of_kind) = img_cache.get_path(kind) {
-                    return Ok(path_of_kind);
-                }
-            }
-        }
-    }
-
     let response = reqwest::get(image_url.clone()).await?;
 
     let content_type = response
@@ -127,16 +115,6 @@ pub async fn download_image(
 
     resize_and_save_image(&original_path, &images_dir, kind, ImageSize::Medium)?;
     resize_and_save_image(&original_path, &images_dir, kind, ImageSize::Small)?;
-
-    Cache::insert_by_public_key(
-        cache_pool,
-        public_key,
-        event_date,
-        kind,
-        &original_path,
-        &image_url,
-    )
-    .await?;
 
     Ok(original_path)
 }

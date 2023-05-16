@@ -27,8 +27,7 @@ pub async fn create_channel(client: &Client) -> Result<Event, Error> {
 }
 
 pub async fn add_relay(client: &Client, db_relay: DbRelay) -> Result<BackEndInput, Error> {
-    tracing::debug!("add_relay");
-    tracing::info!("Adding relay to client: {}", db_relay.url);
+    tracing::debug!("Adding relay to client: {}", db_relay.url);
     client.add_relay(db_relay.url.as_str(), None).await?;
     Ok(BackEndInput::AddRelayToDb(db_relay))
 }
@@ -54,17 +53,17 @@ pub async fn add_relays_and_connect(
 ) -> Result<BackEndInput, Error> {
     tracing::debug!("add_relays_and_connect");
     // Received from BackEndEvent::PrepareClient
-    tracing::info!("Adding relays to client: {}", relays.len());
+    tracing::debug!("Adding relays to client: {}", relays.len());
 
     // Only adds to the HashMap
     for r in relays {
         match client.add_relay(&r.url.to_string(), None).await {
-            Ok(_) => tracing::info!("Nostr Client Added Relay: {}", &r.url),
+            Ok(_) => tracing::debug!("Nostr Client Added Relay: {}", &r.url),
             Err(e) => tracing::error!("{}", e),
         }
     }
 
-    tracing::info!("Connecting to relays");
+    tracing::debug!("Connecting to relays");
     let client_c = client.clone();
     tokio::spawn(async move { client_c.connect().await });
 

@@ -63,8 +63,6 @@ pub enum Error {
     UnknownChatMessage(String, String),
     #[error("Event need to be confirmed")]
     NotConfirmedEvent,
-    #[error("Event is pending: {0}")]
-    PendingEvent(EventId),
     #[error("Unable to update contact: message ID is required but not provided.")]
     MissingMessageIdForContactUpdate,
     #[error("Outdated contact insert")]

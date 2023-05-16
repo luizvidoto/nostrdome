@@ -1,4 +1,4 @@
-use crate::db::{Database, DbContact, DbEvent, DbRelay, DbRelayResponse, UserConfig};
+use crate::db::{Database, DbContact, DbEvent, DbRelay, DbRelayResponse, ProfileCache, UserConfig};
 use crate::error::Error;
 use crate::net::events::backend::{self, backend_processing};
 use crate::net::events::frontend::Event;
@@ -10,6 +10,7 @@ use futures::{Future, StreamExt};
 use iced::futures::stream::Fuse;
 use iced::subscription;
 use iced::Subscription;
+use nostr_sdk::secp256k1::XOnlyPublicKey;
 use nostr_sdk::{Keys, RelayPoolNotification};
 use sqlx::SqlitePool;
 use std::pin::Pin;
@@ -20,7 +21,7 @@ mod messages;
 mod operations;
 mod reqwest_client;
 
-pub(crate) use reqwest_client::{get_png_image_path, ImageKind, ImageSize};
+pub(crate) use reqwest_client::{sized_image, ImageKind, ImageSize};
 
 pub(crate) use self::back_channel::BackEndConnection;
 use self::events::backend::BackEndInput;
@@ -30,6 +31,7 @@ use self::operations::contact::{
     add_new_contact, delete_contact, fetch_and_decrypt_chat, import_contacts, update_contact,
 };
 use self::operations::metadata::update_user_metadata;
+use self::reqwest_client::download_image;
 pub(crate) use messages::Message;
 
 pub struct BackendState {
@@ -91,17 +93,23 @@ impl BackendState {
     ) -> Event {
         if let (Some(db_client), Some(req_client)) = (&mut self.db_client, &mut self.req_client) {
             let pool = &db_client.pool;
+            let cache_pool = &db_client.cache_pool;
             match message {
                 // ---- REQWEST ----
                 Message::FetchLatestVersion => {
                     handle_fetch_last_version(req_client, &mut self.sender)
                 }
+                Message::DownloadImage {
+                    image_url,
+                    public_key,
+                    kind,
+                } => handle_download_image(&mut self.sender, public_key, kind, image_url),
                 // ---- CONFIG ----
                 Message::Logout => {
                     panic!("Logout should be processed outside here")
                 }
                 Message::CreateAccount(profile) => {
-                    let profile_meta = profile.into();
+                    let profile_meta: nostr_sdk::Metadata = profile.into();
                     update_user_metadata(pool, &self.keys, &mut self.sender, profile_meta).await
                 }
                 Message::UpdateUserProfileMeta(profile_meta) => {
@@ -111,19 +119,23 @@ impl BackendState {
                     Ok(_) => Event::FirstLoginStored,
                     Err(e) => Event::Error(e.to_string()),
                 },
-                Message::QueryFirstLogin => match handle_first_login(pool, nostr_sender).await {
-                    Ok(event) => event,
-                    Err(e) => Event::Error(e.to_string()),
-                },
-                Message::PrepareClient => match prepare_client(pool).await {
+                Message::QueryFirstLogin => {
+                    match handle_first_login(pool, cache_pool, nostr_sender).await {
+                        Ok(event) => event,
+                        Err(e) => Event::Error(e.to_string()),
+                    }
+                }
+                Message::PrepareClient => match prepare_client(pool, cache_pool).await {
                     Ok(input) => to_nostr_channel(nostr_sender, input),
                     Err(e) => Event::Error(e.to_string()),
                 },
                 // -------- DATABASE MESSAGES -------
                 Message::GetUserProfileMeta => {
                     tracing::info!("Fetching user profile meta");
-                    match UserConfig::fetch(pool).await {
-                        Ok(user) => Event::GotUserProfileMeta(user.profile_meta),
+                    match ProfileCache::fetch_by_public_key(cache_pool, &self.keys.public_key())
+                        .await
+                    {
+                        Ok(cache) => Event::GotUserProfileCache(cache),
                         Err(e) => Event::Error(e.to_string()),
                     }
                 }
@@ -158,7 +170,7 @@ impl BackendState {
                 Message::DeleteContact(contact) => {
                     process_async_with_event(delete_contact(pool, &contact)).await
                 }
-                Message::FetchContacts => match DbContact::fetch(pool).await {
+                Message::FetchContacts => match DbContact::fetch(pool, cache_pool).await {
                     Ok(contacts) => Event::GotContacts(contacts),
                     Err(e) => Event::Error(e.to_string()),
                 },
@@ -171,15 +183,17 @@ impl BackendState {
                         .await
                 }
                 // --------- NOSTR MESSAGES ------------
-                Message::RequestEventsOf(db_relay) => match DbContact::fetch(pool).await {
-                    Ok(contact_list) => to_nostr_channel(
-                        nostr_sender,
-                        NostrInput::RequestEventsOf((db_relay, contact_list)),
-                    ),
-                    Err(e) => Event::Error(e.to_string()),
-                },
+                Message::RequestEventsOf(db_relay) => {
+                    match DbContact::fetch(pool, cache_pool).await {
+                        Ok(contact_list) => to_nostr_channel(
+                            nostr_sender,
+                            NostrInput::RequestEventsOf((db_relay, contact_list)),
+                        ),
+                        Err(e) => Event::Error(e.to_string()),
+                    }
+                }
 
-                Message::RefreshContactsProfile => match DbContact::fetch(pool).await {
+                Message::RefreshContactsProfile => match DbContact::fetch(pool, cache_pool).await {
                     Ok(db_contacts) => {
                         to_nostr_channel(
                             nostr_sender,
@@ -232,16 +246,18 @@ impl BackendState {
                         Err(e) => Event::Error(e.to_string()),
                     }
                 }
-                Message::SendContactListToRelay(_db_relay) => match DbContact::fetch(pool).await {
-                    Ok(list) => match build_contact_list_event(pool, &self.keys, &list).await {
-                        Ok(ns_event) => to_backend_channel(
-                            &mut self.sender,
-                            BackEndInput::StorePendingContactList((ns_event, list.to_owned())),
-                        ),
+                Message::SendContactListToRelay(_db_relay) => {
+                    match DbContact::fetch(pool, cache_pool).await {
+                        Ok(list) => match build_contact_list_event(pool, &self.keys, &list).await {
+                            Ok(ns_event) => to_backend_channel(
+                                &mut self.sender,
+                                BackEndInput::StorePendingContactList((ns_event, list.to_owned())),
+                            ),
+                            Err(e) => Event::Error(e.to_string()),
+                        },
                         Err(e) => Event::Error(e.to_string()),
-                    },
-                    Err(e) => Event::Error(e.to_string()),
-                },
+                    }
+                }
             }
         } else {
             Event::None
@@ -266,6 +282,37 @@ impl BackendState {
 
         Event::None
     }
+}
+
+fn handle_download_image(
+    back_sender: &mut mpsc::Sender<BackEndInput>,
+    public_key: XOnlyPublicKey,
+    kind: ImageKind,
+    image_url: String,
+) -> Event {
+    let mut back_sender = back_sender.clone();
+    let kind_1 = kind.clone();
+    let image_url_1 = image_url.clone();
+    let public_key_1 = public_key.clone();
+    tokio::spawn(async move {
+        match download_image(&image_url_1, &public_key, kind).await {
+            Ok(path) => {
+                if let Err(e) = back_sender.try_send(BackEndInput::ImageDownloaded {
+                    kind: kind_1,
+                    public_key: public_key_1,
+                    path,
+                }) {
+                    tracing::error!("Error sending image downloaded event: {}", e);
+                }
+            }
+            Err(e) => {
+                if let Err(e) = back_sender.try_send(BackEndInput::Error(e.to_string())) {
+                    tracing::error!("Error sending image download error event: {}", e);
+                }
+            }
+        }
+    });
+    Event::DownloadingImage { kind, public_key }
 }
 
 pub struct NostrState {
@@ -448,10 +495,11 @@ fn handle_fetch_last_version(
 
 async fn handle_first_login(
     pool: &SqlitePool,
+    cache_pool: &SqlitePool,
     nostr_sender: &mut mpsc::Sender<NostrInput>,
 ) -> Result<Event, Error> {
     if UserConfig::query_has_logged_in(pool).await? {
-        let input = prepare_client(pool).await?;
+        let input = prepare_client(pool, cache_pool).await?;
         to_nostr_channel(nostr_sender, input);
         Ok(Event::None)
     } else {

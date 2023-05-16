@@ -13,24 +13,24 @@ use crate::{
 pub async fn fetch_and_decrypt_chat(
     keys: &Keys,
     pool: &SqlitePool,
-    mut db_contact: DbContact,
+    db_contact: DbContact,
 ) -> Result<Event, Error> {
-    tracing::info!("Fetching chat messages");
+    tracing::debug!("Fetching chat messages");
     let mut db_messages = DbMessage::fetch_chat(pool, db_contact.pubkey()).await?;
     let mut chat_messages = vec![];
 
-    tracing::info!("Updating unseen messages to marked as seen");
+    tracing::debug!("Updating unseen messages to marked as seen");
     for db_message in db_messages.iter_mut().filter(|m| m.is_unseen()) {
         DbMessage::message_seen(pool, db_message).await?;
     }
 
-    tracing::info!("Decrypting messages");
+    tracing::debug!("Decrypting messages");
     for db_message in &db_messages {
         let chat_message = ChatMessage::from_db_message(keys, &db_message, &db_contact)?;
         chat_messages.push(chat_message);
     }
 
-    db_contact = DbContact::update_unseen_count(pool, &mut db_contact, 0).await?;
+    let db_contact = DbContact::update_unseen_count(pool, db_contact, 0).await?;
 
     Ok(Event::GotChatMessages((db_contact, chat_messages)))
 }
@@ -134,16 +134,17 @@ pub async fn delete_contact(pool: &SqlitePool, db_contact: &DbContact) -> Result
 
 pub async fn fetch_or_create_contact(
     pool: &SqlitePool,
+    cache_pool: &SqlitePool,
     keys: &Keys,
     relay_url: &Url,
     contact_pubkey: &XOnlyPublicKey,
     db_message: &DbMessage,
 ) -> Result<Event, Error> {
     tracing::debug!("fetch_or_create_contact");
-    let mut db_contact = match DbContact::fetch_one(pool, contact_pubkey).await? {
+    let mut db_contact = match DbContact::fetch_one(pool, cache_pool, contact_pubkey).await? {
         Some(db_contact) => db_contact,
         None => {
-            tracing::info!("Creating new contact with pubkey: {}", contact_pubkey);
+            tracing::debug!("Creating new contact with pubkey: {}", contact_pubkey);
             let db_contact = DbContact::new(contact_pubkey);
             DbContact::insert(pool, &db_contact).await?;
             db_contact

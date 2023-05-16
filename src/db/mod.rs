@@ -8,7 +8,7 @@ mod relay;
 mod relay_response;
 mod user_config;
 
-pub(crate) use cache::Cache;
+pub(crate) use cache::ProfileCache;
 pub(crate) use contact::{DbContact, DbContactError};
 pub(crate) use database::Database;
 pub(crate) use event::DbEvent;

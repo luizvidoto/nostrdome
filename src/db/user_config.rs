@@ -1,9 +1,6 @@
-use std::path::PathBuf;
-
 use crate::{
     error::Error,
     ntp::{correct_time_with_offset, system_now_total_microseconds, system_time_to_naive_utc},
-    utils::{millis_to_naive_or_err, profile_meta_or_err},
 };
 
 use chrono::NaiveDateTime;
@@ -12,10 +9,6 @@ use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 #[derive(Debug, Clone)]
 pub struct UserConfig {
     pub has_logged_in: bool,
-    pub profile_meta: Option<nostr_sdk::Metadata>,
-    pub profile_meta_last_update: Option<NaiveDateTime>,
-    pub local_profile_image: Option<PathBuf>,
-    pub local_banner_image: Option<PathBuf>,
     pub ntp_offset: i64,
 }
 
@@ -24,10 +17,8 @@ impl UserConfig {
         tracing::debug!("setup_user_config");
         let query = r#"
             INSERT INTO user_config 
-                (id, has_logged_in, profile_meta, 
-                profile_meta_last_update, local_profile_image, 
-                local_banner_image, ntp_offset) 
-            VALUES (1, 0, "", 0, "", "", 0);
+                (id, has_logged_in, ntp_offset) 
+            VALUES (1, 0, 0);
         "#;
         sqlx::query(query).execute(pool).await?;
         Ok(())
@@ -58,71 +49,6 @@ impl UserConfig {
             .fetch_one(pool)
             .await?;
         Ok(user)
-    }
-
-    pub async fn update_user_metadata_if_newer(
-        pool: &SqlitePool,
-        profile_meta: &nostr_sdk::Metadata,
-        last_update: NaiveDateTime,
-    ) -> Result<(), Error> {
-        tracing::debug!("update_user_metadata_if_newer");
-        if Self::should_update_user_metadata(pool, &last_update).await? {
-            Self::update_user_metadata(profile_meta, &last_update, pool).await?;
-        }
-        Ok(())
-    }
-
-    pub async fn update_user_metadata(
-        profile_meta: &nostr_sdk::Metadata,
-        last_update: &NaiveDateTime,
-        pool: &SqlitePool,
-    ) -> Result<(), Error> {
-        tracing::debug!("update_user_metadata");
-        let query =
-            "UPDATE user_config SET profile_meta=?, profile_meta_last_update=? WHERE id = 1;";
-        sqlx::query(query)
-            .bind(&profile_meta.as_json())
-            .bind(last_update.timestamp_millis())
-            .execute(pool)
-            .await?;
-        Ok(())
-    }
-
-    pub async fn should_update_user_metadata(
-        pool: &SqlitePool,
-        last_update: &NaiveDateTime,
-    ) -> Result<bool, Error> {
-        tracing::debug!("should_update_user_metadata");
-        let user = Self::fetch(pool).await?;
-        let should_update = match user.profile_meta_last_update {
-            Some(previous_update) if &previous_update > last_update => {
-                tracing::warn!("Cant update user profile with older data");
-                false
-            }
-            _ => true,
-        };
-
-        Ok(should_update)
-    }
-
-    pub(crate) async fn update_user_profile_picture(
-        pool: &SqlitePool,
-        path: &PathBuf,
-    ) -> Result<(), Error> {
-        tracing::debug!("update_user_profile_picture");
-        let query = "UPDATE user_config SET local_profile_image=? WHERE id = 1;";
-        sqlx::query(query).bind(path.to_str()).execute(pool).await?;
-        Ok(())
-    }
-
-    pub(crate) async fn update_user_banner_picture(
-        pool: &SqlitePool,
-        path: &PathBuf,
-    ) -> Result<(), Error> {
-        tracing::debug!("update_user_banner_picture");
-        let query = "UPDATE user_config SET local_banner_image=? WHERE id = 1;";
-        sqlx::query(query).bind(path.to_str()).execute(pool).await?;
-        Ok(())
     }
 
     pub(crate) async fn update_ntp_offset(
@@ -162,24 +88,7 @@ impl UserConfig {
 
 impl sqlx::FromRow<'_, SqliteRow> for UserConfig {
     fn from_row(row: &'_ SqliteRow) -> Result<Self, sqlx::Error> {
-        let profile_meta: String = row.try_get("profile_meta")?;
-        let profile_meta = profile_meta_or_err(&profile_meta, "profile_meta").ok();
-
-        let profile_meta_last_update: i64 = row.try_get("profile_meta_last_update")?;
-        let profile_meta_last_update =
-            millis_to_naive_or_err(profile_meta_last_update, "profile_meta_last_update").ok();
-
-        let local_profile_image: Option<String> = row.get("local_profile_image");
-        let local_profile_image = local_profile_image.map(|path| PathBuf::from(path));
-
-        let local_banner_image: Option<String> = row.get("local_banner_image");
-        let local_banner_image = local_banner_image.map(|path| PathBuf::from(path));
-
         Ok(Self {
-            profile_meta,
-            profile_meta_last_update,
-            local_profile_image,
-            local_banner_image,
             has_logged_in: row.try_get::<bool, &str>("has_logged_in")?,
             ntp_offset: row.try_get::<i64, &str>("ntp_offset")?,
         })

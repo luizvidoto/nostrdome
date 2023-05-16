@@ -1,7 +1,11 @@
+use nostr_sdk::secp256k1::XOnlyPublicKey;
+
 use crate::{
     db::{DbContact, DbRelay},
     views::login::BasicProfile,
 };
+
+use super::ImageKind;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -38,4 +42,9 @@ pub enum Message {
     SendDM((DbContact, String)),
     SendContactListToRelay(DbRelay),
     CreateChannel,
+    DownloadImage {
+        image_url: String,
+        kind: ImageKind,
+        public_key: XOnlyPublicKey,
+    },
 }

@@ -160,14 +160,6 @@ const _UPGRADE_SQL: [&str; 0] = [
 /// Latest database version
 pub const DB_VERSION: usize = 1;
 
-// /// Startup DB Pragmas
-// pub const STARTUP_SQL: &str = r##"
-// PRAGMA main.synchronous=NORMAL;
-// PRAGMA foreign_keys = ON;
-// PRAGMA journal_size_limit=32768;
-// pragma mmap_size = 17179869184; -- cap mmap at 16GB
-// "##;
-
 const INITIAL_SETUP: [&str; 8] = [
     include_str!("../../migrations/1_setup.sql"),
     include_str!("../../migrations/2_event.sql"),
@@ -181,7 +173,7 @@ const INITIAL_SETUP: [&str; 8] = [
 
 const CACHE_SETUP: [&str; 2] = [
     include_str!("../../migrations/cache/1_setup.sql"),
-    include_str!("../../migrations/cache/2_cache_history.sql"),
+    include_str!("../../migrations/cache/2_profile_meta_cache.sql"),
 ];
 
-const IN_MEMORY: bool = true;
+const IN_MEMORY: bool = false;

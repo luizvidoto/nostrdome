@@ -267,7 +267,7 @@ impl Settings {
                         match received_msg {
                             contacts::Message::OpenEditContactModal(contact) => {
                                 self.modal_state =
-                                    ModalState::ContactDetails(ContactDetails::edit(&contact))
+                                    ModalState::ContactDetails(ContactDetails::edit(&contact, conn))
                             }
                             contacts::Message::OpenProfileModal(contact) => {
                                 self.modal_state = ModalState::profile(contact);

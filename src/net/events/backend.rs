@@ -5,20 +5,17 @@ use nostr_sdk::{secp256k1::XOnlyPublicKey, Keys};
 use sqlx::SqlitePool;
 
 use crate::{
-    db::{Cache, DbContact, DbRelay, UserConfig},
+    db::{DbContact, DbEvent, DbMessage, DbRelay, DbRelayResponse, ProfileCache, UserConfig},
     error::Error,
     net::{
         events::nostr::NostrInput,
-        operations::{
-            download::download_profile_image,
-            event::{
-                insert_confirmed_event, insert_pending_contact_list, insert_pending_dm,
-                insert_pending_metadata, on_relay_message,
-            },
-            metadata::{handle_profile_banner_update, handle_profile_picture_update},
+        operations::event::{
+            insert_confirmed_event, insert_pending_contact_list, insert_pending_dm,
+            insert_pending_metadata, on_relay_message,
         },
-        process_async_with_event,
+        process_async_with_event, ImageKind,
     },
+    types::ChatMessage,
 };
 
 use super::Event;
@@ -26,6 +23,10 @@ use super::Event;
 #[derive(Debug, Clone)]
 pub enum BackEndInput {
     NtpTime(u64),
+    RelayConfirmation {
+        relay_response: DbRelayResponse,
+        db_event: DbEvent,
+    },
     ToggleRelayRead((DbRelay, bool)),
     ToggleRelayWrite((DbRelay, bool)),
     AddRelayToDb(DbRelay),
@@ -40,12 +41,20 @@ pub enum BackEndInput {
     StoreConfirmedEvent((nostr_sdk::Url, nostr_sdk::Event)),
     StoreRelayMessage((nostr_sdk::Url, nostr_sdk::RelayMessage)),
     LatestVersion(String),
-    ProfilePictureDownloaded((XOnlyPublicKey, PathBuf)),
-    ProfileBannerDownloaded((XOnlyPublicKey, PathBuf)),
+    ImageDownloaded {
+        kind: ImageKind,
+        public_key: XOnlyPublicKey,
+        path: PathBuf,
+    },
     Shutdown,
     FinishedPreparingNostr,
     Error(String),
     Ok(Event),
+    FailedToSendEvent {
+        event_hash: nostr_sdk::EventId,
+        status: bool,
+        message: String,
+    },
 }
 
 pub async fn backend_processing(
@@ -70,52 +79,16 @@ pub async fn backend_processing(
                 Err(e) => Event::Error(e.to_string()),
             }
         }
-        BackEndInput::FinishedPreparingNostr => {
-            // donwload images?
-            if let Ok(contact_list) = DbContact::fetch(pool).await {
-                for db_contact in contact_list {
-                    match (
-                        db_contact.get_profile_meta(),
-                        db_contact.get_profile_meta_last_update(),
-                    ) {
-                        (Some(metadata), Some(event_date)) => {
-                            download_profile_image(
-                                cache_pool,
-                                back_sender,
-                                &metadata,
-                                &event_date,
-                                db_contact.pubkey(),
-                            )
-                            .await
-                        }
-                        _ => {
-                            match DbContact::update_with_cache(pool, cache_pool, db_contact).await {
-                                Ok(db_contact) => {
-                                    if let Err(e) = back_sender.try_send(BackEndInput::Ok(
-                                        Event::ContactUpdated(db_contact),
-                                    )) {
-                                        tracing::error!("Error sending back message: {}", e);
-                                    }
-                                }
-                                Err(e) => {
-                                    if let Err(e) =
-                                        back_sender.try_send(BackEndInput::Error(e.to_string()))
-                                    {
-                                        tracing::error!("Error sending back message: {}", e);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            Event::FinishedPreparing
-        }
-        BackEndInput::ProfilePictureDownloaded((public_key, path)) => {
-            handle_profile_picture_update(keys, public_key, pool, path).await
-        }
-        BackEndInput::ProfileBannerDownloaded((public_key, path)) => {
-            handle_profile_banner_update(keys, public_key, pool, path).await
+        BackEndInput::FinishedPreparingNostr => Event::FinishedPreparing,
+        BackEndInput::ImageDownloaded {
+            kind,
+            public_key,
+            path,
+        } => {
+            process_async_with_event(update_profile_cache(
+                pool, cache_pool, keys, public_key, kind, path,
+            ))
+            .await
         }
         BackEndInput::DeleteRelayFromDb(db_relay) => match DbRelay::delete(pool, &db_relay).await {
             Ok(_) => Event::RelayDeleted(db_relay),
@@ -175,6 +148,7 @@ pub async fn backend_processing(
         BackEndInput::StoreConfirmedEvent((relay_url, ns_event)) => {
             process_async_with_event(insert_confirmed_event(
                 pool,
+                cache_pool,
                 keys,
                 back_sender,
                 nostr_sender,
@@ -183,9 +157,23 @@ pub async fn backend_processing(
             ))
             .await
         }
+        BackEndInput::RelayConfirmation { db_event, .. } => {
+            process_async_with_event(on_event_confirmation(pool, cache_pool, keys, &db_event)).await
+        }
+        BackEndInput::FailedToSendEvent { message, .. } => {
+            tracing::info!("Relay message not ok: {}", &message);
+            Event::None
+        }
         BackEndInput::StoreRelayMessage((relay_url, relay_message)) => {
-            process_async_with_event(on_relay_message(&pool, keys, &relay_url, &relay_message))
-                .await
+            match on_relay_message(&pool, cache_pool, keys, &relay_url, &relay_message).await {
+                Ok(input) => {
+                    if let Err(e) = back_sender.try_send(input) {
+                        tracing::error!("Error sending to back_sender: {}", e);
+                    }
+                    Event::None
+                }
+                Err(e) => Event::Error(e.to_string()),
+            }
         }
     }
 }
@@ -194,4 +182,68 @@ pub async fn handle_recommend_relay(ns_event: nostr_sdk::Event) -> Result<Event,
     tracing::debug!("handle_recommend_relay");
     dbg!(&ns_event);
     Ok(Event::None)
+}
+
+pub async fn on_event_confirmation(
+    pool: &SqlitePool,
+    cache_pool: &SqlitePool,
+    keys: &Keys,
+    db_event: &DbEvent,
+) -> Result<Event, Error> {
+    let relay_url = db_event
+        .relay_url
+        .as_ref()
+        .ok_or(Error::NotConfirmedEvent)?;
+    if let nostr_sdk::Kind::EncryptedDirectMessage = db_event.kind {
+        if let Some(db_message) = DbMessage::fetch_one(pool, db_event.event_id()?).await? {
+            let confirmed_db_message =
+                DbMessage::relay_confirmation(pool, relay_url, db_message).await?;
+            // add relay confirmation
+
+            if let Some(db_contact) =
+                DbContact::fetch_one(pool, cache_pool, &confirmed_db_message.contact_chat()).await?
+            {
+                let chat_message =
+                    ChatMessage::from_db_message(keys, &confirmed_db_message, &db_contact)?;
+                let db_contact = DbContact::new_message(pool, db_contact, &chat_message).await?;
+                // (Some(confirmed_db_message), Some(db_contact))
+                return Ok(Event::ConfirmedDM((db_contact, confirmed_db_message)));
+            } else {
+                tracing::error!("No contact found for confirmed message");
+                return Ok(Event::None);
+            }
+        }
+    }
+
+    Ok(Event::None)
+}
+
+pub async fn update_profile_cache(
+    pool: &SqlitePool,
+    cache_pool: &SqlitePool,
+    keys: &Keys,
+    public_key: XOnlyPublicKey,
+    kind: ImageKind,
+    path: PathBuf,
+) -> Result<Event, Error> {
+    let _ = ProfileCache::update_local_path(cache_pool, &public_key, kind, &path).await?;
+
+    let event = match keys.public_key() == public_key {
+        true => match kind {
+            ImageKind::Profile => Event::UserProfilePictureUpdated(path),
+            ImageKind::Banner => Event::UserBannerPictureUpdated(path),
+        },
+        false => {
+            if let Some(db_contact) = DbContact::fetch_one(pool, cache_pool, &public_key).await? {
+                Event::ContactUpdated(db_contact)
+            } else {
+                tracing::warn!(
+                    "Image downloaded for contact not found in database: {}",
+                    public_key
+                );
+                Event::None
+            }
+        }
+    };
+    Ok(event)
 }

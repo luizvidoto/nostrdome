@@ -1,6 +1,10 @@
+use std::path::PathBuf;
+
+use nostr_sdk::secp256k1::XOnlyPublicKey;
+
 use crate::{
-    db::{DbContact, DbEvent, DbMessage, DbRelay, DbRelayResponse},
-    net::BackEndConnection,
+    db::{DbContact, DbEvent, DbMessage, DbRelay, DbRelayResponse, ProfileCache},
+    net::{BackEndConnection, ImageKind},
     types::ChatMessage,
 };
 
@@ -9,6 +13,10 @@ pub enum Event {
     // --- REQWEST ---
     LatestVersion(String),
     FetchingLatestVersion,
+    DownloadingImage {
+        kind: ImageKind,
+        public_key: XOnlyPublicKey,
+    },
     // --- Database ---
     ProfileCreated,
     GotChatMessages((DbContact, Vec<ChatMessage>)),
@@ -22,19 +30,15 @@ pub enum Event {
     ContactUpdated(DbContact),
     ContactDeleted(DbContact),
     OtherKindEventInserted(DbEvent),
-    OtherPendingEvent(DbEvent),
-    RelayConfirmation {
-        relay_response: DbRelayResponse,
-        db_event: DbEvent,
-        db_message: Option<DbMessage>,
-        db_contact: Option<DbContact>,
-    },
-    GotUserProfileMeta(Option<nostr_sdk::Metadata>),
+    GotUserProfileCache(Option<ProfileCache>),
     FileContactsImported(Vec<DbContact>),
-    UserProfilePictureUpdated,
-    UserBannerPictureUpdated,
+    UserProfilePictureUpdated(PathBuf),
+    UserBannerPictureUpdated(PathBuf),
     SystemTime((chrono::NaiveDateTime, i64)),
+    UpdatedMetadata(XOnlyPublicKey),
     // --- Nostr ---
+    SentEventToRelays(nostr_sdk::EventId),
+    SentEventTo((url::Url, nostr_sdk::EventId)),
     EndOfStoredEvents((nostr_sdk::Url, nostr_sdk::SubscriptionId)),
     SubscribedToEvents,
     RequestedEventsOf(DbRelay),
@@ -75,33 +79,49 @@ pub enum Event {
         relay_url: nostr_sdk::Url,
         metadata: nostr_sdk::Metadata,
     },
+    // --- Confirmed Events ---
+    ConfirmedDM((DbContact, DbMessage)),
+    ConfirmedContactList(DbEvent),
+    ConfirmedMetadata(DbEvent),
+
+    // --- Pending Events ---
+    OtherPendingEvent(DbEvent),
+    PendingDM((DbContact, ChatMessage)),
+    PendingContactList(DbEvent),
+    PendingMetadata(DbEvent),
     // --- General ---
     BackendClosed,
     LoggedOut,
     Error(String),
     None,
-    PendingDM((DbContact, ChatMessage)),
-    PendingContactList(DbEvent),
-    PendingMetadata(DbEvent),
-    SentEventToRelays(nostr_sdk::EventId),
 }
 impl std::fmt::Display for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Event::DownloadingImage { kind, public_key } => {
+                write!(f, "Downloading Image: {} {}", kind.to_str(), public_key)
+            }
+            Event::UpdatedMetadata(pubkey) => write!(f, "Updated Metadata: {}", pubkey),
             Event::SystemTime(_) => write!(f, "System Time"),
             Event::SyncedWithNtpServer => write!(f, "Synced with NTP Server"),
+            Event::SentEventTo((url, event_id)) => {
+                write!(f, "Sent Event to: {}. ID: {}", url, event_id)
+            }
             Event::SentEventToRelays(event_id) => write!(f, "Sent Event to Relays: {}", event_id),
             Event::PendingMetadata(_) => write!(f, "Pending Metadata"),
             Event::PendingContactList(_) => write!(f, "Pending Contact List"),
             Event::PendingDM(_) => write!(f, "Pending Direct Message"),
+            Event::ConfirmedMetadata(_) => write!(f, "Confirmed Metadata"),
+            Event::ConfirmedContactList(_) => write!(f, "Confirmed Contact List"),
+            Event::ConfirmedDM(_) => write!(f, "Confirmed Direct Message"),
             Event::RequestedContactProfile(db_contact) => write!(
                 f,
                 "Requested Contact Profile Public Key: {}",
                 db_contact.pubkey()
             ),
             Event::SubscribedToEvents => write!(f, "Subscribed to Events"),
-            Event::UserProfilePictureUpdated => write!(f, "User Profile Picture Updated"),
-            Event::UserBannerPictureUpdated => write!(f, "User Banner Picture Updated"),
+            Event::UserProfilePictureUpdated(_) => write!(f, "User Profile Picture Updated"),
+            Event::UserBannerPictureUpdated(_) => write!(f, "User Banner Picture Updated"),
             Event::EndOfStoredEvents((relay_url, subscription_id)) => {
                 write!(
                     f,
@@ -140,15 +160,10 @@ impl std::fmt::Display for Event {
             Event::ContactUpdated(contact) => write!(f, "Contact Updated: {}", contact.pubkey()),
             Event::ContactDeleted(contact) => write!(f, "Contact Deleted: {}", contact.pubkey()),
             Event::OtherKindEventInserted(_) => write!(f, "Confirmed Event Inserted"),
-            Event::RelayConfirmation { relay_response, .. } => write!(
-                f,
-                "Update With Relay Response: {}",
-                relay_response.relay_url
-            ),
             Event::FileContactsImported(contacts) => {
                 write!(f, "File Contacts Imported: {}", contacts.len())
             }
-            Event::GotUserProfileMeta(metadata) => {
+            Event::GotUserProfileCache(metadata) => {
                 write!(f, "Got User Profile Metadata: {:?}", metadata)
             }
             Event::GotRelayServer(_server) => write!(f, "Got Relay Server"),

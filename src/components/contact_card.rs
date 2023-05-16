@@ -3,9 +3,9 @@ use iced::widget::{button, column, container, image, row, text};
 use iced::{alignment, Length};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::consts::{DEFAULT_PROFILE_IMAGE_SMALL, YMD_FORMAT};
+use crate::consts::YMD_FORMAT;
 use crate::db::DbContact;
-use crate::net::ImageSize;
+use crate::net::{BackEndConnection, ImageSize};
 use crate::style;
 use crate::utils::from_naive_utc_to_local;
 use crate::widget::Element;
@@ -43,16 +43,13 @@ pub struct ContactCard {
     card_active: bool,
     mode: CardMode,
     pub contact: DbContact,
-    profile_img_handle: Option<image::Handle>,
+    profile_img_handle: image::Handle,
 }
 
 impl ContactCard {
-    pub fn from_db_contact(id: i32, db_contact: &DbContact) -> Self {
-        let mut profile_img_handle = None;
+    pub fn from_db_contact(id: i32, db_contact: &DbContact, conn: &mut BackEndConnection) -> Self {
         let size = ImageSize::Small;
-        if let Some(profile_img_str) = db_contact.profile_image_sized(size) {
-            profile_img_handle = Some(image::Handle::from_path(profile_img_str));
-        }
+        let profile_img_handle = db_contact.profile_image(size, conn);
         Self {
             id,
             card_active: false,
@@ -64,12 +61,8 @@ impl ContactCard {
     pub fn view(&self) -> Element<MessageWrapper> {
         let size = ImageSize::Small;
 
-        let pic_element = match &self.profile_img_handle {
-            Some(handle) => image::Image::new(handle.clone()).into(),
-            None => image::Image::new(image::Handle::from_memory(DEFAULT_PROFILE_IMAGE_SMALL)),
-        };
         let (width, height) = size.get_width_height().unwrap();
-        let pic_container = container(pic_element)
+        let pic_container = container(image(self.profile_img_handle.to_owned()))
             .width(width as f32)
             .height(height as f32);
 
@@ -161,14 +154,11 @@ impl ContactCard {
         }
     }
 
-    pub fn update(&mut self, message: Message) {
+    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
         match message {
+            // Message::ContactProfilePictureUpdated(db_contact)
             Message::ContactUpdated(db_contact) => {
-                let mut profile_img_handle = None;
-                if let Some(profile_img_str) = db_contact.profile_image_sized(ImageSize::Small) {
-                    profile_img_handle = Some(image::Handle::from_path(profile_img_str));
-                }
-                self.profile_img_handle = profile_img_handle;
+                self.profile_img_handle = db_contact.profile_image(ImageSize::Small, conn);
                 self.contact = db_contact;
             }
             Message::ContactPress(_) => (),

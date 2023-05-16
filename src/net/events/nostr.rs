@@ -115,7 +115,18 @@ impl NostrSdkWrapper {
 
             NostrInput::SendEventToRelays(ns_event) => {
                 tokio::spawn(async move {
-                    run_and_send(send_event_to_relays(&client, ns_event), &mut channel).await;
+                    match send_event_to_relays(&client, &mut channel, ns_event).await {
+                        Ok(event) => {
+                            if let Err(e) = channel.try_send(event.into()) {
+                                tracing::error!("Error sending event to nostr output: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            if let Err(e) = channel.try_send(NostrOutput::Error(Box::new(e))) {
+                                tracing::error!("Error sending event to nostr output: {}", e);
+                            }
+                        }
+                    }
                 });
             }
 
@@ -187,12 +198,15 @@ impl NostrSdkWrapper {
     }
 }
 
-pub async fn prepare_client(pool: &SqlitePool) -> Result<NostrInput, Error> {
+pub async fn prepare_client(
+    pool: &SqlitePool,
+    cache_pool: &SqlitePool,
+) -> Result<NostrInput, Error> {
     tracing::debug!("prepare_client");
     tracing::info!("Fetching relays and last event to nostr client");
     let relays = DbRelay::fetch(pool).await?;
     let last_event = DbEvent::fetch_last(pool).await?;
-    let contact_list = DbContact::fetch(pool).await?;
+    let contact_list = DbContact::fetch(pool, cache_pool).await?;
 
     Ok(NostrInput::PrepareClient {
         relays,

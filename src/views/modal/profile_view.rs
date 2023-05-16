@@ -41,43 +41,44 @@ impl ProfileView {
         Modal::new(true, underlay_component, move || {
             let title = title("Profile");
             let header = container(title).width(Length::Fill).center_y();
-            let card_body: Element<_> = if let Some(profile_meta) = self.contact.get_profile_meta()
-            {
-                let mut content = column![].spacing(5);
-                if let Some(name) = profile_meta.name {
-                    content = content.push(column![text("name"), text(name)].spacing(5));
-                }
-                if let Some(display_name) = profile_meta.display_name {
-                    content =
-                        content.push(column![text("display_name"), text(display_name)].spacing(5));
-                }
-                if let Some(picture_url) = profile_meta.picture {
-                    content =
-                        content.push(column![text("picture_url"), text(picture_url)].spacing(5));
-                }
-                if let Some(about) = profile_meta.about {
-                    content = content.push(column![text("about"), text(about)].spacing(5));
-                }
-                if let Some(website) = profile_meta.website {
-                    content = content.push(column![text("website"), text(website)].spacing(5));
-                }
-                if let Some(banner_url) = profile_meta.banner {
-                    content =
-                        content.push(column![text("banner_url"), text(banner_url)].spacing(5));
-                }
-                if let Some(nip05) = profile_meta.nip05 {
-                    content = content.push(column![text("nip05"), text(nip05)].spacing(5));
-                }
-                if let Some(lud06) = profile_meta.lud06 {
-                    content = content.push(column![text("lud06"), text(lud06)].spacing(5));
-                }
-                if let Some(lud16) = profile_meta.lud16 {
-                    content = content.push(column![text("lud16"), text(lud16)].spacing(5));
-                }
-                content.into()
-            } else {
-                text("No profile data found").into()
-            };
+            let card_body: Element<_> =
+                if let Some(profile_cache) = self.contact.get_profile_cache() {
+                    let profile_meta = profile_cache.metadata;
+                    let mut content = column![].spacing(5);
+                    if let Some(name) = profile_meta.name {
+                        content = content.push(column![text("name"), text(name)].spacing(5));
+                    }
+                    if let Some(display_name) = profile_meta.display_name {
+                        content = content
+                            .push(column![text("display_name"), text(display_name)].spacing(5));
+                    }
+                    if let Some(picture_url) = profile_meta.picture {
+                        content = content
+                            .push(column![text("picture_url"), text(picture_url)].spacing(5));
+                    }
+                    if let Some(about) = profile_meta.about {
+                        content = content.push(column![text("about"), text(about)].spacing(5));
+                    }
+                    if let Some(website) = profile_meta.website {
+                        content = content.push(column![text("website"), text(website)].spacing(5));
+                    }
+                    if let Some(banner_url) = profile_meta.banner {
+                        content =
+                            content.push(column![text("banner_url"), text(banner_url)].spacing(5));
+                    }
+                    if let Some(nip05) = profile_meta.nip05 {
+                        content = content.push(column![text("nip05"), text(nip05)].spacing(5));
+                    }
+                    if let Some(lud06) = profile_meta.lud06 {
+                        content = content.push(column![text("lud06"), text(lud06)].spacing(5));
+                    }
+                    if let Some(lud16) = profile_meta.lud16 {
+                        content = content.push(column![text("lud16"), text(lud16)].spacing(5));
+                    }
+                    content.into()
+                } else {
+                    text("No profile data found").into()
+                };
             let card_body: Element<_> = container(card_body)
                 .width(Length::Fill)
                 .center_y()

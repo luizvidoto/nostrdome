@@ -61,8 +61,9 @@ impl State {
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
         match message {
             Message::BackEndEvent(back_ev) => match back_ev {
-                Event::GotUserProfileMeta(meta) => {
-                    if let Some(meta) = meta {
+                Event::GotUserProfileCache(cache) => {
+                    if let Some(profile_cache) = cache {
+                        let meta = profile_cache.metadata;
                         self.name = meta.name.unwrap_or("".into());
                         self.user_name = meta.display_name.unwrap_or("".into());
                         self.picture_url = meta.picture.unwrap_or("".into());

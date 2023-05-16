@@ -2,100 +2,137 @@ use std::path::PathBuf;
 
 use chrono::NaiveDateTime;
 use nostr_sdk::secp256k1::XOnlyPublicKey;
+use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
 use crate::{
     error::Error,
     net::ImageKind,
-    utils::{millis_to_naive_or_err, public_key_or_err, url_or_err},
+    utils::{event_hash_or_err, millis_to_naive_or_err, profile_meta_or_err, public_key_or_err},
 };
 
-pub struct Cache {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfileCache {
     pub public_key: XOnlyPublicKey,
     pub updated_at: NaiveDateTime,
-    pub profile_image_url: Option<nostr_sdk::Url>,
+    pub event_hash: nostr_sdk::EventId,
+    pub metadata: nostr_sdk::Metadata,
     pub profile_image_path: Option<PathBuf>,
-    pub banner_image_url: Option<nostr_sdk::Url>,
     pub banner_image_path: Option<PathBuf>,
 }
-impl Cache {
+impl ProfileCache {
     pub async fn fetch_by_public_key(
         cache_pool: &SqlitePool,
         public_key: &XOnlyPublicKey,
-    ) -> Result<Option<Cache>, Error> {
-        let query = "SELECT * FROM cache_history WHERE public_key = ?;";
-        let result = sqlx::query_as::<_, Cache>(query)
+    ) -> Result<Option<ProfileCache>, Error> {
+        let query = "SELECT * FROM profile_meta_cache WHERE public_key = ?;";
+        let result = sqlx::query_as::<_, ProfileCache>(query)
             .bind(&public_key.to_string())
             .fetch_optional(cache_pool)
             .await?;
         Ok(result)
     }
 
+    // if let Some(profile_cache) = ProfileCache::fetch_by_public_key(cache_pool, public_key).await? {
+    //     if event_date < &profile_cache.updated_at {
+    //         if let Some(path_of_kind) = profile_cache.get_path(kind) {
+    //             return Ok(path_of_kind);
+    //         }
+    //     }
+    //     if let Some(url_of_kind) = profile_cache.get_url(kind) {
+    //         if image_url == url_of_kind {
+    //             if let Some(path_of_kind) = profile_cache.get_path(kind) {
+    //                 return Ok(path_of_kind);
+    //             }
+    //         }
+    //     }
+    // }
+
     pub async fn insert_by_public_key(
         cache_pool: &SqlitePool,
         public_key: &XOnlyPublicKey,
+        event_hash: &nostr_sdk::EventId,
         event_date: &NaiveDateTime,
-        kind: ImageKind,
-        path: &PathBuf,
-        url: &nostr_sdk::Url,
-    ) -> Result<(), Error> {
-        let (img_url_column, img_path_column) = match kind {
-            ImageKind::Profile => ("profile_image_url", "profile_image_path"),
-            ImageKind::Banner => ("banner_image_url", "banner_image_path"),
-        };
+        metadata: &nostr_sdk::Metadata,
+    ) -> Result<u64, Error> {
+        if let Some(last_cache) = Self::fetch_by_public_key(cache_pool, public_key).await? {
+            if &last_cache.event_hash == event_hash {
+                tracing::info!(
+                    "Skipping update. Same event id for pubkey: {}",
+                    public_key.to_string()
+                );
+                return Ok(0);
+            }
+            if last_cache.updated_at > *event_date {
+                tracing::warn!(
+                    "Skipping updated. Outdated event for pubkey: {}",
+                    public_key.to_string()
+                );
+                return Ok(0);
+            }
+        }
+
         let mut tx = cache_pool.begin().await?;
 
-        let update_query = format!(
-            r#"UPDATE cache_history 
-            SET updated_at = ?, {} = ?, {} = ?
+        let update_query = r#"
+            UPDATE profile_meta_cache 
+            SET updated_at=?, event_hash=?, metadata=?
             WHERE public_key = ?
-        "#,
-            img_url_column, img_path_column
-        );
-        let rows_affected = sqlx::query(&update_query)
+        "#;
+        let mut rows_affected = sqlx::query(&update_query)
             .bind(&event_date.timestamp_millis())
-            .bind(&url.to_string())
-            .bind(
-                &path
-                    .to_str()
-                    .ok_or_else(|| Error::InvalidPath(path.clone()))?,
-            )
+            .bind(&event_hash.to_string())
+            .bind(&metadata.as_json())
             .bind(&public_key.to_string())
             .execute(&mut tx)
             .await?
             .rows_affected();
 
         if rows_affected == 0 {
-            let insert_query = format!(
-                r#"INSERT INTO cache_history
-                    (public_key, updated_at, {}, {}) 
-                    VALUES (?, ?, ?, ?)
-                "#,
-                img_url_column, img_path_column
-            );
-            sqlx::query(&insert_query)
+            let insert_query = r#"
+                INSERT INTO profile_meta_cache
+                    (public_key, updated_at, event_hash, metadata) 
+                VALUES (?, ?, ?, ?)
+            "#;
+            rows_affected = sqlx::query(&insert_query)
                 .bind(&public_key.to_string())
                 .bind(&event_date.timestamp_millis())
-                .bind(&url.to_string())
-                .bind(
-                    &path
-                        .to_str()
-                        .ok_or_else(|| Error::InvalidPath(path.clone()))?,
-                )
+                .bind(&event_hash.to_string())
+                .bind(&metadata.as_json())
                 .execute(&mut tx)
-                .await?;
+                .await?
+                .rows_affected();
         }
 
         tx.commit().await?;
 
-        Ok(())
+        Ok(rows_affected)
     }
 
-    pub(crate) fn get_url(&self, kind: ImageKind) -> Option<nostr_sdk::Url> {
-        match kind {
-            ImageKind::Profile => self.profile_image_url.clone(),
-            ImageKind::Banner => self.banner_image_url.clone(),
-        }
+    pub(crate) async fn update_local_path(
+        cache_pool: &SqlitePool,
+        public_key: &XOnlyPublicKey,
+        kind: ImageKind,
+        path: &PathBuf,
+    ) -> Result<(), Error> {
+        let kind_str = match kind {
+            ImageKind::Profile => "profile_image_path",
+            ImageKind::Banner => "banner_image_path",
+        };
+        let update_query = format!(
+            r#"
+            UPDATE profile_meta_cache 
+            SET {}=?
+            WHERE public_key = ?
+        "#,
+            kind_str
+        );
+        sqlx::query(&update_query)
+            .bind(&path.to_string_lossy())
+            .bind(&public_key.to_string())
+            .execute(cache_pool)
+            .await?;
+        Ok(())
     }
 
     pub(crate) fn get_path(&self, kind: ImageKind) -> Option<PathBuf> {
@@ -106,8 +143,14 @@ impl Cache {
     }
 }
 
-impl sqlx::FromRow<'_, SqliteRow> for Cache {
+impl sqlx::FromRow<'_, SqliteRow> for ProfileCache {
     fn from_row(row: &'_ SqliteRow) -> Result<Self, sqlx::Error> {
+        let metadata: String = row.try_get("metadata")?;
+        let metadata = profile_meta_or_err(&metadata, "metadata")?;
+
+        let event_hash: String = row.try_get("event_hash")?;
+        let event_hash = event_hash_or_err(&event_hash, "event_hash")?;
+
         let public_key = row.try_get::<String, &str>("public_key")?;
         let public_key = public_key_or_err(&public_key, "public_key")?;
 
@@ -120,23 +163,13 @@ impl sqlx::FromRow<'_, SqliteRow> for Cache {
         let banner_image_path: Option<String> = row.get("banner_image_path");
         let banner_image_path = banner_image_path.map(|path| PathBuf::from(path));
 
-        let profile_image_url = row
-            .get::<Option<String>, &str>("profile_image_url")
-            .map(|url| url_or_err(&url, "profile_image_url"))
-            .transpose()?;
-
-        let banner_image_url = row
-            .get::<Option<String>, &str>("banner_image_url")
-            .map(|url| url_or_err(&url, "banner_image_url"))
-            .transpose()?;
-
         Ok(Self {
             public_key,
             updated_at,
+            event_hash,
+            metadata,
             profile_image_path,
-            profile_image_url,
             banner_image_path,
-            banner_image_url,
         })
     }
 }

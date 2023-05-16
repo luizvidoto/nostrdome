@@ -5,6 +5,7 @@ use iced::subscription::Subscription;
 use iced::widget::{button, column, container, image, row, scrollable, text, text_input, Image};
 use iced::{alignment, Alignment, Command, Length};
 use iced_aw::{Card, Modal};
+use nostr_sdk::Kind;
 
 use crate::components::text::title;
 use crate::components::{common_scrollable, contact_card, status_bar, StatusBar};
@@ -35,8 +36,8 @@ pub enum ModalState {
     },
 }
 impl ModalState {
-    pub fn basic_profile(contact: &DbContact) -> Self {
-        Self::BasicProfile(ContactDetails::viewer(contact))
+    pub fn basic_profile(contact: &DbContact, conn: &mut BackEndConnection) -> Self {
+        Self::BasicProfile(ContactDetails::viewer(contact, conn))
     }
     pub fn view<'a>(&'a self, underlay: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
         let view: Element<_> = match self {
@@ -281,7 +282,7 @@ impl State {
                 self.contacts = db_contacts
                     .iter()
                     .enumerate()
-                    .map(|(idx, c)| contact_card::ContactCard::from_db_contact(idx as i32, c))
+                    .map(|(idx, c)| contact_card::ContactCard::from_db_contact(idx as i32, c, conn))
                     .collect();
                 Command::none()
             }
@@ -290,7 +291,7 @@ impl State {
                 Command::none()
             }
             Event::GotChatMessages((db_contact, chat_msgs)) => {
-                self.update_contact(db_contact.clone());
+                self.update_contact(db_contact.clone(), conn);
 
                 if self.active_contact.as_ref() == Some(&db_contact) {
                     self.messages = chat_msgs;
@@ -303,32 +304,25 @@ impl State {
                     Command::none()
                 }
             }
-            Event::RelayConfirmation {
-                db_message,
-                db_contact,
-                ..
-            } => {
-                if let Some(db_message) = &db_message {
-                    if let Ok(msg_id) = db_message.id() {
-                        self.messages
-                            .iter_mut()
-                            .find(|m| m.msg_id == msg_id)
-                            .map(|chat_msg| chat_msg.confirm_msg(db_message));
-                    }
-                    // self.messages
-                    //     .sort_by(|a, b| a.display_time.cmp(&b.display_time));
+            Event::ConfirmedDM((db_contact, db_message)) => {
+                if let Ok(msg_id) = db_message.id() {
+                    self.messages
+                        .iter_mut()
+                        .find(|m| m.msg_id == msg_id)
+                        .map(|chat_msg| chat_msg.confirm_msg(&db_message));
                 }
-                if let Some(db_contact) = db_contact {
-                    self.update_contact(db_contact);
-                }
+                // self.messages
+                //     .sort_by(|a, b| a.display_time.cmp(&b.display_time));
+
+                self.update_contact(db_contact, conn);
                 Command::none()
             }
             Event::UpdatedContactMetadata { db_contact, .. } => {
-                self.update_contact(db_contact);
+                self.update_contact(db_contact, conn);
                 Command::none()
             }
             Event::PendingDM((db_contact, msg)) => {
-                self.update_contact(db_contact.clone());
+                self.update_contact(db_contact.clone(), conn);
                 self.messages.push(msg.clone());
 
                 self.current_scroll_offset = scrollable::RelativeOffset::END;
@@ -340,7 +334,7 @@ impl State {
                 db_contact,
                 ..
             } => {
-                self.update_contact(db_contact.clone());
+                self.update_contact(db_contact.clone(), conn);
 
                 if self.active_contact.as_ref() == Some(&db_contact) {
                     // estou na conversa
@@ -362,11 +356,12 @@ impl State {
                     .push(contact_card::ContactCard::from_db_contact(
                         self.contacts.len() as i32,
                         &db_contact,
+                        conn,
                     ));
                 Command::none()
             }
             Event::ContactUpdated(db_contact) => {
-                self.update_contact(db_contact);
+                self.update_contact(db_contact, conn);
                 Command::none()
             }
             _ => Command::none(),
@@ -374,7 +369,7 @@ impl State {
 
         command
     }
-    fn update_contact(&mut self, db_contact: DbContact) {
+    fn update_contact(&mut self, db_contact: DbContact, conn: &mut BackEndConnection) {
         // change active to be an ID again...
         // println!("Update Contact: {}", &db_contact.pubkey().to_string());
         // dbg!(&db_contact);
@@ -389,12 +384,16 @@ impl State {
             .iter_mut()
             .find(|c| c.contact.pubkey() == db_contact.pubkey())
         {
-            found_card.update(contact_card::Message::ContactUpdated(db_contact.clone()));
+            found_card.update(
+                contact_card::Message::ContactUpdated(db_contact.clone()),
+                conn,
+            );
         } else {
             self.contacts
                 .push(contact_card::ContactCard::from_db_contact(
                     self.contacts.len() as i32,
                     &db_contact,
+                    conn,
                 ));
         }
     }
@@ -422,17 +421,7 @@ impl State {
             }
             Message::OpenContactProfile => {
                 if let Some(contact) = &self.active_contact {
-                    // if let Some(profile_meta) = contact.get_profile_meta() {
-                    //     let profile_image_path = contact.profile_image_sized(net::ImageSize::Small);
-                    //     self.modal_state = ModalState::contact_profile(
-                    //         contact.select_name(),
-                    //         profile_meta,
-                    //         profile_image_path.as_ref(),
-                    //     )
-                    // } else {
-                    //     self.modal_state = ModalState::basic_profile(contact)
-                    // }
-                    self.modal_state = ModalState::basic_profile(contact);
+                    self.modal_state = ModalState::basic_profile(contact, conn);
                 }
             }
             Message::StatusBarMessage(status_msg) => {
@@ -473,13 +462,13 @@ impl State {
                     self.ver_divider_position = Some(200);
                     self.show_only_profile = false;
                     for c in &mut self.contacts {
-                        c.update(contact_card::Message::ShowFullCard);
+                        c.update(contact_card::Message::ShowFullCard, conn);
                     }
                 } else if position <= PIC_WIDTH {
                     self.ver_divider_position = Some(80);
                     self.show_only_profile = true;
                     for c in &mut self.contacts {
-                        c.update(contact_card::Message::ShowOnlyProfileImage);
+                        c.update(contact_card::Message::ShowOnlyProfileImage, conn);
                     }
                 }
             }
@@ -495,13 +484,13 @@ impl State {
                     self.active_contact = Some(contact.clone());
 
                     for c in &mut self.contacts {
-                        c.update(contact_card::Message::TurnOffActive);
+                        c.update(contact_card::Message::TurnOffActive, conn);
                     }
 
                     if let Some(contact_card) =
                         self.contacts.iter_mut().find(|c| c.id == wrapped.from)
                     {
-                        contact_card.update(contact_card::Message::TurnOnActive);
+                        contact_card.update(contact_card::Message::TurnOnActive, conn);
                     }
                 }
             }

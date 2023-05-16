@@ -9,6 +9,7 @@ use crate::{
 
 pub async fn handle_dm(
     pool: &SqlitePool,
+    cache_pool: &SqlitePool,
     keys: &Keys,
     relay_url: &Url,
     ns_event: nostr_sdk::Event,
@@ -42,8 +43,15 @@ pub async fn handle_dm(
         determine_sender_receiver(&db_message, &keys.public_key());
 
     // Fetch or create the associated contact, update the contact's message, and return the event
-    let event =
-        fetch_or_create_contact(pool, keys, relay_url, &contact_pubkey, &db_message).await?;
+    let event = fetch_or_create_contact(
+        pool,
+        cache_pool,
+        keys,
+        relay_url,
+        &contact_pubkey,
+        &db_message,
+    )
+    .await?;
 
     Ok(event)
 }

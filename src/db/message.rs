@@ -208,7 +208,7 @@ impl DbMessage {
         relay_url: &nostr_sdk::Url,
         mut db_message: DbMessage,
     ) -> Result<DbMessage, Error> {
-        tracing::info!("Confirming message");
+        tracing::debug!("Confirming message");
         tracing::debug!("{:?}", &db_message);
         let now_utc = UserConfig::get_corrected_time(pool)
             .await

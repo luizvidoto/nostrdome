@@ -40,6 +40,7 @@ pub struct ContactDetails {
     mode: Mode,
     is_pub_invalid: bool,
     is_relay_invalid: bool,
+    profile_img_handle: Option<image::Handle>,
 }
 impl ContactDetails {
     pub(crate) fn new() -> Self {
@@ -51,9 +52,10 @@ impl ContactDetails {
             mode: Mode::Add,
             is_pub_invalid: false,
             is_relay_invalid: false,
+            profile_img_handle: None,
         }
     }
-    pub(crate) fn edit(db_contact: &DbContact) -> Self {
+    pub(crate) fn edit(db_contact: &DbContact, conn: &mut BackEndConnection) -> Self {
         Self {
             db_contact: Some(db_contact.to_owned()),
             modal_petname_input: db_contact.get_petname().unwrap_or_else(|| "".into()),
@@ -65,10 +67,11 @@ impl ContactDetails {
             mode: Mode::Edit,
             is_pub_invalid: false,
             is_relay_invalid: false,
+            profile_img_handle: Some(db_contact.profile_image(ImageSize::Medium, conn)),
         }
     }
-    pub(crate) fn viewer(db_contact: &DbContact) -> Self {
-        let mut details = Self::edit(db_contact);
+    pub(crate) fn viewer(db_contact: &DbContact, conn: &mut BackEndConnection) -> Self {
+        let mut details = Self::edit(db_contact, conn);
         details.mode = Mode::View;
         details
     }
@@ -157,22 +160,27 @@ impl ContactDetails {
                     let middle = column![pubkey_group, petname_group, relay_group].spacing(4);
 
                     let profile_top: Element<_> = if let Some(contact) = &self.db_contact {
-                        if let Some(profile) = contact.get_profile_meta() {
-                            let image_container =
-                                container(image(contact.profile_image(ImageSize::Medium)))
-                                    .height(MEDIUM_PROFILE_PIC_HEIGHT as f32)
-                                    .width(MEDIUM_PROFILE_PIC_WIDTH as f32);
+                        if let Some(profile) = contact.get_profile_cache() {
+                            let image_container: Element<_> =
+                                if let Some(handle) = self.profile_img_handle.to_owned() {
+                                    image(handle).into()
+                                } else {
+                                    text("No image").into()
+                                };
+                            let image_container = container(image_container)
+                                .height(MEDIUM_PROFILE_PIC_HEIGHT as f32)
+                                .width(MEDIUM_PROFILE_PIC_WIDTH as f32);
 
                             let profile_name_group = column![
                                 text("Profile Name"),
-                                container(text(profile.name.unwrap_or("".into())))
+                                container(text(profile.metadata.name.unwrap_or("".into())))
                                     .padding([2, 8])
                                     .style(style::Container::ChatSearchCopy),
                             ]
                             .spacing(2);
                             let profile_username_group = column![
                                 text("Profile Username"),
-                                container(text(profile.display_name.unwrap_or("".into())))
+                                container(text(profile.metadata.display_name.unwrap_or("".into())))
                                     .padding([2, 8])
                                     .style(style::Container::ChatSearchCopy),
                             ]

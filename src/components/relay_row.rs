@@ -189,7 +189,7 @@ impl RelayRow {
         match event {
             Event::RelayUpdated(db_relay) => {
                 if self.db_relay.url == db_relay.url {
-                    tracing::info!("Relay updated");
+                    tracing::debug!("Relay updated");
                     tracing::debug!("{:?}", db_relay);
                     self.db_relay = db_relay;
                 }
@@ -201,10 +201,11 @@ impl RelayRow {
                     }
                 }
             }
-            //TODO: check kind of event
-            Event::RelayConfirmation { relay_response, .. } => {
-                if relay_response.relay_url == self.db_relay.url {
-                    self.mode.success()
+            Event::ConfirmedContactList(db_event) => {
+                if let Some(relay_url) = db_event.relay_url {
+                    if relay_url == self.db_relay.url {
+                        self.mode.success()
+                    }
                 }
             }
             _ => (),
