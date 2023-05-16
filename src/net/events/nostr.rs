@@ -2,7 +2,7 @@ use sqlx::SqlitePool;
 
 use crate::db::{DbContact, DbEvent, DbRelay};
 use crate::error::Error;
-use crate::net::operations::contact::{get_contact_list_profile, get_contact_profile};
+use crate::net::operations::contact::get_contact_list_profile;
 use crate::net::operations::relay::{
     add_relay, add_relays_and_connect, connect_to_relay, create_channel, delete_relay,
     fetch_relay_server, fetch_relay_servers, toggle_read_for_relay, toggle_write_for_relay,
@@ -32,7 +32,6 @@ pub enum NostrInput {
     ToggleRelayWrite((DbRelay, bool)),
     ConnectToRelay((DbRelay, Option<DbEvent>)),
     SendEventToRelays(nostr_sdk::Event),
-    GetContactProfile(DbContact),
     GetContactListProfiles(Vec<DbContact>),
     CreateChannel,
     RequestEventsOf((DbRelay, Vec<DbContact>)),
@@ -101,11 +100,11 @@ impl NostrSdkWrapper {
                 });
             }
 
-            NostrInput::GetContactProfile(db_contact) => {
-                tokio::spawn(async move {
-                    run_and_send(get_contact_profile(&client, db_contact), &mut channel).await;
-                });
-            }
+            // NostrInput::GetContactProfile(db_contact) => {
+            //     tokio::spawn(async move {
+            //         run_and_send(get_contact_profile(&client, db_contact), &mut channel).await;
+            //     });
+            // }
             NostrInput::GetContactListProfiles(db_contacts) => {
                 tokio::spawn(async move {
                     run_and_send(get_contact_list_profile(&client, db_contacts), &mut channel)

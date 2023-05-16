@@ -87,18 +87,24 @@ pub async fn send_event_to_relays(
     channel: &mut mpsc::Sender<NostrOutput>,
     ns_event: nostr_sdk::Event,
 ) -> Result<Event, Error> {
-    tracing::debug!("send_event_to_relays ID: {}", ns_event.id);
+    tracing::info!("send_event_to_relays ID: {}", ns_event.id);
     tracing::debug!("{:?}", ns_event);
     for (url, relay) in client.relays().await {
         let status = relay.status().await;
         if let RelayStatus::Connected = status {
             let msg = ClientMessage::Event(Box::new(ns_event.clone()));
-            relay.send_msg(msg, false).await?;
-            if let Err(e) = channel.try_send(NostrOutput::Ok(Event::SentEventTo((
-                url,
-                ns_event.id.clone(),
-            )))) {
-                tracing::error!("Error sending event to back: {}", e);
+            match relay.send_msg(msg, false).await {
+                Ok(_) => {
+                    if let Err(e) = channel.try_send(NostrOutput::Ok(Event::SentEventTo((
+                        url,
+                        ns_event.id.clone(),
+                    )))) {
+                        tracing::error!("Error sending event to back: {}", e);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Error sending event to relay: {}", e);
+                }
             }
         }
     }

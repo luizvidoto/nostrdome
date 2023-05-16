@@ -284,6 +284,7 @@ impl State {
                     .enumerate()
                     .map(|(idx, c)| contact_card::ContactCard::from_db_contact(idx as i32, c, conn))
                     .collect();
+                self.sort_contacts();
                 Command::none()
             }
             Event::GotRelayResponses(responses) => {
@@ -348,6 +349,7 @@ impl State {
                 } else {
                     // não estou na conversa
                     conn.send(net::Message::AddToUnseenCount(db_contact));
+                    self.sort_contacts();
                     Command::none()
                 }
             }
@@ -368,6 +370,16 @@ impl State {
         };
 
         command
+    }
+
+    fn sort_contacts(&mut self) {
+        self.contacts
+            .sort_by(|a, b| b.contact.select_name().cmp(&a.contact.select_name()));
+        self.contacts.sort_by(|a, b| {
+            b.contact
+                .last_message_date()
+                .cmp(&a.contact.last_message_date())
+        });
     }
     fn update_contact(&mut self, db_contact: DbContact, conn: &mut BackEndConnection) {
         // change active to be an ID again...

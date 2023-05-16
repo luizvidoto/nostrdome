@@ -35,15 +35,15 @@ pub async fn fetch_and_decrypt_chat(
     Ok(Event::GotChatMessages((db_contact, chat_messages)))
 }
 
-pub async fn get_contact_profile(client: &Client, db_contact: DbContact) -> Result<Event, Error> {
-    tracing::debug!("get_contact_profile");
-    let filter = Filter::new()
-        .author(db_contact.pubkey().to_string())
-        .kind(Kind::Metadata);
-    let timeout = Some(Duration::from_secs(10));
-    client.req_events_of(vec![filter], timeout).await;
-    Ok(Event::RequestedContactProfile(db_contact))
-}
+// pub async fn get_contact_profile(client: &Client, db_contact: DbContact) -> Result<Event, Error> {
+//     tracing::debug!("get_contact_profile");
+//     let filter = Filter::new()
+//         .author(db_contact.pubkey().to_string())
+//         .kind(Kind::Metadata);
+//     let timeout = Some(Duration::from_secs(10));
+//     client.req_events_of(vec![filter], timeout).await;
+//     Ok(Event::RequestedContactProfile(db_contact))
+// }
 
 pub async fn get_contact_list_profile(
     client: &Client,

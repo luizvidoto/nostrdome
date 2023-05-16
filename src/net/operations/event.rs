@@ -78,13 +78,25 @@ async fn insert_other_kind(
 }
 
 async fn insert_pending(
-    ns_event: &nostr_sdk::Event,
+    ns_event: nostr_sdk::Event,
     pool: &SqlitePool,
-) -> Result<(DbEvent, u8), Error> {
+    nostr_sender: &mut mpsc::Sender<NostrInput>,
+) -> Result<DbEvent, Error> {
     let mut pending_event = DbEvent::pending_event(ns_event.clone())?;
     let (row_id, rows_changed) = DbEvent::insert(pool, &pending_event).await?;
     pending_event = pending_event.with_id(row_id);
-    Ok((pending_event, rows_changed))
+
+    if rows_changed == 0 {
+        tracing::warn!(
+            "Received duplicate pending event: {:?}",
+            pending_event.event_hash
+        );
+        return Err(Error::DuplicateEvent);
+    }
+    if let Err(e) = nostr_sender.try_send(NostrInput::SendEventToRelays(ns_event)) {
+        tracing::error!("Error sending message to nostr: {:?}", e);
+    }
+    Ok(pending_event)
 }
 
 pub async fn insert_pending_metadata(
@@ -93,18 +105,11 @@ pub async fn insert_pending_metadata(
     _metadata: nostr_sdk::Metadata,
     nostr_sender: &mut mpsc::Sender<NostrInput>,
 ) -> Result<Event, Error> {
-    let (pending_event, rows_changed) = insert_pending(&ns_event, pool).await?;
-    if rows_changed == 0 {
-        tracing::warn!(
-            "Received duplicate pending event: {:?}",
-            pending_event.event_hash
-        );
-        return Ok(Event::None);
+    match insert_pending(ns_event, pool, nostr_sender).await {
+        Ok(pending_event) => Ok(Event::PendingMetadata(pending_event)),
+        Err(Error::DuplicateEvent) => Ok(Event::None),
+        Err(e) => Err(e),
     }
-    if let Err(e) = nostr_sender.try_send(NostrInput::SendEventToRelays(ns_event)) {
-        tracing::error!("Error sending message to nostr: {:?}", e);
-    }
-    Ok(Event::PendingMetadata(pending_event))
 }
 
 pub async fn insert_pending_contact_list(
@@ -113,18 +118,11 @@ pub async fn insert_pending_contact_list(
     _contact_list: Vec<DbContact>,
     nostr_sender: &mut mpsc::Sender<NostrInput>,
 ) -> Result<Event, Error> {
-    let (pending_event, rows_changed) = insert_pending(&ns_event, pool).await?;
-    if rows_changed == 0 {
-        tracing::warn!(
-            "Received duplicate pending event: {:?}",
-            pending_event.event_hash
-        );
-        return Ok(Event::None);
+    match insert_pending(ns_event, pool, nostr_sender).await {
+        Ok(pending_event) => Ok(Event::PendingContactList(pending_event)),
+        Err(Error::DuplicateEvent) => Ok(Event::None),
+        Err(e) => Err(e),
     }
-    if let Err(e) = nostr_sender.try_send(NostrInput::SendEventToRelays(ns_event)) {
-        tracing::error!("Error sending message to nostr: {:?}", e);
-    }
-    Ok(Event::PendingContactList(pending_event))
 }
 
 pub async fn insert_pending_dm(
@@ -135,55 +133,24 @@ pub async fn insert_pending_dm(
     content: String,
     nostr_sender: &mut mpsc::Sender<NostrInput>,
 ) -> Result<Event, Error> {
-    let (pending_event, rows_changed) = insert_pending(&ns_event, pool).await?;
-    if rows_changed == 0 {
-        tracing::warn!(
-            "Received duplicate pending event: {:?}",
-            pending_event.event_hash
-        );
-        return Ok(Event::None);
+    match insert_pending(ns_event, pool, nostr_sender).await {
+        Ok(pending_event) => {
+            let pending_msg = DbMessage::new(&pending_event, db_contact.pubkey())?;
+            let row_id = DbMessage::insert_message(pool, &pending_msg).await?;
+            let pending_msg = pending_msg.with_id(row_id);
+
+            let chat_message =
+                ChatMessage::from_db_message_content(keys, &pending_msg, &db_contact, &content)?;
+            // let db_contact = DbContact::new_message(pool, db_contact, &chat_message).await?;
+            Ok(Event::PendingDM((db_contact, chat_message)))
+        }
+        Err(Error::DuplicateEvent) => Ok(Event::None),
+        Err(e) => Err(e),
     }
-
-    if let Err(e) = nostr_sender.try_send(NostrInput::SendEventToRelays(ns_event)) {
-        tracing::error!("Error sending message to nostr: {:?}", e);
-    }
-
-    let pending_msg = DbMessage::new(&pending_event, db_contact.pubkey())?;
-    let row_id = DbMessage::insert_message(pool, &pending_msg).await?;
-    let pending_msg = pending_msg.with_id(row_id);
-
-    let chat_message =
-        ChatMessage::from_db_message_content(keys, &pending_msg, &db_contact, &content)?;
-    // let db_contact = DbContact::new_message(pool, db_contact, &chat_message).await?;
-    Ok(Event::PendingDM((db_contact, chat_message)))
 }
-
-// pub async fn relay_response_ok(
-//     pool: &SqlitePool,
-//     db_event: &DbEvent,
-//     relay_url: &Url,
-// ) -> Result<Event, Error> {
-//     tracing::info!("Updating relay response");
-//     let mut relay_response = DbRelayResponse::from_response(
-//         true,
-//         db_event.event_id()?,
-//         &db_event.event_hash,
-//         relay_url,
-//         "",
-//     );
-//     let id = DbRelayResponse::insert(pool, &relay_response).await?;
-//     relay_response = relay_response.with_id(id);
-//     // update db_message ?
-//     Ok(Event::RelayConfirmation {
-//         relay_response,
-//         db_event: db_event.clone(),
-//     })
-// }
 
 pub async fn on_relay_message(
     pool: &SqlitePool,
-    cache_pool: &SqlitePool,
-    keys: &Keys,
     relay_url: &Url,
     relay_message: &RelayMessage,
 ) -> Result<BackEndInput, Error> {
@@ -197,6 +164,7 @@ pub async fn on_relay_message(
         } => {
             if *status == false {
                 return Ok(BackEndInput::FailedToSendEvent {
+                    relay_url: relay_url.to_owned(),
                     event_hash: event_hash.to_owned(),
                     status: status.to_owned(),
                     message: message.to_owned(),

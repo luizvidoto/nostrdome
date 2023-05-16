@@ -36,6 +36,8 @@ pub enum Event {
     UserBannerPictureUpdated(PathBuf),
     SystemTime((chrono::NaiveDateTime, i64)),
     UpdatedMetadata(XOnlyPublicKey),
+    GotAllMessages(Vec<DbMessage>),
+
     // --- Nostr ---
     SentEventToRelays(nostr_sdk::EventId),
     SentEventTo((url::Url, nostr_sdk::EventId)),
@@ -98,6 +100,7 @@ pub enum Event {
 impl std::fmt::Display for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Event::GotAllMessages(messages) => write!(f, "Got All Messages: {}", messages.len()),
             Event::DownloadingImage { kind, public_key } => {
                 write!(f, "Downloading Image: {} {}", kind.to_str(), public_key)
             }

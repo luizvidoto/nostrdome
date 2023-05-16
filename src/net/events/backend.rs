@@ -51,6 +51,7 @@ pub enum BackEndInput {
     Error(String),
     Ok(Event),
     FailedToSendEvent {
+        relay_url: nostr_sdk::Url,
         event_hash: nostr_sdk::EventId,
         status: bool,
         message: String,
@@ -160,12 +161,14 @@ pub async fn backend_processing(
         BackEndInput::RelayConfirmation { db_event, .. } => {
             process_async_with_event(on_event_confirmation(pool, cache_pool, keys, &db_event)).await
         }
-        BackEndInput::FailedToSendEvent { message, .. } => {
-            tracing::info!("Relay message not ok: {}", &message);
+        BackEndInput::FailedToSendEvent {
+            message, relay_url, ..
+        } => {
+            tracing::info!("Relay {} - Not ok: {}", relay_url, &message);
             Event::None
         }
         BackEndInput::StoreRelayMessage((relay_url, relay_message)) => {
-            match on_relay_message(&pool, cache_pool, keys, &relay_url, &relay_message).await {
+            match on_relay_message(&pool, &relay_url, &relay_message).await {
                 Ok(input) => {
                     if let Err(e) = back_sender.try_send(input) {
                         tracing::error!("Error sending to back_sender: {}", e);
@@ -190,31 +193,41 @@ pub async fn on_event_confirmation(
     keys: &Keys,
     db_event: &DbEvent,
 ) -> Result<Event, Error> {
+    match db_event.kind {
+        nostr_sdk::Kind::ContactList => Ok(Event::ConfirmedContactList(db_event.to_owned())),
+        nostr_sdk::Kind::Metadata => Ok(Event::ConfirmedMetadata(db_event.to_owned())),
+        nostr_sdk::Kind::EncryptedDirectMessage => {
+            handle_dm_confirmation(pool, cache_pool, keys, db_event).await
+        }
+        _ => Ok(Event::None),
+    }
+}
+
+async fn handle_dm_confirmation(
+    pool: &SqlitePool,
+    cache_pool: &SqlitePool,
+    keys: &Keys,
+    db_event: &DbEvent,
+) -> Result<Event, Error> {
     let relay_url = db_event
         .relay_url
         .as_ref()
         .ok_or(Error::NotConfirmedEvent)?;
-    if let nostr_sdk::Kind::EncryptedDirectMessage = db_event.kind {
-        if let Some(db_message) = DbMessage::fetch_one(pool, db_event.event_id()?).await? {
-            let confirmed_db_message =
-                DbMessage::relay_confirmation(pool, relay_url, db_message).await?;
-            // add relay confirmation
+    if let Some(db_message) = DbMessage::fetch_one(pool, db_event.event_id()?).await? {
+        let db_message = DbMessage::relay_confirmation(pool, relay_url, db_message).await?;
+        if let Some(db_contact) =
+            DbContact::fetch_one(pool, cache_pool, &db_message.contact_chat()).await?
+        {
+            let chat_message = ChatMessage::from_db_message(keys, &db_message, &db_contact)?;
+            let db_contact = DbContact::new_message(pool, db_contact, &chat_message).await?;
 
-            if let Some(db_contact) =
-                DbContact::fetch_one(pool, cache_pool, &confirmed_db_message.contact_chat()).await?
-            {
-                let chat_message =
-                    ChatMessage::from_db_message(keys, &confirmed_db_message, &db_contact)?;
-                let db_contact = DbContact::new_message(pool, db_contact, &chat_message).await?;
-                // (Some(confirmed_db_message), Some(db_contact))
-                return Ok(Event::ConfirmedDM((db_contact, confirmed_db_message)));
-            } else {
-                tracing::error!("No contact found for confirmed message");
-                return Ok(Event::None);
-            }
+            return Ok(Event::ConfirmedDM((db_contact, db_message)));
+        } else {
+            tracing::error!("No contact found for confirmed message");
         }
+    } else {
+        tracing::error!("No message found for confirmation event");
     }
-
     Ok(Event::None)
 }
 

@@ -177,6 +177,9 @@ pub enum Error {
 
     #[error("Invalid path UTF-8 Error: {0}")]
     InvalidPath(PathBuf),
+
+    #[error("Inserting event with the same id")]
+    DuplicateEvent,
 }
 
 #[derive(Debug, Error)]

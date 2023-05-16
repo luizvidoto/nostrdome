@@ -1,4 +1,6 @@
-use crate::db::{Database, DbContact, DbEvent, DbRelay, DbRelayResponse, ProfileCache, UserConfig};
+use crate::db::{
+    Database, DbContact, DbEvent, DbMessage, DbRelay, DbRelayResponse, ProfileCache, UserConfig,
+};
 use crate::error::Error;
 use crate::net::events::backend::{self, backend_processing};
 use crate::net::events::frontend::Event;
@@ -130,6 +132,10 @@ impl BackendState {
                     Err(e) => Event::Error(e.to_string()),
                 },
                 // -------- DATABASE MESSAGES -------
+                Message::FetchAllMessages => match DbMessage::fetch(pool).await {
+                    Ok(messages) => Event::GotAllMessages(messages),
+                    Err(e) => Event::Error(e.to_string()),
+                },
                 Message::GetUserProfileMeta => {
                     tracing::info!("Fetching user profile meta");
                     match ProfileCache::fetch_by_public_key(cache_pool, &self.keys.public_key())
@@ -246,7 +252,7 @@ impl BackendState {
                         Err(e) => Event::Error(e.to_string()),
                     }
                 }
-                Message::SendContactListToRelay(_db_relay) => {
+                Message::SendContactListToRelays => {
                     match DbContact::fetch(pool, cache_pool).await {
                         Ok(list) => match build_contact_list_event(pool, &self.keys, &list).await {
                             Ok(ns_event) => to_backend_channel(

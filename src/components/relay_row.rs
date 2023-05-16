@@ -63,7 +63,7 @@ pub enum Message {
     Ready(RelayRowConnection),
     Performing,
     Waited,
-    SendContactListToRelay(DbRelay),
+    SendContactListToRelays,
 }
 #[derive(Debug, Clone)]
 pub struct MessageWrapper {
@@ -219,9 +219,9 @@ impl RelayRow {
     ) -> Command<MessageWrapper> {
         match wrapper.message {
             Message::None => (),
-            Message::SendContactListToRelay(db_relay) => {
+            Message::SendContactListToRelays => {
                 if let Mode::ModalView { .. } = &mut self.mode {
-                    conn.send(net::Message::SendContactListToRelay(db_relay));
+                    conn.send(net::Message::SendContactListToRelays);
                     self.mode.loading();
                 }
             }
@@ -418,7 +418,7 @@ impl RelayRow {
                     if self.is_connected() {
                         btn = btn.on_press(MessageWrapper::new(
                             self.id,
-                            Message::SendContactListToRelay(self.db_relay.clone()),
+                            Message::SendContactListToRelays,
                         ))
                     }
                     btn.into()

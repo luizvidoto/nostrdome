@@ -28,6 +28,7 @@ pub enum Message {
     CreateAccount(BasicProfile),
     GetUserProfileMeta,
     UpdateUserProfileMeta(nostr_sdk::Metadata),
+    FetchAllMessages,
 
     // -------- NOSTR CLIENT MESSAGES
     RequestEventsOf(DbRelay),
@@ -40,7 +41,7 @@ pub enum Message {
     ToggleRelayWrite((DbRelay, bool)),
     ConnectToRelay(DbRelay),
     SendDM((DbContact, String)),
-    SendContactListToRelay(DbRelay),
+    SendContactListToRelays,
     CreateChannel,
     DownloadImage {
         image_url: String,

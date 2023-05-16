@@ -1,6 +1,6 @@
 use chrono::NaiveDateTime;
 use futures::channel::mpsc;
-use nostr_sdk::{Keys, Url};
+use nostr_sdk::{EventId, Keys, Url};
 use sqlx::SqlitePool;
 
 use crate::{
@@ -37,7 +37,11 @@ async fn handle_user_contact_list(
 ) -> Result<Event, Error> {
     tracing::debug!("Received a ContactList");
 
-    if let Some((remote_creation, event_id)) = last_kind_filtered(pool).await? {
+    if let Some((remote_creation, event_id, event_hash)) = last_kind_filtered(pool).await? {
+        if event_hash == event.id {
+            tracing::info!("ContactList already in the database");
+            return Ok(Event::None);
+        }
         if remote_creation.timestamp_millis() > (event.created_at.as_i64() * 1000) {
             tracing::info!("ContactList is older than the last one");
             return Ok(Event::None);
@@ -104,14 +108,18 @@ fn handle_other_contact_list(_event: nostr_sdk::Event) -> Result<Event, Error> {
     Ok(Event::None)
 }
 
-async fn last_kind_filtered(pool: &SqlitePool) -> Result<Option<(NaiveDateTime, i64)>, Error> {
+async fn last_kind_filtered(
+    pool: &SqlitePool,
+) -> Result<Option<(NaiveDateTime, i64, EventId)>, Error> {
     let last_event = match DbEvent::fetch_last_kind(pool, nostr_sdk::Kind::ContactList).await? {
         Some(last_event) => last_event,
         None => return Ok(None),
     };
 
     match (last_event.remote_creation(), last_event.event_id()) {
-        (Some(remote_creation), Ok(event_id)) => Ok(Some((remote_creation, event_id))),
+        (Some(remote_creation), Ok(event_id)) => {
+            Ok(Some((remote_creation, event_id, last_event.event_hash)))
+        }
         _ => Ok(None),
     }
 }

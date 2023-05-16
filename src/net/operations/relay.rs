@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use nostr_sdk::{Client, Keys, Metadata, Url};
+use nostr_sdk::{Client, Keys, Metadata, RelayOptions, Url};
 
 use crate::{
     db::{DbContact, DbEvent, DbRelay},
@@ -28,7 +28,10 @@ pub async fn create_channel(client: &Client) -> Result<Event, Error> {
 
 pub async fn add_relay(client: &Client, db_relay: DbRelay) -> Result<BackEndInput, Error> {
     tracing::debug!("Adding relay to client: {}", db_relay.url);
-    client.add_relay(db_relay.url.as_str(), None).await?;
+    let opts = RelayOptions::new(db_relay.read, db_relay.write);
+    client
+        .add_relay_with_opts(db_relay.url.as_str(), None, opts)
+        .await?;
     Ok(BackEndInput::AddRelayToDb(db_relay))
 }
 
@@ -57,7 +60,11 @@ pub async fn add_relays_and_connect(
 
     // Only adds to the HashMap
     for r in relays {
-        match client.add_relay(&r.url.to_string(), None).await {
+        let opts = RelayOptions::new(r.read, r.write);
+        match client
+            .add_relay_with_opts(&r.url.to_string(), None, opts)
+            .await
+        {
             Ok(_) => tracing::debug!("Nostr Client Added Relay: {}", &r.url),
             Err(e) => tracing::error!("{}", e),
         }

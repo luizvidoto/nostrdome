@@ -65,8 +65,10 @@ impl ProfileCache {
             }
             if last_cache.updated_at > *event_date {
                 tracing::warn!(
-                    "Skipping updated. Outdated event for pubkey: {}",
-                    public_key.to_string()
+                    "Skipping update. Outdated event for pubkey: {} - cache: {:?} - event: {:?}",
+                    public_key.to_string(),
+                    last_cache.updated_at,
+                    event_date
                 );
                 return Ok(0);
             }

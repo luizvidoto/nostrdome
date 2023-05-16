@@ -8,10 +8,9 @@ use crate::style;
 
 use crate::widget::{Button, Element};
 
-use super::modal::send_contact_list::SendContactList;
 use super::modal::{
-    basic_contact, import_contact_list, profile_view, send_contact_list, ContactDetails,
-    ImportContactList, ProfileView,
+    basic_contact, import_contact_list, profile_view, ContactDetails, ImportContactList,
+    ProfileView,
 };
 
 mod about;
@@ -33,7 +32,6 @@ pub enum Message {
     ContactDetailsMessage(Box<basic_contact::CMessage<Message>>),
     ImportContactListMessage(Box<import_contact_list::CMessage<Message>>),
     ProfileViewMessage(Box<profile_view::CMessage<Message>>),
-    SendContactListMessage(Box<send_contact_list::CMessage<Message>>),
     // Menu
     MenuAccountPress,
     MenuAppearancePress,
@@ -47,8 +45,6 @@ pub enum Message {
     SendContactListToAll,
     CloseModal,
     // Other
-    UpdateSelf(Box<Message>),
-    UpdateSendContactList(send_contact_list::CMessage<Box<Message>>),
     None,
 }
 
@@ -107,9 +103,9 @@ impl MenuState {
             state: contacts::State::new(conn),
         }
     }
-    fn backup() -> Self {
+    fn backup(conn: &mut BackEndConnection) -> Self {
         Self::Backup {
-            state: backup::State::default(),
+            state: backup::State::new(conn),
         }
     }
     pub fn new(conn: &mut BackEndConnection) -> Self {
@@ -164,8 +160,6 @@ impl Settings {
         event: Event,
         conn: &mut BackEndConnection,
     ) -> Command<Message> {
-        self.modal_state.backend_event(event.clone(), conn);
-
         match &mut self.menu_state {
             MenuState::About { state } => state.update(about::Message::BackEndEvent(event)),
             MenuState::Account { state } => {
@@ -179,7 +173,7 @@ impl Settings {
                     .update(network::Message::BackEndEvent(event), conn)
                     .map(Message::NetworkMessage);
             }
-            MenuState::Backup { state } => state.update(backup::Message::BackEndEvent(event)),
+            MenuState::Backup { state } => state.backend_event(event, conn),
             MenuState::Contacts { state } => {
                 let _ = state.update(contacts::Message::BackEndEvent(event), conn);
             }
@@ -242,7 +236,7 @@ impl Settings {
             Message::MenuAccountPress => self.menu_state = MenuState::account(conn),
             Message::MenuAppearancePress => self.menu_state = MenuState::appearance(selected_theme),
             Message::MenuNetworkPress => self.menu_state = MenuState::network(conn),
-            Message::MenuBackupPress => self.menu_state = MenuState::backup(),
+            Message::MenuBackupPress => self.menu_state = MenuState::backup(conn),
             Message::MenuContactsPress => self.menu_state = MenuState::contacts(conn),
             Message::MenuAboutPress => self.menu_state = MenuState::about(conn),
             _ => (),
@@ -258,9 +252,6 @@ impl Settings {
                 }
                 contacts::Message::OpenImportContactModal => {
                     self.modal_state = ModalState::import_contacts();
-                }
-                contacts::Message::OpenSendContactModal => {
-                    self.modal_state = ModalState::load_send_contacts(conn);
                 }
                 other => {
                     if let Some(received_msg) = state.update(other, conn) {
@@ -348,41 +339,23 @@ enum ModalState {
     Profile(ProfileView),
     ContactDetails(ContactDetails),
     ImportList(ImportContactList),
-    SendContactList(SendContactList),
     Off,
 }
 
 impl ModalState {
     pub fn subscription(&self) -> Subscription<Message> {
         match self {
-            ModalState::SendContactList(state) => state.subscription().map(|msg| match msg {
-                send_contact_list::CMessage::UnderlayMessage(message) => {
-                    Message::UpdateSelf(message)
-                }
-                other => Message::UpdateSendContactList(other),
-            }),
             _ => Subscription::none(),
-        }
-    }
-    pub fn backend_event(&mut self, event: Event, conn: &mut BackEndConnection) {
-        if let ModalState::SendContactList(state) = self {
-            state.backend_event(event, conn);
         }
     }
     fn profile(db_contact: DbContact) -> Self {
         Self::Profile(ProfileView::new(db_contact))
-    }
-    pub fn load_send_contacts(conn: &mut BackEndConnection) -> Self {
-        Self::SendContactList(SendContactList::new(conn))
     }
     pub fn import_contacts() -> Self {
         Self::ImportList(ImportContactList::new())
     }
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Command<Message> {
         match message {
-            Message::UpdateSelf(self_msg) => {
-                return self.update(*self_msg, conn);
-            }
             Message::CloseModal => *self = Self::Off,
             Message::SendContactListToAll => {
                 println!("Send contacts to all relays");
@@ -433,29 +406,6 @@ impl ModalState {
                     }
                 }
             }
-            Message::UpdateSendContactList(other_msg) => {
-                if let ModalState::SendContactList(state) = self {
-                    let close_modal = state.update(other_msg, conn);
-                    if close_modal {
-                        *self = ModalState::Off
-                    }
-                }
-            }
-            Message::SendContactListMessage(modal_msg) => {
-                if let ModalState::SendContactList(state) = self {
-                    match *modal_msg {
-                        send_contact_list::CMessage::UnderlayMessage(message) => {
-                            return self.update(message, conn);
-                        }
-                        other => {
-                            let close_modal = state.update(other, conn);
-                            if close_modal {
-                                *self = ModalState::Off
-                            }
-                        }
-                    }
-                }
-            }
             _ => (),
         }
 
@@ -467,9 +417,6 @@ impl ModalState {
             ModalState::Profile(state) => state
                 .view(underlay)
                 .map(|m| Message::ProfileViewMessage(Box::new(m))),
-            ModalState::SendContactList(state) => state
-                .view(underlay)
-                .map(|m| Message::SendContactListMessage(Box::new(m))),
             ModalState::ContactDetails(state) => state
                 .view(underlay)
                 .map(|m| Message::ContactDetailsMessage(Box::new(m))),

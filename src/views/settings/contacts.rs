@@ -20,8 +20,8 @@ pub enum Message {
     OpenEditContactModal(DbContact),
     OpenImportContactModal,
     SearchContactInputChange(String),
-    OpenSendContactModal,
     RefreshContacts,
+    SendContactList,
 }
 
 #[derive(Debug, Clone)]
@@ -40,11 +40,13 @@ impl State {
 
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Option<Message> {
         match message {
+            Message::SendContactList => {
+                conn.send(net::Message::SendContactListToRelays);
+            }
             Message::RefreshContacts => {
                 conn.send(net::Message::RefreshContactsProfile);
             }
             Message::OpenProfileModal(_) => (),
-            Message::OpenSendContactModal => (),
             Message::OpenEditContactModal(_) => (),
             Message::OpenAddContactModal => (),
             Message::OpenImportContactModal => (),
@@ -128,7 +130,7 @@ impl State {
         let send_btn = tooltip(
             button(to_cloud_icon().size(18))
                 .padding(5)
-                .on_press(Message::OpenSendContactModal),
+                .on_press(Message::SendContactList),
             "Send to relays",
             tooltip::Position::Top,
         )
