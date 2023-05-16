@@ -205,7 +205,7 @@ impl Settings {
             }
             Message::BackupMessage(msg) => {
                 if let MenuState::Backup { state } = &mut self.menu_state {
-                    state.update(msg);
+                    state.update(msg, conn);
                 }
             }
             Message::ContactsMessage(msg) => self.handle_contacts_message(msg, conn),

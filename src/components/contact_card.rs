@@ -5,8 +5,9 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::consts::YMD_FORMAT;
 use crate::db::DbContact;
-use crate::net::{BackEndConnection, ImageSize};
+use crate::net::{self, BackEndConnection, ImageSize};
 use crate::style;
+use crate::types::ChatMessage;
 use crate::utils::from_naive_utc_to_local;
 use crate::widget::Element;
 
@@ -29,6 +30,7 @@ pub enum Message {
     TurnOnActive,
     ShowOnlyProfileImage,
     ShowFullCard,
+    GotLastChatMessage(ChatMessage),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -48,6 +50,7 @@ pub struct ContactCard {
 
 impl ContactCard {
     pub fn from_db_contact(id: i32, db_contact: &DbContact, conn: &mut BackEndConnection) -> Self {
+        conn.send(net::Message::FetchLastChatMessage(db_contact.clone()));
         let size = ImageSize::Small;
         let profile_img_handle = db_contact.profile_image(size, conn);
         Self {
@@ -156,7 +159,9 @@ impl ContactCard {
 
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
         match message {
-            // Message::ContactProfilePictureUpdated(db_contact)
+            Message::GotLastChatMessage(chat_message) => {
+                self.contact = self.contact.clone().with_last_message(chat_message);
+            }
             Message::ContactUpdated(db_contact) => {
                 self.profile_img_handle = db_contact.profile_image(ImageSize::Small, conn);
                 self.contact = db_contact;

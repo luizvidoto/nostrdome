@@ -153,7 +153,8 @@ pub async fn fetch_or_create_contact(
 
     tracing::debug!("Update last message and contact in the database");
     let chat_message = ChatMessage::from_db_message(keys, db_message, &db_contact)?;
-    db_contact = DbContact::new_message(pool, db_contact, &chat_message).await?;
+    // db_contact = DbContact::new_message(pool, db_contact, &chat_message).await?;
+
     Ok(Event::ReceivedDM {
         chat_message,
         db_contact,

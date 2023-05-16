@@ -1,7 +1,9 @@
+use std::path::PathBuf;
+
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 
 use crate::{
-    db::{DbContact, DbRelay},
+    db::{DbContact, DbEvent, DbRelay},
     views::login::BasicProfile,
 };
 
@@ -28,7 +30,10 @@ pub enum Message {
     CreateAccount(BasicProfile),
     GetUserProfileMeta,
     UpdateUserProfileMeta(nostr_sdk::Metadata),
-    FetchAllMessages,
+    FetchAllMessageEvents,
+    ExportMessages((Vec<DbEvent>, PathBuf)),
+    ExportContacts(std::path::PathBuf),
+    FetchLastChatMessage(DbContact),
 
     // -------- NOSTR CLIENT MESSAGES
     RequestEventsOf(DbRelay),

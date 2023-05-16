@@ -36,8 +36,8 @@ pub enum Event {
     UserBannerPictureUpdated(PathBuf),
     SystemTime((chrono::NaiveDateTime, i64)),
     UpdatedMetadata(XOnlyPublicKey),
-    GotAllMessages(Vec<DbMessage>),
-
+    GotAllMessages(Vec<DbEvent>),
+    GotLastChatMessage((DbContact, ChatMessage)),
     // --- Nostr ---
     SentEventToRelays(nostr_sdk::EventId),
     SentEventTo((url::Url, nostr_sdk::EventId)),
@@ -56,6 +56,9 @@ pub enum Event {
     NostrLoading,
     RequestedEvents,
     SentDirectMessage(nostr_sdk::EventId),
+    ExportedMessagesSucessfully,
+    ExportedContactsSucessfully,
+
     // --- Config ---
     SyncedWithNtpServer,
     FirstLogin,
@@ -82,7 +85,7 @@ pub enum Event {
         metadata: nostr_sdk::Metadata,
     },
     // --- Confirmed Events ---
-    ConfirmedDM((DbContact, DbMessage)),
+    ConfirmedDM((DbContact, ChatMessage)),
     ConfirmedContactList(DbEvent),
     ConfirmedMetadata(DbEvent),
 
@@ -100,6 +103,9 @@ pub enum Event {
 impl std::fmt::Display for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Event::GotLastChatMessage(_) => write!(f, "Got Last Chat Message"),
+            Event::ExportedContactsSucessfully => write!(f, "Exported Contacts Sucessfully"),
+            Event::ExportedMessagesSucessfully => write!(f, "Exported Messages Sucessfully"),
             Event::GotAllMessages(messages) => write!(f, "Got All Messages: {}", messages.len()),
             Event::DownloadingImage { kind, public_key } => {
                 write!(f, "Downloading Image: {} {}", kind.to_str(), public_key)

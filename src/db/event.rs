@@ -9,7 +9,7 @@ use crate::{
 };
 use nostr_sdk::{
     secp256k1::{schnorr::Signature, XOnlyPublicKey},
-    EventId, Kind, Tag,
+    EventId, Kind, Tag, Timestamp,
 };
 
 use super::UserConfig;
@@ -32,17 +32,21 @@ pub struct DbEvent {
 impl DbEvent {
     const FETCH_QUERY: &'static str = "SELECT * FROM event";
 
-    // pub fn nostr_event(&self) -> nostr_sdk::Event {
-    //     nostr_sdk::Event {
-    //         id: self.event_hash,
-    //         pubkey: self.pubkey,
-    //         created_at: Timestamp::from(self.local_creation.timestamp() as u64),
-    //         tags: self.tags.to_owned(),
-    //         kind: self.kind,
-    //         content: self.content.to_owned(),
-    //         sig: self.sig,
-    //     }
-    // }
+    pub fn to_ns_event(&self) -> Result<nostr_sdk::Event, Error> {
+        Ok(nostr_sdk::Event {
+            id: self.event_hash,
+            pubkey: self.pubkey,
+            created_at: Timestamp::from(
+                self.remote_creation
+                    .ok_or(Error::EventNotInDatabase(self.event_hash.clone()))?
+                    .timestamp() as u64,
+            ),
+            tags: self.tags.to_owned(),
+            kind: self.kind,
+            content: self.content.to_owned(),
+            sig: self.sig,
+        })
+    }
 
     // when the app creates the event, there is no relay_url
     // when it receives from a relay there is
@@ -103,13 +107,21 @@ impl DbEvent {
         self
     }
 
-    pub async fn fetch(pool: &SqlitePool, criteria: Option<&str>) -> Result<Vec<DbEvent>, Error> {
+    pub async fn fetch(pool: &SqlitePool) -> Result<Vec<DbEvent>, Error> {
         let sql = Self::FETCH_QUERY.to_owned();
-        let sql = match criteria {
-            None => sql,
-            Some(crit) => format!("{} WHERE {}", sql, crit),
-        };
         let output = sqlx::query_as::<_, DbEvent>(&sql).fetch_all(pool).await?;
+
+        Ok(output)
+    }
+    pub async fn fetch_kind(
+        pool: &SqlitePool,
+        kind: nostr_sdk::Kind,
+    ) -> Result<Vec<DbEvent>, Error> {
+        let sql = format!("{} WHERE kind = ?", Self::FETCH_QUERY);
+        let output = sqlx::query_as::<_, DbEvent>(&sql)
+            .bind(kind.as_u32())
+            .fetch_all(pool)
+            .await?;
 
         Ok(output)
     }

@@ -17,7 +17,7 @@ use crate::{
     utils::{millis_to_naive_or_err, unchecked_url_or_err},
 };
 
-use super::ProfileCache;
+use super::{DbMessage, ProfileCache};
 
 type Result<T> = std::result::Result<T, DbContactError>;
 
@@ -274,44 +274,44 @@ impl DbContact {
         Handle::from_memory(default_profile_image(size))
     }
 
-    pub async fn new_message(
-        pool: &SqlitePool,
-        mut db_contact: DbContact,
-        chat_message: &ChatMessage,
-    ) -> Result<DbContact> {
-        // do not update unseen count here because we may be in the chat
-        if Some(&chat_message.display_time) >= db_contact.last_message_date.as_ref() {
-            let now_utc = UserConfig::get_corrected_time(pool)
-                .await
-                .unwrap_or(Utc::now().naive_utc());
-            db_contact.updated_at = now_utc;
-            db_contact.last_message_content = Some(chat_message.content.to_owned());
-            db_contact.last_message_date = Some(chat_message.display_time);
+    // pub async fn new_message(
+    //     pool: &SqlitePool,
+    //     mut db_contact: DbContact,
+    //     chat_message: &ChatMessage,
+    // ) -> Result<DbContact> {
+    //     // do not update unseen count here because we may be in the chat
+    //     if Some(&chat_message.display_time) >= db_contact.last_message_date.as_ref() {
+    //         let now_utc = UserConfig::get_corrected_time(pool)
+    //             .await
+    //             .unwrap_or(Utc::now().naive_utc());
+    //         db_contact.updated_at = now_utc;
+    //         db_contact.last_message_content = Some(chat_message.content.to_owned());
+    //         db_contact.last_message_date = Some(chat_message.display_time);
 
-            let sql = r#"
-                UPDATE contact 
-                SET updated_at=?, last_message_content=?, last_message_date=?
-                WHERE pubkey=?
-            "#;
+    //         let sql = r#"
+    //             UPDATE contact
+    //             SET updated_at=?, last_message_content=?, last_message_date=?
+    //             WHERE pubkey=?
+    //         "#;
 
-            sqlx::query(sql)
-                .bind(&db_contact.updated_at.timestamp_millis())
-                .bind(&db_contact.last_message_content)
-                .bind(
-                    &db_contact
-                        .last_message_date
-                        .as_ref()
-                        .map(|d| d.timestamp_millis()),
-                )
-                .bind(&db_contact.pubkey.to_string())
-                .execute(pool)
-                .await?;
-        } else {
-            tracing::debug!("Can't update last_message with an older message.");
-        }
+    //         sqlx::query(sql)
+    //             .bind(&db_contact.updated_at.timestamp_millis())
+    //             .bind(&db_contact.last_message_content)
+    //             .bind(
+    //                 &db_contact
+    //                     .last_message_date
+    //                     .as_ref()
+    //                     .map(|d| d.timestamp_millis()),
+    //             )
+    //             .bind(&db_contact.pubkey.to_string())
+    //             .execute(pool)
+    //             .await?;
+    //     } else {
+    //         tracing::debug!("Can't update last_message with an older message.");
+    //     }
 
-        Ok(db_contact)
-    }
+    //     Ok(db_contact)
+    // }
 
     pub async fn add_to_unseen_count(
         pool: &SqlitePool,
@@ -563,6 +563,12 @@ impl DbContact {
             .await
             .ok();
         Ok(result.is_some())
+    }
+
+    pub(crate) fn with_last_message(mut self, chat_message: ChatMessage) -> Self {
+        self.last_message_content = Some(chat_message.content);
+        self.last_message_date = Some(chat_message.display_time);
+        self
     }
 }
 

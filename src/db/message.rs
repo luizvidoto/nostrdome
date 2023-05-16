@@ -254,6 +254,26 @@ impl DbMessage {
         Ok(messages)
     }
 
+    pub async fn fetch_chat_last(
+        pool: &SqlitePool,
+        contact_pubkey: &XOnlyPublicKey,
+    ) -> Result<Option<DbMessage>, Error> {
+        let sql = r#"
+            SELECT *
+            FROM message
+            WHERE contact_pubkey=?
+            ORDER BY confirmed_at DESC
+            LIMIT 1
+        "#;
+
+        let message = sqlx::query_as::<_, DbMessage>(sql)
+            .bind(&contact_pubkey.to_string())
+            .fetch_optional(pool)
+            .await?;
+
+        Ok(message)
+    }
+
     pub async fn message_seen(pool: &SqlitePool, db_message: &mut DbMessage) -> Result<(), Error> {
         let sql = r#"
             UPDATE message 

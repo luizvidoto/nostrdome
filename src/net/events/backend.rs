@@ -219,9 +219,7 @@ async fn handle_dm_confirmation(
             DbContact::fetch_one(pool, cache_pool, &db_message.contact_chat()).await?
         {
             let chat_message = ChatMessage::from_db_message(keys, &db_message, &db_contact)?;
-            let db_contact = DbContact::new_message(pool, db_contact, &chat_message).await?;
-
-            return Ok(Event::ConfirmedDM((db_contact, db_message)));
+            return Ok(Event::ConfirmedDM((db_contact, chat_message)));
         } else {
             tracing::error!("No contact found for confirmed message");
         }

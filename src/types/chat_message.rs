@@ -88,9 +88,9 @@ impl ChatMessage {
         })
     }
 
-    pub fn confirm_msg(&mut self, db_message: &DbMessage) {
-        self.display_time = db_message.display_time();
-        self.status = db_message.status();
+    pub fn confirm_msg(&mut self, chat_msg: &ChatMessage) {
+        self.display_time = chat_msg.display_time;
+        self.status = chat_msg.status;
     }
 
     pub fn view(&self) -> Element<'static, Message> {

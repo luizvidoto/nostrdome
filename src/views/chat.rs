@@ -305,25 +305,22 @@ impl State {
                     Command::none()
                 }
             }
-            Event::ConfirmedDM((db_contact, db_message)) => {
-                if let Ok(msg_id) = db_message.id() {
-                    self.messages
-                        .iter_mut()
-                        .find(|m| m.msg_id == msg_id)
-                        .map(|chat_msg| chat_msg.confirm_msg(&db_message));
-                }
+            Event::ConfirmedDM((db_contact, chat_msg)) => {
+                // self.update_contact(db_contact, conn);
+                self.update_card_last_msg(&db_contact, &chat_msg, conn);
+                self.messages
+                    .iter_mut()
+                    .find(|m| m.msg_id == chat_msg.msg_id)
+                    .map(|m| m.confirm_msg(&chat_msg));
                 // self.messages
                 //     .sort_by(|a, b| a.display_time.cmp(&b.display_time));
-
-                self.update_contact(db_contact, conn);
                 Command::none()
             }
             Event::UpdatedContactMetadata { db_contact, .. } => {
                 self.update_contact(db_contact, conn);
                 Command::none()
             }
-            Event::PendingDM((db_contact, msg)) => {
-                self.update_contact(db_contact.clone(), conn);
+            Event::PendingDM((_db_contact, msg)) => {
                 self.messages.push(msg.clone());
 
                 self.current_scroll_offset = scrollable::RelativeOffset::END;
@@ -335,8 +332,7 @@ impl State {
                 db_contact,
                 ..
             } => {
-                self.update_contact(db_contact.clone(), conn);
-
+                self.update_card_last_msg(&db_contact, &msg, conn);
                 if self.active_contact.as_ref() == Some(&db_contact) {
                     // estou na conversa
                     self.messages.push(msg.clone());
@@ -362,6 +358,11 @@ impl State {
                     ));
                 Command::none()
             }
+            Event::GotLastChatMessage((db_contact, chat_message)) => {
+                self.update_card_last_msg(&db_contact, &chat_message, conn);
+                self.sort_contacts();
+                Command::none()
+            }
             Event::ContactUpdated(db_contact) => {
                 self.update_contact(db_contact, conn);
                 Command::none()
@@ -370,6 +371,24 @@ impl State {
         };
 
         command
+    }
+
+    fn update_card_last_msg(
+        &mut self,
+        db_contact: &DbContact,
+        chat_message: &ChatMessage,
+        conn: &mut BackEndConnection,
+    ) {
+        if let Some(found_card) = self
+            .contacts
+            .iter_mut()
+            .find(|c| c.contact.pubkey() == db_contact.pubkey())
+        {
+            found_card.update(
+                contact_card::Message::GotLastChatMessage(chat_message.to_owned()),
+                conn,
+            );
+        }
     }
 
     fn sort_contacts(&mut self) {

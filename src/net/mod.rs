@@ -1,5 +1,6 @@
 use crate::db::{
-    Database, DbContact, DbEvent, DbMessage, DbRelay, DbRelayResponse, ProfileCache, UserConfig,
+    self, Database, DbContact, DbEvent, DbMessage, DbRelay, DbRelayResponse, ProfileCache,
+    UserConfig,
 };
 use crate::error::Error;
 use crate::net::events::backend::{self, backend_processing};
@@ -7,6 +8,7 @@ use crate::net::events::frontend::Event;
 use crate::net::events::nostr::NostrSdkWrapper;
 use crate::net::reqwest_client::fetch_latest_version;
 use crate::ntp::ntp_request;
+use crate::types::ChatMessage;
 use futures::channel::mpsc;
 use futures::{Future, StreamExt};
 use iced::futures::stream::Fuse;
@@ -15,6 +17,7 @@ use iced::Subscription;
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 use nostr_sdk::{Keys, RelayPoolNotification};
 use sqlx::SqlitePool;
+use std::path::PathBuf;
 use std::pin::Pin;
 
 mod back_channel;
@@ -91,12 +94,12 @@ impl BackendState {
     pub async fn process_message(
         &mut self,
         nostr_sender: &mut mpsc::Sender<NostrInput>,
-        message: Message,
+        chat_msg: Message,
     ) -> Event {
         if let (Some(db_client), Some(req_client)) = (&mut self.db_client, &mut self.req_client) {
             let pool = &db_client.pool;
             let cache_pool = &db_client.cache_pool;
-            match message {
+            match chat_msg {
                 // ---- REQWEST ----
                 Message::FetchLatestVersion => {
                     handle_fetch_last_version(req_client, &mut self.sender)
@@ -132,10 +135,30 @@ impl BackendState {
                     Err(e) => Event::Error(e.to_string()),
                 },
                 // -------- DATABASE MESSAGES -------
-                Message::FetchAllMessages => match DbMessage::fetch(pool).await {
-                    Ok(messages) => Event::GotAllMessages(messages),
-                    Err(e) => Event::Error(e.to_string()),
-                },
+                Message::FetchLastChatMessage(db_contact) => {
+                    process_async_with_event(handle_fetch_last_chat_msg(
+                        pool, &self.keys, db_contact,
+                    ))
+                    .await
+                }
+                Message::ExportMessages((messages, path)) => {
+                    match messages_to_json_file(path, &messages).await {
+                        Ok(_) => Event::ExportedMessagesSucessfully,
+                        Err(e) => Event::Error(e.to_string()),
+                    }
+                }
+                Message::ExportContacts(path) => {
+                    process_async_with_event(fetch_and_export_contacts(
+                        pool, cache_pool, &self.keys, path,
+                    ))
+                    .await
+                }
+                Message::FetchAllMessageEvents => {
+                    match DbEvent::fetch_kind(pool, nostr_sdk::Kind::EncryptedDirectMessage).await {
+                        Ok(messages) => Event::GotAllMessages(messages),
+                        Err(e) => Event::Error(e.to_string()),
+                    }
+                }
                 Message::GetUserProfileMeta => {
                     tracing::info!("Fetching user profile meta");
                     match ProfileCache::fetch_by_public_key(cache_pool, &self.keys.public_key())
@@ -288,6 +311,19 @@ impl BackendState {
 
         Event::None
     }
+}
+
+async fn handle_fetch_last_chat_msg(
+    pool: &SqlitePool,
+    keys: &Keys,
+    db_contact: DbContact,
+) -> Result<Event, Error> {
+    if let Some(db_message) = DbMessage::fetch_chat_last(pool, &db_contact.pubkey()).await? {
+        let chat_msg = ChatMessage::from_db_message(keys, &db_message, &db_contact)?;
+        return Ok(Event::GotLastChatMessage((db_contact, chat_msg)));
+    }
+
+    Ok(Event::None)
 }
 
 fn handle_download_image(
@@ -558,4 +594,34 @@ pub fn to_backend_channel(
         Event::None,
         "Error sending to Backend channel",
     )
+}
+
+async fn fetch_and_export_contacts(
+    pool: &SqlitePool,
+    cache_pool: &SqlitePool,
+    keys: &Keys,
+    mut path: PathBuf,
+) -> Result<Event, Error> {
+    path.set_extension("json");
+    let list = DbContact::fetch(pool, cache_pool).await?;
+    let event = build_contact_list_event(pool, keys, &list).await?;
+    let json = event.as_json();
+    tokio::fs::write(path, json).await?;
+    Ok(Event::ExportedContactsSucessfully)
+}
+
+async fn messages_to_json_file(mut path: PathBuf, messages: &[DbEvent]) -> Result<(), Error> {
+    path.set_extension("json");
+
+    // Convert each DbEvent to a nostr_sdk::Event and collect into a Vec.
+    let ns_events: Result<Vec<_>, _> = messages.iter().map(|m| m.to_ns_event()).collect();
+    let ns_events = ns_events?; // Unwrap the Result, propagating any errors.
+
+    // Convert the Vec<nostr_sdk::Event> into a JSON byte vector.
+    let json = serde_json::to_vec(&ns_events)?;
+
+    // Write the JSON byte vector to the file asynchronously.
+    tokio::fs::write(path, json).await?;
+
+    Ok(())
 }
