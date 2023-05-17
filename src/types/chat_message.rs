@@ -1,9 +1,11 @@
 use chrono::NaiveDateTime;
-use iced::widget::{column, container, mouse_area, row, text, Space};
+use iced::widget::{column, container, row, text, Space};
 use iced::{alignment, Length};
+use iced::{clipboard, Point};
 use nostr_sdk::{secp256k1::XOnlyPublicKey, EventId};
 use serde::{Deserialize, Serialize};
 
+use crate::components::MouseArea;
 use crate::db::MessageStatus;
 use crate::icon::{check_icon, double_check_icon, xmark_icon};
 use crate::utils::from_naive_utc_to_local;
@@ -16,7 +18,8 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    ChatRightClick(ChatMessage),
+    None,
+    ChatRightClick((ChatMessage, Point)),
 }
 
 pub trait EventLike {
@@ -93,7 +96,7 @@ impl ChatMessage {
         self.status = chat_msg.status;
     }
 
-    pub fn view(&self) -> Element<'static, Message> {
+    pub fn view<'a>(&'a self) -> Element<'a, Message> {
         let chat_alignment = match self.is_from_user {
             false => alignment::Horizontal::Left,
             true => alignment::Horizontal::Right,
@@ -131,6 +134,12 @@ impl ChatMessage {
             status
         };
 
+        // text_input("", &self.content)
+        //         .style(style::TextInput::Invisible)
+        //         .on_input(|_| Message::None)
+        //         .width(Length::Fill)
+        //         .size(18)
+
         let msg_content = container(text(&self.content).size(18));
         let status_row = container(
             row![Space::new(Length::Shrink, Length::Shrink), data_cp, status]
@@ -145,8 +154,8 @@ impl ChatMessage {
             .padding([5, 10])
             .style(container_style);
 
-        let mouse_area =
-            mouse_area(message_container).on_right_release(Message::ChatRightClick(self.clone()));
+        let mouse_area = MouseArea::new(message_container)
+            .on_right_release(|p| Message::ChatRightClick((self.clone(), p)));
 
         container(mouse_area)
             .width(Length::Fill)

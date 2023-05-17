@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 use iced::{application, widget::tooltip};
-use iced_style::rule::FillMode;
+use iced_style::{rule::FillMode, Color};
 
 use self::pallete::AppPalette;
 
@@ -47,8 +47,8 @@ impl application::StyleSheet for Theme {
 
     fn appearance(&self, _style: &Self::Style) -> application::Appearance {
         application::Appearance {
-            background_color: self.pallete().background.into(),
-            text_color: self.pallete().text_color.into(),
+            background_color: self.pallete().background,
+            text_color: self.pallete().text_color,
         }
     }
 }

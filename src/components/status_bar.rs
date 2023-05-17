@@ -179,7 +179,7 @@ impl StatusBar {
             .padding(0)
             .align_x(alignment::Horizontal::Right)
             .align_y(alignment::Vertical::Bottom)
-            .height(Length::Fixed(20.0))
+            .height(Length::Fixed(STATUS_BAR_HEIGHT))
             .width(Length::Fill)
             .style(style::Container::StatusBar)
             .into()
@@ -187,3 +187,4 @@ impl StatusBar {
 }
 
 const NOSTRTALK_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const STATUS_BAR_HEIGHT: f32 = 20.0;

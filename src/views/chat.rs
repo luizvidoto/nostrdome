@@ -1,14 +1,16 @@
 use std::path::PathBuf;
 
 use chrono::{Datelike, NaiveDateTime};
+use iced::clipboard;
 use iced::subscription::Subscription;
 use iced::widget::{button, column, container, image, row, scrollable, text, text_input, Image};
+use iced::Size;
 use iced::{alignment, Alignment, Command, Length};
 use iced_aw::{Card, Modal};
-use nostr_sdk::Kind;
 
+use crate::components::floating_element::{Anchor, FloatingElement, Offset};
 use crate::components::text::title;
-use crate::components::{common_scrollable, contact_card, status_bar, StatusBar};
+use crate::components::{common_scrollable, contact_card, status_bar, Responsive, StatusBar};
 use crate::consts::{DEFAULT_PROFILE_IMAGE_SMALL, YMD_FORMAT};
 use crate::db::DbContact;
 use crate::icon::{file_icon_regular, menu_bars_icon, send_icon};
@@ -25,6 +27,9 @@ use super::modal::{basic_contact, ContactDetails};
 // static CONTACTS_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
 static CHAT_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
 static CHAT_INPUT_ID: Lazy<text_input::Id> = Lazy::new(text_input::Id::unique);
+
+// when profile modal is clicked, it sends the scrollable
+// to the top but the state thinks that its on the bottom
 
 pub enum ModalState {
     Off,
@@ -120,6 +125,9 @@ impl ModalState {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    CopyPressed,
+    ReplyPressed,
+    RelaysPressed,
     BasicContactMessage(Box<basic_contact::CMessage<Message>>),
     StatusBarMessage(status_bar::Message),
     OnVerResize(u16),
@@ -132,8 +140,10 @@ pub enum Message {
     ChatMessage(chat_message::Message),
     SearchContactInputChange(String),
     Scrolled(scrollable::RelativeOffset),
+    GotChatSize((Size, Size)),
     OpenContactProfile,
     CloseModal,
+    CloseCtxMenu,
 }
 
 pub struct State {
@@ -147,6 +157,11 @@ pub struct State {
     current_scroll_offset: scrollable::RelativeOffset,
     status_bar: StatusBar,
     modal_state: ModalState,
+    context_menu_position: Offset,
+    chat_window_size: Size,
+    chat_total_size: Size,
+    hide_context_menu: bool,
+    chat_message_pressed: Option<ChatMessage>,
 }
 
 impl State {
@@ -163,6 +178,11 @@ impl State {
             current_scroll_offset: scrollable::RelativeOffset::END,
             status_bar: StatusBar::new(),
             modal_state: ModalState::Off,
+            context_menu_position: Offset { x: 0., y: 0. },
+            chat_window_size: Size::ZERO,
+            chat_total_size: Size::ZERO,
+            hide_context_menu: true,
+            chat_message_pressed: None,
         }
     }
 
@@ -269,7 +289,14 @@ impl State {
 
         let underlay = column![main_content, status_bar];
 
-        self.modal_state.view(underlay)
+        let float = FloatingElement::new(underlay, make_context_menu)
+            .on_esc(Message::CloseCtxMenu)
+            .backdrop(Message::CloseCtxMenu)
+            .anchor(Anchor::NorthWest)
+            .offset(self.context_menu_position)
+            .hide(self.hide_context_menu);
+
+        self.modal_state.view(float)
     }
     pub fn backend_event(
         &mut self,
@@ -287,8 +314,8 @@ impl State {
                 self.sort_contacts();
                 Command::none()
             }
-            Event::GotRelayResponses(responses) => {
-                dbg!(responses);
+            Event::GotRelayResponses(_responses) => {
+                // dbg!(responses);
                 Command::none()
             }
             Event::GotChatMessages((db_contact, chat_msgs)) => {
@@ -429,11 +456,38 @@ impl State {
         }
     }
 
+    fn close_modal(&mut self) -> Command<Message> {
+        self.modal_state = ModalState::Off;
+        scrollable::snap_to(CHAT_SCROLLABLE_ID.clone(), self.current_scroll_offset)
+    }
+
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Command<Message> {
         let mut command = Command::none();
         match message {
+            Message::CopyPressed => {
+                if let Some(chat_msg) = &self.chat_message_pressed {
+                    command = clipboard::write(chat_msg.content.to_owned());
+                }
+                self.hide_context_menu = true;
+            }
+            Message::ReplyPressed => {
+                tracing::info!("Reply Pressed");
+                self.hide_context_menu = true;
+            }
+            Message::CloseCtxMenu => {
+                self.hide_context_menu = true;
+            }
+            Message::RelaysPressed => {
+                tracing::info!("Relays Pressed");
+                self.hide_context_menu = true;
+            }
             Message::CloseModal => {
-                self.modal_state = ModalState::Off;
+                command = self.close_modal();
+            }
+            Message::OpenContactProfile => {
+                if let Some(contact) = &self.active_contact {
+                    self.modal_state = ModalState::basic_profile(contact, conn);
+                }
             }
             Message::BasicContactMessage(modal_msg) => {
                 if let ModalState::BasicProfile(state) = &mut self.modal_state {
@@ -444,17 +498,13 @@ impl State {
                         other => {
                             let close_modal = state.update(other, conn);
                             if close_modal {
-                                self.modal_state = ModalState::Off;
+                                command = self.close_modal();
                             }
                         }
                     }
                 }
             }
-            Message::OpenContactProfile => {
-                if let Some(contact) = &self.active_contact {
-                    self.modal_state = ModalState::basic_profile(contact, conn);
-                }
-            }
+
             Message::StatusBarMessage(status_msg) => {
                 let _command = self.status_bar.update(status_msg, conn);
             }
@@ -463,11 +513,19 @@ impl State {
             Message::Scrolled(offset) => {
                 self.current_scroll_offset = offset;
             }
+            Message::GotChatSize((size, child_size)) => {
+                println!("Got Chat Size: {:?} - {:?}", size, child_size);
+                self.chat_window_size = size;
+                self.chat_total_size = child_size;
+            }
             Message::SearchContactInputChange(text) => self.search_contact_input = text,
             Message::ChatMessage(chat_msg) => match chat_msg {
-                chat_message::Message::ChatRightClick(msg) => {
+                chat_message::Message::None => (),
+                chat_message::Message::ChatRightClick((msg, point)) => {
                     conn.send(net::Message::FetchRelayResponses(msg.event_id));
-                    // dbg!(msg_clicked);
+                    self.calculate_ctx_menu_pos(point);
+                    self.hide_context_menu = false;
+                    self.chat_message_pressed = Some(msg);
                 }
             },
             Message::AddContactPress => (),
@@ -529,6 +587,41 @@ impl State {
 
         command
     }
+
+    fn calculate_ctx_menu_pos(&mut self, point: iced_native::Point) {
+        let total_h = self.chat_total_size.height;
+        let window_h = self.chat_window_size.height;
+        let offset_h = self.current_scroll_offset.y;
+        let chat_window_offset_y = offset_h * window_h;
+        let scroll_offset_y = offset_h * total_h;
+
+        if total_h < window_h {
+            self.context_menu_position = Offset {
+                x: point.x,
+                y: point.y,
+            }
+        } else {
+            self.context_menu_position = Offset {
+                x: point.x,
+                y: point.y - scroll_offset_y + chat_window_offset_y,
+            }
+        }
+
+        // check height for collision
+        if window_h - (self.context_menu_position.y + CONTEXT_MENU_HEIGHT) < 0.0 {
+            self.context_menu_position.y -= CONTEXT_MENU_HEIGHT;
+        }
+
+        if let Some(div_pos) = self.ver_divider_position {
+            //check width for collision
+            if ((div_pos + 1) as f32) + self.chat_window_size.width
+                - (self.context_menu_position.x + CONTEXT_MENU_WIDTH)
+                < 0.0
+            {
+                self.context_menu_position.x -= CONTEXT_MENU_WIDTH;
+            }
+        }
+    }
 }
 
 fn chat_day_divider<Message: 'static>(date: NaiveDateTime) -> Element<'static, Message> {
@@ -544,41 +637,46 @@ fn chat_day_divider<Message: 'static>(date: NaiveDateTime) -> Element<'static, M
         .into()
 }
 
-fn create_chat_content<'a>(messages: &[ChatMessage]) -> Element<'a, Message> {
-    if messages.is_empty() {
-        return container(text("No messages"))
-            .center_x()
-            .center_y()
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(style::Container::ChatContainer)
-            .into();
-    }
-
-    let mut col = column![];
-    let mut last_date: Option<NaiveDateTime> = None;
-
-    for msg in messages {
-        let msg_date = msg.display_time;
-
-        if let Some(last) = last_date {
-            if last.day() != msg_date.day() {
-                col = col.push(chat_day_divider(msg_date.clone()));
-            }
-        } else {
-            col = col.push(chat_day_divider(msg_date.clone()));
+fn create_chat_content<'a>(messages: &'a [ChatMessage]) -> Element<'a, Message> {
+    let lazy = Responsive::new(move |_size| {
+        if messages.is_empty() {
+            return container(text("No messages"))
+                .center_x()
+                .center_y()
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(style::Container::ChatContainer)
+                .into();
         }
 
-        col = col.push(msg.view().map(Message::ChatMessage));
-        last_date = Some(msg_date);
-    }
+        let mut col = column![];
+        let mut last_date: Option<NaiveDateTime> = None;
 
-    let scrollable = common_scrollable(col)
-        .height(Length::Fill)
-        .id(CHAT_SCROLLABLE_ID.clone())
-        .on_scroll(Message::Scrolled);
+        for msg in messages {
+            let msg_date = msg.display_time;
 
-    container(scrollable)
+            if let Some(last) = last_date {
+                if last.day() != msg_date.day() {
+                    col = col.push(chat_day_divider(msg_date.clone()));
+                }
+            } else {
+                col = col.push(chat_day_divider(msg_date.clone()));
+            }
+
+            col = col.push(msg.view().map(Message::ChatMessage));
+            last_date = Some(msg_date);
+        }
+        // col.into()
+        let scrollable = common_scrollable(col)
+            .height(Length::Fill)
+            .id(CHAT_SCROLLABLE_ID.clone())
+            .on_scroll(Message::Scrolled);
+
+        scrollable.into()
+    })
+    .on_update(Message::GotChatSize);
+
+    container(lazy)
         .center_x()
         .center_y()
         .width(Length::Fill)
@@ -639,7 +737,35 @@ fn header_action_buttons<'a>() -> Element<'a, Message> {
     .into()
 }
 
+fn make_context_menu<'a>() -> Element<'a, Message> {
+    let copy_btn = button("Copy")
+        .width(Length::Fill)
+        .on_press(Message::CopyPressed)
+        .style(style::Button::ContextMenuButton)
+        .padding(5);
+    let reply_btn = button("Reply")
+        .width(Length::Fill)
+        .on_press(Message::ReplyPressed)
+        .style(style::Button::ContextMenuButton)
+        .padding(5);
+    let relays_btn = button("Relays")
+        .width(Length::Fill)
+        .on_press(Message::RelaysPressed)
+        .style(style::Button::ContextMenuButton)
+        .padding(5);
+
+    let buttons = column![copy_btn, reply_btn, relays_btn].spacing(5);
+    container(buttons)
+        .height(CONTEXT_MENU_HEIGHT)
+        .width(CONTEXT_MENU_WIDTH)
+        .style(style::Container::ContextMenu)
+        .padding(5)
+        .into()
+}
+
 const PIC_WIDTH: u16 = 50;
 const NAVBAR_HEIGHT: f32 = 50.0;
 const CHAT_INPUT_HEIGHT: f32 = 50.0;
 const MODAL_WIDTH: f32 = 400.0;
+const CONTEXT_MENU_WIDTH: f32 = 100.0;
+const CONTEXT_MENU_HEIGHT: f32 = 150.0;

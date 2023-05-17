@@ -16,6 +16,7 @@ pub enum Container {
     ChatSearchCopy,
     StatusBar,
     TooltipBg,
+    ContextMenu,
     WelcomeBg1,
     WelcomeBg2,
     WelcomeBg3,
@@ -104,6 +105,13 @@ impl container::StyleSheet for Theme {
             Container::TooltipBg => container::Appearance {
                 background: Color::from_rgba(0.0, 0.0, 0.0, 0.8).into(),
                 text_color: self.pallete().text_color.into(),
+                border_width: 0.0,
+                border_radius: 10.0,
+                ..def
+            },
+            Container::ContextMenu => container::Appearance {
+                background: Color::from_rgba(0.0, 0.0, 0.0, 0.97).into(),
+                text_color: Color::BLACK.into(),
                 border_width: 0.0,
                 border_radius: 10.0,
                 ..def

@@ -26,12 +26,7 @@ impl text::StyleSheet for Theme {
 
     fn appearance(&self, style: Self::Style) -> text::Appearance {
         match style {
-            Text::Default => {
-                text::Appearance {
-                    color: self.pallete().text_color.into(),
-                    // color: color!(0xeb, 0xdb, 0xb2).into(),
-                }
-            }
+            Text::Default => text::Appearance { color: None },
             Text::Inverted => text::Appearance {
                 color: self.pallete().background.into(),
             },

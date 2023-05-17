@@ -18,6 +18,7 @@ pub enum Button {
     StatusBarButton,
     Bordered,
     Notification,
+    ContextMenuButton,
 }
 
 impl button::StyleSheet for Theme {
@@ -29,7 +30,7 @@ impl button::StyleSheet for Theme {
             border_radius: 4.0,
             border_width: 1.0,
             border_color: Color::TRANSPARENT,
-            text_color: self.pallete().background,
+            text_color: self.pallete().text_color,
             shadow_offset: Vector { x: 0., y: 0. },
         };
         match style {
@@ -96,6 +97,14 @@ impl button::StyleSheet for Theme {
                 border_width: 0.0,
                 ..primary
             },
+            Button::ContextMenuButton => button::Appearance {
+                background: Color::TRANSPARENT.into(),
+                text_color: Color::from_rgb8(180, 180, 180),
+                border_color: Color::TRANSPARENT,
+                border_radius: 5.0,
+                border_width: 0.0,
+                shadow_offset: Vector { x: 0., y: 0. },
+            },
         }
     }
     fn hovered(&self, style: &Self::Style) -> button::Appearance {
@@ -129,6 +138,11 @@ impl button::StyleSheet for Theme {
                 ..self.active(style)
             },
             Button::Notification => self.active(style),
+            Button::ContextMenuButton => button::Appearance {
+                background: self.pallete().primary.into(),
+                text_color: self.pallete().text_color,
+                ..self.active(style)
+            },
         }
     }
 
@@ -145,6 +159,7 @@ impl button::StyleSheet for Theme {
             Button::MenuBtn => self.active(style),
             Button::StatusBarButton => self.active(style),
             Button::Notification => self.active(style),
+            Button::ContextMenuButton => self.active(style),
         }
     }
 
@@ -177,6 +192,7 @@ impl button::StyleSheet for Theme {
             Button::ActiveMenuBtn => def,
             Button::MenuBtn => def,
             Button::StatusBarButton => def,
+            Button::ContextMenuButton => self.active(style),
             Button::Notification => self.active(style),
         }
     }

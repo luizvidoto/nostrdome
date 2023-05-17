@@ -8,6 +8,7 @@ pub enum TextInput {
     Default,
     ChatSearch,
     Invalid,
+    Invisible,
 }
 
 impl text_input::StyleSheet for Theme {
@@ -33,6 +34,13 @@ impl text_input::StyleSheet for Theme {
                 border_color: self.pallete().danger,
                 ..chat_search
             },
+            TextInput::Invisible => text_input::Appearance {
+                background: Color::TRANSPARENT.into(),
+                border_radius: 0.0,
+                border_width: 0.0,
+                border_color: Color::TRANSPARENT,
+                icon_color: self.pallete().text_color,
+            },
         }
     }
     fn focused(&self, style: &Self::Style) -> text_input::Appearance {
@@ -43,6 +51,7 @@ impl text_input::StyleSheet for Theme {
                 ..self.active(style)
             },
             TextInput::Invalid => self.active(style),
+            TextInput::Invisible => self.active(style),
         }
     }
     fn disabled(&self, style: &Self::Style) -> text_input::Appearance {
@@ -58,6 +67,7 @@ impl text_input::StyleSheet for Theme {
                 ..self.active(style)
             },
             TextInput::Invalid => self.active(style),
+            TextInput::Invisible => self.active(style),
         }
     }
     fn value_color(&self, _style: &Self::Style) -> Color {

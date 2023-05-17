@@ -10,6 +10,8 @@ pub mod file_importer;
 pub use file_importer::FileImporter;
 mod common_scrollable;
 pub use common_scrollable::common_scrollable;
+mod custom_widgets;
+pub use custom_widgets::{floating_element, modal, FloatingElement, Modal, MouseArea, Responsive};
 
 pub mod status_bar;
 pub use status_bar::StatusBar;
