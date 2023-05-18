@@ -5,5 +5,6 @@ CREATE TABLE relay (
     updated_at INTEGER DEFAULT NULL,
     read INTEGER NOT NULL DEFAULT 1,
     write INTEGER NOT NULL DEFAULT 1,
-    advertise INTEGER NOT NULL DEFAULT 0
+    advertise INTEGER NOT NULL DEFAULT 0,
+    have_error TEXT
 );

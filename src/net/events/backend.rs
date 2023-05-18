@@ -23,10 +23,7 @@ use super::Event;
 #[derive(Debug, Clone)]
 pub enum BackEndInput {
     NtpTime(u64),
-    RelayConfirmation {
-        relay_response: DbRelayResponse,
-        db_event: DbEvent,
-    },
+    RelayConfirmation(DbEvent),
     ToggleRelayRead((DbRelay, bool)),
     ToggleRelayWrite((DbRelay, bool)),
     AddRelayToDb(DbRelay),
@@ -158,15 +155,15 @@ pub async fn backend_processing(
             ))
             .await
         }
-        BackEndInput::RelayConfirmation { db_event, .. } => {
+        BackEndInput::RelayConfirmation(db_event) => {
             process_async_with_event(on_event_confirmation(pool, cache_pool, keys, &db_event)).await
         }
         BackEndInput::FailedToSendEvent {
             message, relay_url, ..
-        } => {
-            tracing::info!("Relay {} - Not ok: {}", relay_url, &message);
-            Event::None
-        }
+        } => match DbRelay::update_with_error(pool, &relay_url, &message).await {
+            Ok(db_relay) => Event::RelayUpdated(db_relay),
+            Err(e) => Event::Error(e.to_string()),
+        },
         BackEndInput::StoreRelayMessage((relay_url, relay_message)) => {
             match on_relay_message(&pool, &relay_url, &relay_message).await {
                 Ok(input) => {
@@ -195,7 +192,13 @@ pub async fn on_event_confirmation(
 ) -> Result<Event, Error> {
     match db_event.kind {
         nostr_sdk::Kind::ContactList => Ok(Event::ConfirmedContactList(db_event.to_owned())),
-        nostr_sdk::Kind::Metadata => Ok(Event::ConfirmedMetadata(db_event.to_owned())),
+        nostr_sdk::Kind::Metadata => {
+            let is_user = db_event.pubkey == keys.public_key();
+            Ok(Event::ConfirmedMetadata {
+                db_event: db_event.to_owned(),
+                is_user,
+            })
+        }
         nostr_sdk::Kind::EncryptedDirectMessage => {
             handle_dm_confirmation(pool, cache_pool, keys, db_event).await
         }
@@ -213,7 +216,8 @@ async fn handle_dm_confirmation(
         .relay_url
         .as_ref()
         .ok_or(Error::NotConfirmedEvent)?;
-    if let Some(db_message) = DbMessage::fetch_one(pool, db_event.event_id()?).await? {
+
+    if let Some(db_message) = DbMessage::fetch_by_event(pool, db_event.event_id()?).await? {
         let db_message = DbMessage::relay_confirmation(pool, relay_url, db_message).await?;
         if let Some(db_contact) =
             DbContact::fetch_one(pool, cache_pool, &db_message.contact_chat()).await?

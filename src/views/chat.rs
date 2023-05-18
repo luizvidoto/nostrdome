@@ -12,7 +12,7 @@ use crate::components::floating_element::{Anchor, FloatingElement, Offset};
 use crate::components::text::title;
 use crate::components::{common_scrollable, contact_card, status_bar, Responsive, StatusBar};
 use crate::consts::{DEFAULT_PROFILE_IMAGE_SMALL, YMD_FORMAT};
-use crate::db::DbContact;
+use crate::db::{DbContact, DbRelay, DbRelayResponse};
 use crate::icon::{file_icon_regular, menu_bars_icon, send_icon};
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
@@ -162,6 +162,7 @@ pub struct State {
     chat_total_size: Size,
     hide_context_menu: bool,
     chat_message_pressed: Option<ChatMessage>,
+    last_relays_response: Option<RelaysResponse>,
 }
 
 impl State {
@@ -183,6 +184,7 @@ impl State {
             chat_total_size: Size::ZERO,
             hide_context_menu: true,
             chat_message_pressed: None,
+            last_relays_response: None,
         }
     }
 
@@ -289,12 +291,13 @@ impl State {
 
         let underlay = column![main_content, status_bar];
 
-        let float = FloatingElement::new(underlay, make_context_menu)
-            .on_esc(Message::CloseCtxMenu)
-            .backdrop(Message::CloseCtxMenu)
-            .anchor(Anchor::NorthWest)
-            .offset(self.context_menu_position)
-            .hide(self.hide_context_menu);
+        let float =
+            FloatingElement::new(underlay, || make_context_menu(&self.last_relays_response))
+                .on_esc(Message::CloseCtxMenu)
+                .backdrop(Message::CloseCtxMenu)
+                .anchor(Anchor::NorthWest)
+                .offset(self.context_menu_position)
+                .hide(self.hide_context_menu);
 
         self.modal_state.view(float)
     }
@@ -314,8 +317,13 @@ impl State {
                 self.sort_contacts();
                 Command::none()
             }
-            Event::GotRelayResponses(_responses) => {
-                // dbg!(responses);
+            Event::GotRelayResponses {
+                chat_message,
+                responses,
+                all_relays,
+            } => {
+                self.last_relays_response =
+                    Some(RelaysResponse::new(chat_message, responses, all_relays));
                 Command::none()
             }
             Event::GotChatMessages((db_contact, chat_msgs)) => {
@@ -496,10 +504,11 @@ impl State {
                             return self.update(message, conn);
                         }
                         other => {
-                            let close_modal = state.update(other, conn);
+                            let (cmd, close_modal) = state.update(other, conn);
                             if close_modal {
-                                command = self.close_modal();
+                                return self.close_modal();
                             }
+                            command = cmd.map(|m| Message::BasicContactMessage(Box::new(m)));
                         }
                     }
                 }
@@ -514,7 +523,6 @@ impl State {
                 self.current_scroll_offset = offset;
             }
             Message::GotChatSize((size, child_size)) => {
-                println!("Got Chat Size: {:?} - {:?}", size, child_size);
                 self.chat_window_size = size;
                 self.chat_total_size = child_size;
             }
@@ -522,7 +530,7 @@ impl State {
             Message::ChatMessage(chat_msg) => match chat_msg {
                 chat_message::Message::None => (),
                 chat_message::Message::ChatRightClick((msg, point)) => {
-                    conn.send(net::Message::FetchRelayResponses(msg.event_id));
+                    conn.send(net::Message::FetchRelayResponses(msg.clone()));
                     self.calculate_ctx_menu_pos(point);
                     self.hide_context_menu = false;
                     self.chat_message_pressed = Some(msg);
@@ -737,7 +745,7 @@ fn header_action_buttons<'a>() -> Element<'a, Message> {
     .into()
 }
 
-fn make_context_menu<'a>() -> Element<'a, Message> {
+fn make_context_menu<'a>(response: &Option<RelaysResponse>) -> Element<'a, Message> {
     let copy_btn = button("Copy")
         .width(Length::Fill)
         .on_press(Message::CopyPressed)
@@ -745,22 +753,53 @@ fn make_context_menu<'a>() -> Element<'a, Message> {
         .padding(5);
     let reply_btn = button("Reply")
         .width(Length::Fill)
-        .on_press(Message::ReplyPressed)
+        // .on_press(Message::ReplyPressed)
         .style(style::Button::ContextMenuButton)
         .padding(5);
-    let relays_btn = button("Relays")
-        .width(Length::Fill)
-        .on_press(Message::RelaysPressed)
-        .style(style::Button::ContextMenuButton)
-        .padding(5);
+    let relays_btn: Element<_> = if let Some(response) = response {
+        let resp_txt = format!(
+            "Relays {}/{}",
+            &response.confirmed_relays.len(),
+            &response.all_relays.len()
+        );
+        button(text(&resp_txt))
+            .width(Length::Fill)
+            .on_press(Message::RelaysPressed)
+            .style(style::Button::ContextMenuButton)
+            .padding(5)
+            .into()
+    } else {
+        text("Relays ...").into()
+    };
 
     let buttons = column![copy_btn, reply_btn, relays_btn].spacing(5);
+
     container(buttons)
         .height(CONTEXT_MENU_HEIGHT)
         .width(CONTEXT_MENU_WIDTH)
         .style(style::Container::ContextMenu)
         .padding(5)
         .into()
+}
+
+#[derive(Debug, Clone)]
+pub struct RelaysResponse {
+    pub confirmed_relays: Vec<DbRelayResponse>,
+    pub all_relays: Vec<DbRelay>,
+    pub chat_message: ChatMessage,
+}
+impl RelaysResponse {
+    fn new(
+        chat_message: ChatMessage,
+        confirmed_relays: Vec<DbRelayResponse>,
+        all_relays: Vec<DbRelay>,
+    ) -> RelaysResponse {
+        Self {
+            chat_message,
+            confirmed_relays,
+            all_relays,
+        }
+    }
 }
 
 const PIC_WIDTH: u16 = 50;

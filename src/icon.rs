@@ -121,6 +121,14 @@ pub fn plus_icon() -> Text<'static> {
     solid_icon('\u{002b}')
 }
 
+pub fn exclamation_icon() -> Text<'static> {
+    solid_icon('\u{0021}')
+}
+
+pub fn copy_icon() -> Text<'static> {
+    solid_icon('\u{F0C5}')
+}
+
 // Fonts
 const SOLID_ICONS: Font = Font::External {
     name: "FA_Solid_Icons",

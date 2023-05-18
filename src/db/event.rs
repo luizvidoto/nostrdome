@@ -132,7 +132,7 @@ impl DbEvent {
     ) -> Result<Option<DbEvent>, Error> {
         let sql = format!("{} WHERE event_hash = ?", Self::FETCH_QUERY);
         Ok(sqlx::query_as::<_, DbEvent>(&sql)
-            .bind(event_hash.to_hex())
+            .bind(event_hash.to_string())
             .fetch_optional(pool)
             .await?)
     }
@@ -159,6 +159,22 @@ impl DbEvent {
             .await?)
     }
 
+    pub async fn fetch_last_kind_pubkey(
+        pool: &SqlitePool,
+        kind: nostr_sdk::Kind,
+        pubkey: &XOnlyPublicKey,
+    ) -> Result<Option<DbEvent>, Error> {
+        let sql = format!(
+            "{} WHERE kind = ? AND pubkey = ? ORDER BY event_id DESC LIMIT 1",
+            Self::FETCH_QUERY
+        );
+        Ok(sqlx::query_as::<_, DbEvent>(&sql)
+            .bind(kind.as_u32())
+            .bind(pubkey.to_string())
+            .fetch_optional(pool)
+            .await?)
+    }
+
     pub async fn insert(pool: &SqlitePool, db_event: &DbEvent) -> Result<(i64, u8), Error> {
         tracing::debug!("inserting event {:?}", db_event);
         let sql = r#"
@@ -169,7 +185,7 @@ impl DbEvent {
         "#;
 
         let inserted = sqlx::query(sql)
-            .bind(&db_event.event_hash.to_hex())
+            .bind(&db_event.event_hash.to_string())
             .bind(&db_event.pubkey.to_string())
             .bind(&db_event.kind.as_u32())
             .bind(&db_event.content)
@@ -203,7 +219,7 @@ impl DbEvent {
         relay_url: &nostr_sdk::Url,
         mut db_event: DbEvent,
     ) -> Result<DbEvent, Error> {
-        tracing::debug!("Confirming event");
+        tracing::info!("Confirming event");
         tracing::debug!("{:?}", &db_event);
         let now_utc = UserConfig::get_corrected_time(pool)
             .await

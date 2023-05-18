@@ -1,7 +1,14 @@
 [package]
 name = "nostrtalk"
-version = "0.4.0-alpha"
+version = "0.5.0-alpha"
 edition = "2021"
+authors = ["Luiz Otávio Cardi Vidoto <luiz.vidoto@hotmail.com>"]
+description = "A chat app over the NOSTR protocol"
+license = "MIT"
+repository = "https://github.com/luizvidoto/nostrtalk"
+readme = "README.md"
+keywords = ["chat", "desktop", "nostr", "messages", "groups", "channels"]
+categories = ["chat", "desktop", "nostr"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -24,7 +31,7 @@ iced_native = "0.10.3"
 iced_aw = { git="https://github.com/iced-rs/iced_aw.git", branch="main", features = ["split", "modal", "spinner", "floating_element"] }
 iced_lazy = { version="0.6.1" }
 iced_style = "0.8.0"
-image = {version = "0.24.6", features = ["webp"]}
+image = {version = "0.23.0", features = ["webp"]}
 log = "0.4.17"
 nostr-sdk = {version = "0.21.0", features = ["all-nips"]}
 num-format = "0.4.3"
@@ -51,3 +58,4 @@ tracing-subscriber = { version = "0.3.16", features = [ "std", "env-filter" ] }
 unicode-segmentation = "1.8.0"
 url = "2.3.1"
 uuid = { version = "1.2.1", features = ["v4"] }
+webbrowser = "0.8.9"

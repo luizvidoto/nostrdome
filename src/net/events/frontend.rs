@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use nostr_sdk::secp256k1::XOnlyPublicKey;
 
 use crate::{
-    db::{DbContact, DbEvent, DbMessage, DbRelay, DbRelayResponse, ProfileCache},
+    db::{DbContact, DbEvent, DbRelay, DbRelayResponse, ProfileCache},
     net::{BackEndConnection, ImageKind},
     types::ChatMessage,
 };
@@ -20,7 +20,15 @@ pub enum Event {
     // --- Database ---
     ProfileCreated,
     GotChatMessages((DbContact, Vec<ChatMessage>)),
-    GotRelayResponses(Vec<DbRelayResponse>),
+    GotRelayResponses {
+        chat_message: ChatMessage,
+        responses: Vec<DbRelayResponse>,
+        all_relays: Vec<DbRelay>,
+    },
+    GotRelayResponsesUserProfile {
+        responses: Vec<DbRelayResponse>,
+        all_relays: Vec<DbRelay>,
+    },
     GotContacts(Vec<DbContact>),
     RelayCreated(DbRelay),
     RelayUpdated(DbRelay),
@@ -87,7 +95,10 @@ pub enum Event {
     // --- Confirmed Events ---
     ConfirmedDM((DbContact, ChatMessage)),
     ConfirmedContactList(DbEvent),
-    ConfirmedMetadata(DbEvent),
+    ConfirmedMetadata {
+        db_event: DbEvent,
+        is_user: bool,
+    },
 
     // --- Pending Events ---
     OtherPendingEvent(DbEvent),
@@ -103,6 +114,9 @@ pub enum Event {
 impl std::fmt::Display for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Event::GotRelayResponsesUserProfile { .. } => {
+                write!(f, "Got Relay Responses User Profile")
+            }
             Event::GotLastChatMessage(_) => write!(f, "Got Last Chat Message"),
             Event::ExportedContactsSucessfully => write!(f, "Exported Contacts Sucessfully"),
             Event::ExportedMessagesSucessfully => write!(f, "Exported Messages Sucessfully"),
@@ -120,7 +134,7 @@ impl std::fmt::Display for Event {
             Event::PendingMetadata(_) => write!(f, "Pending Metadata"),
             Event::PendingContactList(_) => write!(f, "Pending Contact List"),
             Event::PendingDM(_) => write!(f, "Pending Direct Message"),
-            Event::ConfirmedMetadata(_) => write!(f, "Confirmed Metadata"),
+            Event::ConfirmedMetadata { .. } => write!(f, "Confirmed Metadata"),
             Event::ConfirmedContactList(_) => write!(f, "Confirmed Contact List"),
             Event::ConfirmedDM(_) => write!(f, "Confirmed Direct Message"),
             Event::RequestedContactProfile(db_contact) => write!(
@@ -157,7 +171,7 @@ impl std::fmt::Display for Event {
                     messages.len()
                 )
             }
-            Event::GotRelayResponses(responses) => {
+            Event::GotRelayResponses { responses, .. } => {
                 write!(f, "Got Relay Responses: {}", responses.len())
             }
             Event::GotContacts(contacts) => write!(f, "Got Contacts: {}", contacts.len()),

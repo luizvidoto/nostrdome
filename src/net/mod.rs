@@ -135,6 +135,10 @@ impl BackendState {
                     Err(e) => Event::Error(e.to_string()),
                 },
                 // -------- DATABASE MESSAGES -------
+                Message::FetchRelayResponsesUserProfile => {
+                    process_async_with_event(fetch_relay_responses_user_profile(pool, &self.keys))
+                        .await
+                }
                 Message::FetchLastChatMessage(db_contact) => {
                     process_async_with_event(handle_fetch_last_chat_msg(
                         pool, &self.keys, db_contact,
@@ -169,11 +173,8 @@ impl BackendState {
                     }
                 }
 
-                Message::FetchRelayResponses(event_id) => {
-                    match DbRelayResponse::fetch_by_event(pool, event_id).await {
-                        Ok(responses) => Event::GotRelayResponses(responses),
-                        Err(e) => Event::Error(e.to_string()),
-                    }
+                Message::FetchRelayResponses(chat_message) => {
+                    process_async_with_event(fetch_relay_responses(pool, chat_message)).await
                 }
                 Message::AddToUnseenCount(db_contact) => {
                     match DbContact::add_to_unseen_count(pool, db_contact).await {
@@ -624,4 +625,37 @@ async fn messages_to_json_file(mut path: PathBuf, messages: &[DbEvent]) -> Resul
     tokio::fs::write(path, json).await?;
 
     Ok(())
+}
+
+async fn fetch_relay_responses(
+    pool: &SqlitePool,
+    chat_message: ChatMessage,
+) -> Result<Event, Error> {
+    if let Some(db_message) = DbMessage::fetch_one(pool, chat_message.msg_id).await? {
+        let all_relays = DbRelay::fetch(pool).await?;
+        let responses = DbRelayResponse::fetch_by_event(pool, db_message.event_id()?).await?;
+        return Ok(Event::GotRelayResponses {
+            responses,
+            all_relays,
+            chat_message,
+        });
+    }
+    Ok(Event::None)
+}
+
+async fn fetch_relay_responses_user_profile(
+    pool: &SqlitePool,
+    keys: &Keys,
+) -> Result<Event, Error> {
+    if let Some(profile_event) =
+        DbEvent::fetch_last_kind_pubkey(pool, nostr_sdk::Kind::Metadata, &keys.public_key()).await?
+    {
+        let all_relays = DbRelay::fetch(pool).await?;
+        let responses = DbRelayResponse::fetch_by_event(pool, profile_event.event_id()?).await?;
+        return Ok(Event::GotRelayResponsesUserProfile {
+            responses,
+            all_relays,
+        });
+    }
+    Ok(Event::None)
 }

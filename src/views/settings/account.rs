@@ -1,12 +1,15 @@
-use iced::widget::{button, column, container, row, Space};
-use iced::Length;
+use iced::widget::{button, column, container, row, text, tooltip, Space};
+use iced::{Alignment, Length};
 use nostr_sdk::Metadata;
 
 use crate::components::common_scrollable;
 use crate::components::text::title;
 use crate::components::text_input_group::TextInputGroup;
+use crate::db::{DbRelay, DbRelayResponse};
+use crate::icon::satellite_icon;
 use crate::net::BackEndConnection;
 use crate::net::{self, events::Event};
+use crate::style;
 use crate::widget::Element;
 
 #[derive(Debug, Clone)]
@@ -22,6 +25,21 @@ pub enum Message {
     NIP05Change(String),
     SavePress,
     BackEndEvent(Event),
+    RelaysPressed,
+}
+
+#[derive(Debug, Clone)]
+pub struct RelaysResponse {
+    pub confirmed_relays: Vec<DbRelayResponse>,
+    pub all_relays: Vec<DbRelay>,
+}
+impl RelaysResponse {
+    fn new(confirmed_relays: Vec<DbRelayResponse>, all_relays: Vec<DbRelay>) -> RelaysResponse {
+        Self {
+            confirmed_relays,
+            all_relays,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -38,10 +56,12 @@ pub struct State {
     picture_url_is_invalid: bool,
     website_url_is_invalid: bool,
     banner_url_is_invalid: bool,
+    relays_response: Option<RelaysResponse>,
 }
 impl State {
     pub fn new(conn: &mut BackEndConnection) -> Self {
         conn.send(net::Message::GetUserProfileMeta);
+        conn.send(net::Message::FetchRelayResponsesUserProfile);
         Self {
             name: "".into(),
             user_name: "".into(),
@@ -55,12 +75,27 @@ impl State {
             picture_url_is_invalid: false,
             website_url_is_invalid: false,
             banner_url_is_invalid: false,
+            relays_response: None,
         }
     }
 
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
         match message {
+            Message::RelaysPressed => {
+                tracing::info!("Open modal relays confirmation");
+            }
             Message::BackEndEvent(back_ev) => match back_ev {
+                Event::ConfirmedMetadata { is_user, .. } => {
+                    if is_user {
+                        conn.send(net::Message::FetchRelayResponsesUserProfile);
+                    }
+                }
+                Event::GotRelayResponsesUserProfile {
+                    responses,
+                    all_relays,
+                } => {
+                    self.relays_response = Some(RelaysResponse::new(responses, all_relays));
+                }
                 Event::GotUserProfileCache(cache) => {
                     if let Some(profile_cache) = cache {
                         let meta = profile_cache.metadata;
@@ -138,8 +173,45 @@ impl State {
     fn all_valid(&self) -> bool {
         !self.picture_url_is_invalid && !self.website_url_is_invalid && !self.banner_url_is_invalid
     }
+    fn make_relays_response<'a>(&self) -> Element<'a, Message> {
+        if let Some(response) = &self.relays_response {
+            let resp_txt = format!(
+                "{}/{}",
+                &response.confirmed_relays.len(),
+                &response.all_relays.len()
+            );
+            tooltip(
+                button(
+                    row![
+                        text(&resp_txt).size(18).style(style::Text::Placeholder),
+                        satellite_icon().size(16).style(style::Text::Placeholder)
+                    ]
+                    .spacing(5),
+                )
+                .on_press(Message::RelaysPressed)
+                .style(style::Button::MenuBtn)
+                .padding(5),
+                "Relays Confirmation",
+                tooltip::Position::Left,
+            )
+            .style(style::Container::TooltipBg)
+            .into()
+        } else {
+            text("Profile is not confirmed on any relays")
+                .size(18)
+                .style(style::Text::Placeholder)
+                .into()
+        }
+    }
     pub fn view(&self) -> Element<Message> {
         let title = title("Account");
+        let title_group = row![
+            title,
+            Space::with_width(Length::Fill),
+            self.make_relays_response()
+        ]
+        .align_items(Alignment::Center)
+        .spacing(10);
 
         let profile_name_input =
             TextInputGroup::new("Name", &self.name, Message::ProfileNameChange)
@@ -177,8 +249,8 @@ impl State {
 
         let ln_url_input =
             TextInputGroup::new("Lightning URL (LUD 06)", &self.ln_url, Message::LNURLChange)
-                .placeholder("my-ln-address@walletofsatoshi.com")
-                .tooltip("Some wallets support Lightning Network Address")
+                .placeholder("LNURL1DP68GURN8GHJ7UM9WFMXJCM99E3K7MF0V9CXJ0M385EKVCENXC6R2C35XVUKXEFCV5MKVV34X5EKZD3EV56NYD3HXQURZEPEXEJXXEPNXSCRVWFNV9NXZCN9XQ6XYEFHVGCXXCMYXYMNSERXFQ5FNS")
+                .tooltip("Pay Request URL")
                 .build();
 
         let ln_input = TextInputGroup::new(
@@ -186,8 +258,8 @@ impl State {
             &self.ln_addrs,
             Message::LNChange,
         )
-        .placeholder("my-ln-address@walletofsatoshi.com")
-        .tooltip("Some wallets support Lightning Network Address")
+        .placeholder("my-ln-address@getalby.com")
+        .tooltip("Email like address for the Lightning Network")
         .build();
 
         let nostr_addrs_input = TextInputGroup::new(
@@ -196,6 +268,7 @@ impl State {
             Message::NIP05Change,
         )
         .placeholder("my-addrs@example.com")
+        .tooltip("Easily find and confirm users using their email-like identifiers on NOSTR")
         .build();
 
         let mut save_btn = button("Save");
@@ -206,7 +279,7 @@ impl State {
 
         container(common_scrollable(
             column![
-                title,
+                title_group,
                 profile_name_input,
                 user_name_input,
                 about_input,

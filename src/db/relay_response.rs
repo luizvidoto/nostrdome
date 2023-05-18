@@ -16,19 +16,27 @@ pub struct DbRelayResponse {
     pub status: ResponseStatus,
 }
 impl DbRelayResponse {
-    pub fn from_response(
-        status: bool,
+    pub fn ok(event_id: i64, event_hash: &EventId, relay_url: &Url) -> Self {
+        Self {
+            id: None,
+            event_id,
+            event_hash: event_hash.to_owned(),
+            relay_url: relay_url.to_owned(),
+            status: ResponseStatus::from_bool(true, None),
+        }
+    }
+    pub fn error(
         event_id: i64,
         event_hash: &EventId,
         relay_url: &Url,
-        message: &str,
+        error_message: &str,
     ) -> Self {
         Self {
             id: None,
             event_id,
             event_hash: event_hash.to_owned(),
             relay_url: relay_url.to_owned(),
-            status: ResponseStatus::from_bool(status, Some(message.to_owned())),
+            status: ResponseStatus::from_bool(false, Some(error_message.to_owned())),
         }
     }
     pub async fn fetch_by_event(
@@ -49,16 +57,17 @@ impl DbRelayResponse {
         Ok(responses)
     }
     pub async fn insert(pool: &SqlitePool, response: &DbRelayResponse) -> Result<i64, Error> {
+        tracing::debug!("Inserting relay response: {:?}", response);
         let (status, error_message) = response.status.to_bool();
 
         let sql = r#"
-            INSERT OR IGNORE INTO relay_response (event_id, event_hash, relay_url, status, error_message)
+            INSERT INTO relay_response (event_id, event_hash, relay_url, status, error_message)
             VALUES (?, ?, ?, ?, ?)
         "#;
 
         let output = sqlx::query(sql)
             .bind(response.event_id)
-            .bind(&response.event_hash.to_hex())
+            .bind(&response.event_hash.to_string())
             .bind(&response.relay_url.to_string())
             .bind(status)
             .bind(error_message)

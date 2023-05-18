@@ -4,7 +4,10 @@ use sqlx::SqlitePool;
 use crate::{
     db::{DbEvent, DbMessage, TagInfo},
     error::Error,
-    net::{events::Event, operations::contact::fetch_or_create_contact},
+    net::{
+        events::Event,
+        operations::{contact::fetch_or_create_contact, event::relay_response_ok},
+    },
 };
 
 pub async fn handle_dm(
@@ -20,6 +23,8 @@ pub async fn handle_dm(
     // insert into database
     let (row_id, rows_changed) = DbEvent::insert(pool, &db_event).await?;
     db_event = db_event.with_id(row_id);
+
+    relay_response_ok(pool, relay_url, &db_event).await?;
 
     if rows_changed == 0 {
         tracing::info!("Event already in database");

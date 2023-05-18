@@ -4,11 +4,11 @@ use crate::components::common_scrollable;
 use crate::components::text_input_group::TextInputGroup;
 use crate::consts::{MEDIUM_PROFILE_PIC_HEIGHT, MEDIUM_PROFILE_PIC_WIDTH};
 use crate::db::{DbContact, DbContactError};
-use crate::icon::edit_icon;
+use crate::icon::{copy_icon, edit_icon};
 use crate::net::{self, BackEndConnection, ImageSize};
-use iced::alignment;
-use iced::widget::{button, column, container, image, row, text, Space};
-use iced::Length;
+use iced::widget::{button, column, container, image, row, text, tooltip, Space};
+use iced::{alignment, clipboard};
+use iced::{Alignment, Command, Length};
 use iced_aw::{Card, Modal};
 
 use crate::style;
@@ -30,6 +30,7 @@ pub enum CMessage<M: Clone + Debug> {
     CloseModal,
     EditMode,
     UnderlayMessage(M),
+    CopyPubkey,
 }
 #[derive(Debug, Clone)]
 pub struct ContactDetails {
@@ -143,11 +144,28 @@ impl ContactDetails {
                             .style(style::Container::ChatSearchCopy),
                     ]
                     .spacing(2);
+                    let copy_btn = tooltip(
+                        button(copy_icon())
+                            .on_press(CMessage::CopyPubkey)
+                            .style(style::Button::MenuBtn)
+                            .width(COPY_BTN_WIDTH),
+                        "Copy",
+                        tooltip::Position::Top,
+                    )
+                    .style(style::Container::TooltipBg);
+
                     let pubkey_group = column![
                         text("Contact PubKey"),
-                        container(text(&self.modal_pubkey_input))
-                            .padding([2, 8])
-                            .style(style::Container::ChatSearchCopy),
+                        container(
+                            row![
+                                container(text(&self.modal_pubkey_input)).width(Length::Fill),
+                                copy_btn
+                            ]
+                            .align_items(Alignment::Center)
+                            .spacing(5)
+                        )
+                        .padding([2, 4, 2, 8])
+                        .width(Length::Fill),
                     ]
                     .spacing(2);
                     let relay_group = column![
@@ -246,8 +264,12 @@ impl ContactDetails {
         &mut self,
         message: CMessage<M>,
         conn: &mut BackEndConnection,
-    ) -> bool {
+    ) -> (Command<CMessage<M>>, bool) {
+        let mut command = Command::none();
         match message {
+            CMessage::CopyPubkey => {
+                command = clipboard::write(self.modal_pubkey_input.to_owned());
+            }
             CMessage::EditMode => {
                 if let Mode::View = self.mode {
                     self.mode = Mode::Edit;
@@ -264,13 +286,13 @@ impl ContactDetails {
                 self.modal_rec_relay_input = text;
                 self.is_relay_invalid = false;
             }
-            CMessage::SubmitContact => return self.handle_submit_contact(conn),
+            CMessage::SubmitContact => return (command, self.handle_submit_contact(conn)),
             CMessage::CloseModal => {
-                return true;
+                return (command, true);
             }
             CMessage::UnderlayMessage(_) => (),
         }
-        false
+        (command, false)
     }
 
     pub(crate) fn handle_submit_contact(&mut self, conn: &mut BackEndConnection) -> bool {
@@ -316,3 +338,4 @@ impl ContactDetails {
 }
 
 const MODAL_WIDTH: f32 = 400.0;
+const COPY_BTN_WIDTH: f32 = 30.0;

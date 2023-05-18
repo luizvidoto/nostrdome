@@ -1,13 +1,13 @@
-use chrono::NaiveDateTime;
 use futures::channel::mpsc;
-use nostr_sdk::{Keys, Metadata, Url};
+use nostr_sdk::{Keys, Url};
 use sqlx::SqlitePool;
 
 use crate::{
-    db::{DbEvent, ProfileCache, UserConfig},
+    db::{DbEvent, ProfileCache},
     error::Error,
     net::{
         events::{backend::BackEndInput, Event},
+        operations::event::relay_response_ok,
         to_backend_channel,
     },
 };
@@ -18,7 +18,6 @@ use super::builder::build_profile_event;
 pub async fn handle_metadata_event(
     pool: &SqlitePool,
     cache_pool: &SqlitePool,
-    keys: &Keys,
     relay_url: &Url,
     ns_event: nostr_sdk::Event,
 ) -> Result<Event, Error> {
@@ -29,6 +28,7 @@ pub async fn handle_metadata_event(
     // insert into database
     let (row_id, rows_changed) = DbEvent::insert(pool, &db_event).await?;
     db_event = db_event.with_id(row_id);
+    relay_response_ok(pool, relay_url, &db_event).await?;
 
     if rows_changed == 0 {
         tracing::info!("Event already in database");

@@ -54,11 +54,12 @@ pub struct DbRelay {
     pub advertise: bool,
     pub last_connected_at: Option<NaiveDateTime>,
     pub status: Option<DbRelayStatus>,
+    pub have_error: Option<String>,
 }
 
 impl DbRelay {
     const FETCH_QUERY: &'static str =
-        "SELECT url, read, write, advertise, created_at, updated_at FROM relay";
+        "SELECT url, read, write, advertise, created_at, updated_at, have_error FROM relay";
 
     pub fn with_status(mut self, status: RelayStatus) -> Self {
         self.status = Some(DbRelayStatus(status));
@@ -79,6 +80,7 @@ impl DbRelay {
             updated_at: Utc::now().naive_utc(),
             last_connected_at: None,
             status: None,
+            have_error: None,
         }
     }
 
@@ -145,6 +147,32 @@ impl DbRelay {
 
         Ok(())
     }
+
+    pub(crate) async fn update_with_error(
+        pool: &SqlitePool,
+        url: &Url,
+        message: &str,
+    ) -> Result<DbRelay, Error> {
+        let mut db_relay = DbRelay::fetch_one(pool, url)
+            .await?
+            .ok_or_else(|| Error::RelayNotFound(url.to_string()))?;
+        let now_utc = UserConfig::get_corrected_time(pool)
+            .await
+            .unwrap_or(Utc::now().naive_utc());
+        let sql = "UPDATE relay SET updated_at=?, have_error=? WHERE url=?";
+
+        sqlx::query(sql)
+            .bind(now_utc.timestamp_millis())
+            .bind(message)
+            .bind(&db_relay.url.to_string())
+            .execute(pool)
+            .await?;
+
+        db_relay.have_error = Some(message.to_owned());
+        db_relay.updated_at = now_utc;
+
+        Ok(db_relay)
+    }
 }
 
 impl sqlx::FromRow<'_, SqliteRow> for DbRelay {
@@ -155,6 +183,8 @@ impl sqlx::FromRow<'_, SqliteRow> for DbRelay {
             millis_to_naive_or_err(row.try_get::<i64, &str>("updated_at")?, "updated_at")?;
         let url = row.try_get::<String, &str>("url")?;
         let url = url_or_err(&url, "url")?;
+
+        let have_error: Option<String> = row.get("have_error");
         Ok(DbRelay {
             url,
             created_at,
@@ -164,6 +194,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbRelay {
             advertise: row.try_get::<bool, &str>("advertise")?,
             last_connected_at: None,
             status: None,
+            have_error,
         })
     }
 }

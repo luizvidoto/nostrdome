@@ -163,10 +163,20 @@ impl DbMessage {
         Ok(messages)
     }
 
-    pub async fn fetch_one(pool: &SqlitePool, event_id: i64) -> Result<Option<DbMessage>, Error> {
+    pub async fn fetch_by_event(
+        pool: &SqlitePool,
+        event_id: i64,
+    ) -> Result<Option<DbMessage>, Error> {
         let sql = format!("{} WHERE event_id = ?", Self::FETCH_QUERY);
         Ok(sqlx::query_as::<_, DbMessage>(&sql)
             .bind(event_id)
+            .fetch_optional(pool)
+            .await?)
+    }
+    pub async fn fetch_one(pool: &SqlitePool, msg_id: i64) -> Result<Option<DbMessage>, Error> {
+        let sql = format!("{} WHERE msg_id = ?", Self::FETCH_QUERY);
+        Ok(sqlx::query_as::<_, DbMessage>(&sql)
+            .bind(msg_id)
             .fetch_optional(pool)
             .await?)
     }

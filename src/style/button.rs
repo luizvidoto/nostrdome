@@ -19,6 +19,7 @@ pub enum Button {
     Bordered,
     Notification,
     ContextMenuButton,
+    Link,
 }
 
 impl button::StyleSheet for Theme {
@@ -105,11 +106,22 @@ impl button::StyleSheet for Theme {
                 border_width: 0.0,
                 shadow_offset: Vector { x: 0., y: 0. },
             },
+            Button::Link => button::Appearance {
+                background: Color::TRANSPARENT.into(),
+                text_color: self.pallete().link_1,
+                border_color: Color::TRANSPARENT,
+                border_radius: 0.0,
+                border_width: 0.0,
+                shadow_offset: Vector { x: 0., y: 0. },
+            },
         }
     }
     fn hovered(&self, style: &Self::Style) -> button::Appearance {
         match style {
-            Button::Primary => self.active(style),
+            Button::Primary => button::Appearance {
+                background: self.pallete().primary_hover.into(),
+                ..self.active(style)
+            },
             Button::Secondary => self.active(style),
             Button::Danger => self.active(style),
             Button::Invisible => self.active(style),
@@ -143,6 +155,7 @@ impl button::StyleSheet for Theme {
                 text_color: self.pallete().text_color,
                 ..self.active(style)
             },
+            Button::Link => self.active(style),
         }
     }
 
@@ -160,6 +173,7 @@ impl button::StyleSheet for Theme {
             Button::StatusBarButton => self.active(style),
             Button::Notification => self.active(style),
             Button::ContextMenuButton => self.active(style),
+            Button::Link => self.active(style),
         }
     }
 
@@ -192,6 +206,7 @@ impl button::StyleSheet for Theme {
             Button::ActiveMenuBtn => def,
             Button::MenuBtn => def,
             Button::StatusBarButton => def,
+            Button::Link => def,
             Button::ContextMenuButton => self.active(style),
             Button::Notification => self.active(style),
         }

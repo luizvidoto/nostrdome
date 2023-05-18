@@ -29,12 +29,13 @@ pub async fn insert_confirmed_event(
     ns_event: nostr_sdk::Event,
 ) -> Result<Event, Error> {
     tracing::debug!("insert_event");
+
     match ns_event.kind {
         nostr_sdk::Kind::ContactList => {
             handle_contact_list(ns_event, keys, pool, back_sender, nostr_sender, relay_url).await
         }
         nostr_sdk::Kind::Metadata => {
-            handle_metadata_event(pool, cache_pool, keys, relay_url, ns_event).await
+            handle_metadata_event(pool, cache_pool, relay_url, ns_event).await
         }
         nostr_sdk::Kind::EncryptedDirectMessage => {
             handle_dm(pool, cache_pool, keys, relay_url, ns_event).await
@@ -69,7 +70,7 @@ async fn insert_other_kind(
     let mut db_event = DbEvent::confirmed_event(ns_event, relay_url)?;
     let (row_id, rows_changed) = DbEvent::insert(pool, &db_event).await?;
     db_event = db_event.with_id(row_id);
-    // let _ev = relay_response_ok(pool, &db_event, relay_url).await?;
+    relay_response_ok(pool, relay_url, &db_event).await?;
     if rows_changed == 0 {
         tracing::info!("Received duplicate event: {:?}", db_event.event_hash);
         return Ok(Event::None);
@@ -171,23 +172,9 @@ pub async fn on_relay_message(
                 });
             }
 
-            tracing::debug!("Relay message: Ok");
+            tracing::info!("Relay message: Ok");
             let db_event = confirm_event(pool, event_hash, relay_url).await?;
-
-            let mut relay_response = DbRelayResponse::from_response(
-                *status,
-                db_event.event_id()?,
-                event_hash,
-                relay_url,
-                message,
-            );
-            let id = DbRelayResponse::insert(pool, &relay_response).await?;
-            relay_response = relay_response.with_id(id);
-
-            BackEndInput::RelayConfirmation {
-                relay_response,
-                db_event,
-            }
+            BackEndInput::RelayConfirmation(db_event)
         }
         RelayMessage::EndOfStoredEvents(subscription_id) => {
             tracing::debug!("Relay message: EOSE. ID: {}", subscription_id);
@@ -239,5 +226,16 @@ async fn confirm_event(
     if db_event.relay_url.is_none() {
         db_event = DbEvent::confirm_event(pool, relay_url, db_event).await?;
     }
+    relay_response_ok(pool, relay_url, &db_event).await?;
     Ok(db_event)
+}
+
+pub async fn relay_response_ok(
+    pool: &SqlitePool,
+    relay_url: &nostr_sdk::Url,
+    db_event: &DbEvent,
+) -> Result<(), Error> {
+    let relay_response = DbRelayResponse::ok(db_event.event_id()?, &db_event.event_hash, relay_url);
+    DbRelayResponse::insert(pool, &relay_response).await?;
+    Ok(())
 }

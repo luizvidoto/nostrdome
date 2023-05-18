@@ -59,12 +59,16 @@ impl State {
                 self.contacts_state = LoadingState::Loading;
                 if let Some(path) = FileDialog::new().set_directory("/").save_file() {
                     conn.send(net::Message::ExportContacts(path))
+                } else {
+                    self.contacts_state = LoadingState::Idle;
                 }
             }
             Message::ExportMessages => {
                 self.messages_state = LoadingState::Loading;
                 if let Some(path) = FileDialog::new().set_directory("/").save_file() {
                     conn.send(net::Message::ExportMessages((self.messages.clone(), path)));
+                } else {
+                    self.messages_state = LoadingState::Idle;
                 }
             }
         }

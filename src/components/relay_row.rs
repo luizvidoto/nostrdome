@@ -1,5 +1,5 @@
 use crate::db::DbRelay;
-use crate::icon::{delete_icon, solid_circle_icon};
+use crate::icon::{delete_icon, exclamation_icon, solid_circle_icon};
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
 use crate::style;
@@ -310,6 +310,7 @@ impl RelayRow {
     pub fn view_header() -> Element<'static, MessageWrapper> {
         row![
             container(text("")).width(Length::Fixed(RELAY_STATUS_ICON_WIDTH)),
+            container(text("")).width(Length::Fixed(RELAY_STATUS_ICON_WIDTH)),
             container(text("Address")).center_x().width(Length::Fill),
             container(text("Activity"))
                 .center_x()
@@ -350,6 +351,7 @@ impl RelayRow {
                     tooltip::Position::Top
                 )
                 .style(style::Container::TooltipBg),
+                self.have_error_icon(),
                 container(text(&self.db_relay.url))
                     .center_x()
                     .width(Length::Fill),
@@ -375,6 +377,20 @@ impl RelayRow {
         // queria um hover para cada linha da tabela
         // .style(style::Container::TableRow)
         .into()
+    }
+
+    fn have_error_icon<'a, M: 'a>(&self) -> Element<'a, M> {
+        if let Some(error_msg) = &self.db_relay.have_error {
+            tooltip(
+                exclamation_icon().size(16).style(style::Text::Danger),
+                error_msg,
+                tooltip::Position::Top,
+            )
+            .style(style::Container::TooltipBg)
+            .into()
+        } else {
+            text("").into()
+        }
     }
 
     fn relay_status_icon<'a>(&'a self) -> (Text<'a>, String) {

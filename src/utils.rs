@@ -1,16 +1,17 @@
 #![allow(dead_code)]
+use crate::{db::DbContact, error::Error};
+use chrono::{DateTime, Local, NaiveDateTime, Offset};
+use iced::widget::image::Handle;
+use image::{ImageBuffer, Luma, Rgba};
+use nostr_sdk::prelude::*;
+use qrcode::QrCode;
+use serde::de::DeserializeOwned;
 use std::{
     fs::File,
     io::{self, BufReader, Read},
     path::Path,
     str::FromStr,
 };
-
-use chrono::{DateTime, Local, NaiveDateTime, Offset};
-use nostr_sdk::prelude::*;
-use serde::de::DeserializeOwned;
-
-use crate::{db::DbContact, error::Error};
 
 // Accepts both hex and bech32 keys and returns the hex encoded key
 pub fn parse_key(key: String) -> Result<String, anyhow::Error> {
@@ -56,6 +57,12 @@ where
 pub fn format_pubkey(pubkey: &str) -> String {
     let prefix = &pubkey[0..4];
     let suffix = &pubkey[pubkey.len().saturating_sub(4)..];
+    format!("{}..{}", prefix, suffix)
+}
+
+pub fn format_btc_address(pubkey: &str) -> String {
+    let prefix = &pubkey[0..8];
+    let suffix = &pubkey[pubkey.len().saturating_sub(8)..];
     format!("{}..{}", prefix, suffix)
 }
 
@@ -160,4 +167,35 @@ pub fn add_ellipsis_trunc(s: &str, max_length: usize) -> String {
     } else {
         s.to_string()
     }
+}
+
+pub fn qr_code_handle(code: &str) -> Result<Handle, Error> {
+    // Encode some data into bits.
+    let code = match QrCode::new(code.as_bytes()) {
+        Err(e) => {
+            tracing::error!("Error creating QR code: {}", e);
+            return Err(Error::QrError(e));
+        }
+        Ok(code) => code,
+    };
+
+    tracing::info!("QR code created");
+
+    // Render the bits into an image.
+    let image = code.render::<Luma<u8>>().build();
+
+    // Convert the Luma<u8> image into an Rgba<u8> image
+    let rgba_image: ImageBuffer<Rgba<u8>, Vec<u8>> =
+        ImageBuffer::from_fn(image.width(), image.height(), |x, y| {
+            let pixel = image.get_pixel(x, y);
+            let color = pixel[0];
+            Rgba([color, color, color, 255]) // Use the grayscale color for each of RGB and set max alpha
+        });
+
+    // Get the dimensions
+    let (width, height) = rgba_image.dimensions();
+    // Get the raw bytes
+    let bytes = rgba_image.into_raw();
+
+    Ok(Handle::from_pixels(width, height, bytes)) // Pass the owned bytes
 }

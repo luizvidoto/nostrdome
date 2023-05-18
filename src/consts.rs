@@ -26,3 +26,30 @@ pub const fn default_profile_image(size: ImageSize) -> &'static [u8] {
         ImageSize::Original => DEFAULT_PROFILE_IMAGE_MEDIUM,
     }
 }
+
+pub(crate) const NOSTRTALK_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const GITHUB_REPO: &'static str = "https://github.com/luizvidoto/nostrtalk";
+pub(crate) const BITCOIN_ADDRESS: &'static str = "bc1qr7pavwv0m05gz7x92keuwyqmr6a2yg4jd8vwze";
+pub(crate) const LIGHTNING_ADDRESS: &'static str =
+    "LNURL1DP68GURN8GHJ7EM9W3SKCCNE9E3K7MF0D3H82UNVWQHKU6TRDD5XUARKHTW6ZP";
+pub(crate) const TT_LINK: &'static str = "https://twitter.com/nickhntv";
+pub(crate) const RELAY_SUGGESTIONS: [&'static str; 16] = [
+    // "ws://192.168.15.151:8080",
+    // "ws://192.168.15.119:8080",
+    "wss://relay.plebstr.com",
+    "wss://nostr.wine",
+    "wss://relay.snort.social",
+    "wss://nostr-pub.wellorder.net",
+    "wss://relay.damus.io",
+    "wss://nostr1.tunnelsats.com",
+    "wss://relay.nostr.info",
+    "wss://nostr-relay.wlvs.space",
+    "wss://nostr.zebedee.cloud",
+    "wss://lbrygen.xyz",
+    "wss://nostr.8e23.net",
+    "wss://nostr.xmr.rocks",
+    "wss://xmr.usenostr.org",
+    "wss://relay.roli.social",
+    "wss://relay.nostr.ro",
+    "wss://nostr.swiss-enigma.ch",
+];

@@ -161,7 +161,11 @@ impl Settings {
         conn: &mut BackEndConnection,
     ) -> Command<Message> {
         match &mut self.menu_state {
-            MenuState::About { state } => state.update(about::Message::BackEndEvent(event)),
+            MenuState::About { state } => {
+                return state
+                    .update(about::Message::BackEndEvent(event))
+                    .map(Message::AboutMessage)
+            }
             MenuState::Account { state } => {
                 state.update(account::Message::BackEndEvent(event), conn)
             }
@@ -191,6 +195,11 @@ impl Settings {
             Message::AccountMessage(msg) => {
                 if let MenuState::Account { state } = &mut self.menu_state {
                     state.update(msg, conn);
+                }
+            }
+            Message::AboutMessage(msg) => {
+                if let MenuState::About { state } = &mut self.menu_state {
+                    return state.update(msg).map(Message::AboutMessage);
                 }
             }
             Message::AppearanceMessage(msg) => {
@@ -355,6 +364,7 @@ impl ModalState {
         Self::ImportList(ImportContactList::new())
     }
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Command<Message> {
+        let mut command = Command::none();
         match message {
             Message::CloseModal => *self = Self::Off,
             Message::SendContactListToAll => {
@@ -368,10 +378,11 @@ impl ModalState {
                             return self.update(message, conn);
                         }
                         other => {
-                            let close_modal = state.update(other, conn);
+                            let (cmd, close_modal) = state.update(other, conn);
                             if close_modal {
-                                *self = ModalState::Off
+                                *self = ModalState::Off;
                             }
+                            command = cmd.map(|m| Message::ContactDetailsMessage(Box::new(m)));
                         }
                     }
                 }
@@ -409,7 +420,7 @@ impl ModalState {
             _ => (),
         }
 
-        Command::none()
+        command
     }
 
     pub fn view<'a>(&'a self, underlay: impl Into<Element<'a, Message>>) -> Element<'a, Message> {

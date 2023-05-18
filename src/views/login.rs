@@ -74,8 +74,8 @@ impl State {
     }
     pub fn import_account() -> Self {
         Self::ImportAccount {
-            secret_key_input: "4510459b74db68371be462f19ef4f7ef1e6c5a95b1d83a7adf00987c51ac56fe"
-                .into(),
+            // secret_key_input: "4510459b74db68371be462f19ef4f7ef1e6c5a95b1d83a7adf00987c51ac56fe"
+            secret_key_input: "".into(),
             is_invalid: false,
         }
     }
@@ -195,7 +195,7 @@ impl State {
                 );
 
                 let back_btn = button("Back")
-                    .style(style::Button::Invisible)
+                    .style(style::Button::MenuBtn)
                     .on_press(Message::ToChooseAccount);
                 let mut submit_btn = button("Submit");
 
@@ -236,7 +236,7 @@ impl State {
                 }
 
                 let back_btn = button("Back")
-                    .style(style::Button::Invisible)
+                    .style(style::Button::MenuBtn)
                     .on_press(Message::ToChooseAccount);
                 let submit_btn =
                     button("Submit").on_press(Message::SubmitPress(secret_key_input.clone()));

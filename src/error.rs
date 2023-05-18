@@ -97,6 +97,9 @@ pub enum Error {
     #[error("{0}")]
     FromDbContactError(#[from] DbContactError),
 
+    #[error("{0}")]
+    QrError(#[from] qrcode::types::QrError),
+
     // FromDbEventError
     #[error("{0}")]
     FromDbEventError(#[from] FromDbEventError),
@@ -180,6 +183,9 @@ pub enum Error {
 
     #[error("Inserting event with the same id")]
     DuplicateEvent,
+
+    #[error("Relay not found: {0}")]
+    RelayNotFound(String),
 }
 
 #[derive(Debug, Error)]

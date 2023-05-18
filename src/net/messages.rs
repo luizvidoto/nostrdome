@@ -4,6 +4,7 @@ use nostr_sdk::secp256k1::XOnlyPublicKey;
 
 use crate::{
     db::{DbContact, DbEvent, DbRelay},
+    types::ChatMessage,
     views::login::BasicProfile,
 };
 
@@ -18,7 +19,8 @@ pub enum Message {
     QueryFirstLogin,
     StoreFirstLogin,
     PrepareClient,
-    FetchRelayResponses(i64),
+    FetchRelayResponses(ChatMessage),
+    FetchRelayResponsesUserProfile,
     FetchMessages(DbContact),
     FetchContacts,
     AddContact(DbContact),

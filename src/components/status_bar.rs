@@ -4,6 +4,7 @@ use iced::Subscription;
 use iced::{alignment, Command, Length};
 use nostr_sdk::RelayStatus;
 
+use crate::consts::NOSTRTALK_VERSION;
 use crate::icon::signal_icon;
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
@@ -186,5 +187,4 @@ impl StatusBar {
     }
 }
 
-const NOSTRTALK_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const STATUS_BAR_HEIGHT: f32 = 20.0;

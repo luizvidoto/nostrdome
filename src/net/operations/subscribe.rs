@@ -93,6 +93,7 @@ pub async fn send_event_to_relays(
         let status = relay.status().await;
         if let RelayStatus::Connected = status {
             let msg = ClientMessage::Event(Box::new(ns_event.clone()));
+            tracing::info!("To relay: {}", &url);
             match relay.send_msg(msg, false).await {
                 Ok(_) => {
                     if let Err(e) = channel.try_send(NostrOutput::Ok(Event::SentEventTo((
