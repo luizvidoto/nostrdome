@@ -278,9 +278,9 @@ impl Application for App {
                 Event::Error(e) => {
                     tracing::error!("{}", e);
                 }
-                Event::SentEventTo((url, event_hash)) => {
-                    tracing::info!("Sent to: {}. ID: {}", url, event_hash);
-                }
+                // Event::SentEventTo((url, event_hash)) => {
+                //     tracing::info!("Sent to: {}. ID: {}", url, event_hash);
+                // }
                 Event::FinishedPreparing => {
                     tracing::info!("Finished preparing client");
                     match &mut self.state {

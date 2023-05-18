@@ -5,7 +5,7 @@ use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
 use crate::{
     error::{Error, FromDbEventError},
-    utils::{event_tt_to_naive, handle_decode_error, millis_to_naive_or_err, url_or_err},
+    utils::{handle_decode_error, millis_to_naive_or_err, ns_event_to_naive, url_or_err},
 };
 use nostr_sdk::{
     secp256k1::{schnorr::Signature, XOnlyPublicKey},
@@ -58,7 +58,7 @@ impl DbEvent {
             // the difference between remote creation and confirmed at
             (
                 Some(Utc::now().naive_utc()),
-                Some(event_tt_to_naive(event.created_at)?),
+                Some(ns_event_to_naive(event.created_at)?),
                 Some(relay_url),
             )
         } else {
@@ -175,6 +175,7 @@ impl DbEvent {
             .await?)
     }
 
+    // maybe create insert confirmed and insert pending?
     pub async fn insert(pool: &SqlitePool, db_event: &DbEvent) -> Result<(i64, u8), Error> {
         tracing::debug!("inserting event {:?}", db_event);
         let sql = r#"

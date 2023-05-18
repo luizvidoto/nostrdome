@@ -1,8 +1,9 @@
 use iced::widget::{button, column, container, row, text, text_input, tooltip, Space};
-use iced::{alignment, Length};
+use iced::{Alignment, Length};
 
 use crate::components::{common_scrollable, contact_row, ContactRow};
-use crate::icon::{import_icon, plus_icon, refresh_icon, to_cloud_icon};
+use crate::db::{DbRelay, DbRelayResponse};
+use crate::icon::{import_icon, plus_icon, refresh_icon, satellite_icon, to_cloud_icon};
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
 use crate::style;
@@ -22,24 +23,46 @@ pub enum Message {
     SearchContactInputChange(String),
     RefreshContacts,
     SendContactList,
+    RelaysConfirmationPress(Option<ContactsRelaysResponse>),
+}
+
+#[derive(Debug, Clone)]
+pub struct ContactsRelaysResponse {
+    pub confirmed_relays: Vec<DbRelayResponse>,
+    pub all_relays: Vec<DbRelay>,
+}
+impl ContactsRelaysResponse {
+    fn new(
+        confirmed_relays: Vec<DbRelayResponse>,
+        all_relays: Vec<DbRelay>,
+    ) -> ContactsRelaysResponse {
+        Self {
+            confirmed_relays,
+            all_relays,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct State {
     contacts: Vec<DbContact>,
     search_contact_input: String,
+    relays_response: Option<ContactsRelaysResponse>,
 }
 impl State {
-    pub fn new(db_conn: &mut BackEndConnection) -> Self {
-        db_conn.send(net::Message::FetchContacts);
+    pub fn new(conn: &mut BackEndConnection) -> Self {
+        conn.send(net::Message::FetchContacts);
+        conn.send(net::Message::FetchRelayResponsesContactList);
         Self {
             contacts: vec![],
             search_contact_input: "".into(),
+            relays_response: None,
         }
     }
 
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Option<Message> {
         match message {
+            Message::RelaysConfirmationPress(_) => (),
             Message::SendContactList => {
                 conn.send(net::Message::SendContactListToRelays);
             }
@@ -68,6 +91,15 @@ impl State {
                 conn.send(net::Message::DeleteContact(contact));
             }
             Message::BackEndEvent(event) => match event {
+                Event::ConfirmedContactList(_) => {
+                    conn.send(net::Message::FetchRelayResponsesContactList);
+                }
+                Event::GotRelayResponsesContactList {
+                    responses,
+                    all_relays,
+                } => {
+                    self.relays_response = Some(ContactsRelaysResponse::new(responses, all_relays));
+                }
                 Event::GotContacts(db_contacts) => {
                     self.contacts = db_contacts;
                 }
@@ -94,8 +126,48 @@ impl State {
         None
     }
 
+    fn make_relays_response<'a>(&self) -> Element<'a, Message> {
+        if let Some(response) = &self.relays_response {
+            let resp_txt = format!(
+                "{}/{}",
+                &response.confirmed_relays.len(),
+                &response.all_relays.len()
+            );
+            tooltip(
+                button(
+                    row![
+                        text(&resp_txt).size(18).style(style::Text::Placeholder),
+                        satellite_icon().size(16).style(style::Text::Placeholder)
+                    ]
+                    .spacing(5),
+                )
+                .on_press(Message::RelaysConfirmationPress(
+                    self.relays_response.to_owned(),
+                ))
+                .style(style::Button::MenuBtn)
+                .padding(5),
+                "Relays Confirmation",
+                tooltip::Position::Left,
+            )
+            .style(style::Container::TooltipBg)
+            .into()
+        } else {
+            text("Contact list not confirmed on any relays")
+                .size(18)
+                .style(style::Text::Placeholder)
+                .into()
+        }
+    }
+
     pub fn view(&self) -> Element<Message> {
         let title = title("Contacts");
+        let title_group = row![
+            title,
+            Space::with_width(Length::Fill),
+            self.make_relays_response()
+        ]
+        .align_items(Alignment::Center)
+        .spacing(10);
 
         let search_contact = text_input("Search", &self.search_contact_input)
             .on_input(Message::SearchContactInputChange)
@@ -104,7 +176,7 @@ impl State {
         let add_contact_btn = tooltip(
             button(
                 row![text("Add").size(18), plus_icon().size(14)]
-                    .align_items(alignment::Alignment::Center)
+                    .align_items(Alignment::Center)
                     .spacing(2),
             )
             .padding(5)
@@ -157,7 +229,7 @@ impl State {
             })
             .into();
         let contact_list_scroller = column![ContactRow::header(), common_scrollable(contact_list)];
-        let content: Element<_> = column![title, utils_row, contact_list_scroller]
+        let content: Element<_> = column![title_group, utils_row, contact_list_scroller]
             .spacing(10)
             .width(Length::Fill)
             .height(Length::Fill)

@@ -33,6 +33,7 @@ pub(crate) const BITCOIN_ADDRESS: &'static str = "bc1qr7pavwv0m05gz7x92keuwyqmr6
 pub(crate) const LIGHTNING_ADDRESS: &'static str =
     "LNURL1DP68GURN8GHJ7EM9W3SKCCNE9E3K7MF0D3H82UNVWQHKU6TRDD5XUARKHTW6ZP";
 pub(crate) const TT_LINK: &'static str = "https://twitter.com/nickhntv";
+pub(crate) const NOSTR_RESOURCES_LINK: &'static str = "https://nostr-resources.com";
 pub(crate) const RELAY_SUGGESTIONS: [&'static str; 16] = [
     // "ws://192.168.15.151:8080",
     // "ws://192.168.15.119:8080",

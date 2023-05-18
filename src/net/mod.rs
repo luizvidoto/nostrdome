@@ -139,6 +139,10 @@ impl BackendState {
                     process_async_with_event(fetch_relay_responses_user_profile(pool, &self.keys))
                         .await
                 }
+                Message::FetchRelayResponsesContactList => {
+                    process_async_with_event(fetch_relay_responses_contact_list(pool, &self.keys))
+                        .await
+                }
                 Message::FetchLastChatMessage(db_contact) => {
                     process_async_with_event(handle_fetch_last_chat_msg(
                         pool, &self.keys, db_contact,
@@ -211,6 +215,13 @@ impl BackendState {
                 Message::FetchMessages(contact) => {
                     process_async_with_event(fetch_and_decrypt_chat(&self.keys, pool, contact))
                         .await
+                }
+                Message::GetDbEventWithHash(event_hash) => {
+                    match DbEvent::fetch_one(pool, &event_hash).await {
+                        Ok(Some(db_event)) => Event::GotDbEvent(db_event),
+                        Ok(None) => Event::None,
+                        Err(e) => Event::Error(e.to_string()),
+                    }
                 }
                 // --------- NOSTR MESSAGES ------------
                 Message::RequestEventsOf(db_relay) => {
@@ -653,6 +664,24 @@ async fn fetch_relay_responses_user_profile(
         let all_relays = DbRelay::fetch(pool).await?;
         let responses = DbRelayResponse::fetch_by_event(pool, profile_event.event_id()?).await?;
         return Ok(Event::GotRelayResponsesUserProfile {
+            responses,
+            all_relays,
+        });
+    }
+    Ok(Event::None)
+}
+
+async fn fetch_relay_responses_contact_list(
+    pool: &SqlitePool,
+    keys: &Keys,
+) -> Result<Event, Error> {
+    if let Some(profile_event) =
+        DbEvent::fetch_last_kind_pubkey(pool, nostr_sdk::Kind::ContactList, &keys.public_key())
+            .await?
+    {
+        let all_relays = DbRelay::fetch(pool).await?;
+        let responses = DbRelayResponse::fetch_by_event(pool, profile_event.event_id()?).await?;
+        return Ok(Event::GotRelayResponsesContactList {
             responses,
             all_relays,
         });

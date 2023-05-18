@@ -23,7 +23,6 @@ pub async fn handle_dm(
     // insert into database
     let (row_id, rows_changed) = DbEvent::insert(pool, &db_event).await?;
     db_event = db_event.with_id(row_id);
-
     relay_response_ok(pool, relay_url, &db_event).await?;
 
     if rows_changed == 0 {

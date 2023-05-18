@@ -1,11 +1,11 @@
 use iced::alignment::Horizontal;
-use iced::widget::{button, column, container, image, row, text};
+use iced::widget::{button, column, container, image, row, text, Space};
 use iced::{Alignment, Length, Subscription};
 use iced_aw::{Card, Modal};
 
 use crate::components::text_input_group::TextInputGroup;
 use crate::components::{common_scrollable, inform_card, relay_row, RelayRow};
-use crate::consts::{RELAYS_IMAGE, RELAY_SUGGESTIONS, WELCOME_IMAGE};
+use crate::consts::{NOSTR_RESOURCES_LINK, RELAYS_IMAGE, RELAY_SUGGESTIONS, WELCOME_IMAGE};
 use crate::db::DbRelay;
 use crate::icon::{regular_circle_icon, solid_circle_icon};
 use crate::net::{self, BackEndConnection};
@@ -32,6 +32,8 @@ pub enum Message {
     AddRelaySubmit(String),
     AddRelayCancelButtonPressed,
     CloseAddRelayModal,
+    OpenLink(&'static str),
+    AddAllRelays,
 }
 
 #[derive(Debug, Clone)]
@@ -215,6 +217,22 @@ impl StepView {
             StepView::Welcome => {
                 let title_1 = "NostrTalk";
                 let text_1a = "Secure, encrypted chats on the NOSTR network";
+                let text_2a = "But what is NOSTR?";
+                let text_2b = "It is the simplest open protocol that is able to create a censorship-resistant global “social” network once and for all";
+                let text_3a =
+                    "- It doesn’t rely on any trusted central server, hence it is resilient.";
+                let text_3b =
+                    "- It is based on cryptographic keys and signatures, so it is tamperproof.";
+                let text_3c = "- It does not rely on P2P techniques, therefore it works.";
+
+                let text_link = "Find more at: ";
+                let nostr_link = button(text(NOSTR_RESOURCES_LINK).size(TEXT_SIZE_SMALL))
+                    .padding(0)
+                    .style(style::Button::Link)
+                    .on_press(Message::OpenLink(NOSTR_RESOURCES_LINK));
+                let nostr_link_group = row![text(text_link).size(TEXT_SIZE_SMALL), nostr_link]
+                    .align_items(Alignment::Center);
+
                 let content = column![
                     title(title_1)
                         .height(Length::FillPortion(1))
@@ -226,11 +244,25 @@ impl StepView {
                             container(welcome_image)
                                 .max_width(WELCOME_IMAGE_MAX_WIDTH)
                                 .height(Length::Fill),
-                            container(text(text_1a).size(WELCOME_TEXT_SIZE))
-                                .width(Length::Fixed(WELCOME_TEXT_WIDTH))
-                                .height(Length::Fill)
-                                .center_x()
-                                .center_y(),
+                            container(
+                                column![
+                                    text(text_1a).size(TEXT_SIZE_BIG),
+                                    text(text_2a).size(TEXT_SIZE_BIG),
+                                    text(text_2b).size(TEXT_SIZE_LARGE),
+                                    column![
+                                        text(text_3a).size(TEXT_SIZE_MEDIUM),
+                                        text(text_3b).size(TEXT_SIZE_MEDIUM),
+                                        text(text_3c).size(TEXT_SIZE_MEDIUM),
+                                    ]
+                                    .spacing(5),
+                                    nostr_link_group
+                                ]
+                                .spacing(10)
+                            )
+                            .width(TEXT_WIDTH)
+                            .height(Length::Fill)
+                            .center_x()
+                            .center_y(),
                         ]
                         .spacing(20)
                     )
@@ -296,6 +328,11 @@ impl StepView {
                 .width(Length::Fill)
                 .height(Length::Fill);
 
+                let add_all_btn = button("Add All")
+                    .padding(5)
+                    .style(style::Button::Primary)
+                    .on_press(Message::AddAllRelays);
+
                 let content = column![
                     title(title_2)
                         .height(Length::FillPortion(1))
@@ -309,14 +346,21 @@ impl StepView {
                                 .height(Length::Fill),
                             container(
                                 column![
-                                    container(text(text_2).size(WELCOME_TEXT_SIZE))
-                                        .width(Length::Fill)
-                                        .center_x(),
+                                    container(
+                                        row![
+                                            text(text_2).size(TEXT_SIZE_LARGE),
+                                            Space::with_width(Length::Fill),
+                                            add_all_btn
+                                        ]
+                                        .align_items(Alignment::Center)
+                                    )
+                                    .padding(10)
+                                    .width(Length::Fill),
                                     relays
                                 ]
                                 .spacing(10)
                             )
-                            .width(Length::Fixed(WELCOME_TEXT_WIDTH))
+                            .width(Length::Fixed(TEXT_WIDTH))
                             .height(Length::Fill),
                         ]
                         .spacing(20)
@@ -428,6 +472,11 @@ impl State {
 
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
         match message {
+            Message::OpenLink(url) => {
+                if let Err(e) = webbrowser::open(url) {
+                    tracing::error!("Failed to open link: {}", e);
+                }
+            }
             Message::RelayMessage(msg) => {
                 if let StepView::Relays { relays_added, .. } = &mut self.step_view {
                     if let Some(row) = relays_added.iter_mut().find(|r| r.id == msg.from) {
@@ -443,6 +492,16 @@ impl State {
                 if let StepView::Relays { .. } = &mut self.step_view {
                     let db_relay = DbRelay::new(relay_url);
                     conn.send(net::Message::AddRelay(db_relay));
+                }
+            }
+            Message::AddAllRelays => {
+                if let StepView::Relays { .. } = &mut self.step_view {
+                    for relay_url in RELAY_SUGGESTIONS {
+                        if let Ok(relay_url) = nostr_sdk::Url::parse(relay_url) {
+                            let db_relay = DbRelay::new(relay_url);
+                            conn.send(net::Message::AddRelay(db_relay));
+                        }
+                    }
                 }
             }
             Message::AddOtherPress => {
@@ -643,6 +702,9 @@ fn _generate_random_ipv4() -> Ipv4Addr {
 }
 
 const WELCOME_IMAGE_MAX_WIDTH: f32 = 300.0;
-const WELCOME_TEXT_SIZE: u16 = 24;
-const WELCOME_TEXT_WIDTH: f32 = 400.0;
+const TEXT_SIZE_BIG: u16 = 28;
+const TEXT_SIZE_LARGE: u16 = 24;
+const TEXT_SIZE_MEDIUM: u16 = 20;
+const TEXT_SIZE_SMALL: u16 = 16;
+const TEXT_WIDTH: f32 = 400.0;
 const CARD_MAX_WIDTH: f32 = 300.0;

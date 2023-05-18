@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use chrono::{Datelike, NaiveDateTime};
 use iced::clipboard;
 use iced::subscription::Subscription;
-use iced::widget::{button, column, container, image, row, scrollable, text, text_input, Image};
+use iced::widget::{
+    button, column, container, image, row, scrollable, text, text_input, Image, Space,
+};
 use iced::Size;
 use iced::{alignment, Alignment, Command, Length};
 use iced_aw::{Card, Modal};
@@ -13,7 +15,9 @@ use crate::components::text::title;
 use crate::components::{common_scrollable, contact_card, status_bar, Responsive, StatusBar};
 use crate::consts::{DEFAULT_PROFILE_IMAGE_SMALL, YMD_FORMAT};
 use crate::db::{DbContact, DbRelay, DbRelayResponse};
-use crate::icon::{file_icon_regular, menu_bars_icon, send_icon};
+use crate::icon::{
+    copy_icon, file_icon_regular, menu_bars_icon, reply_icon, satellite_icon, send_icon,
+};
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
 use crate::style;
@@ -22,7 +26,7 @@ use crate::utils::{contact_matches_search_selected_name, from_naive_utc_to_local
 use crate::widget::{Button, Container, Element};
 use once_cell::sync::Lazy;
 
-use super::modal::{basic_contact, ContactDetails};
+use super::modal::{basic_contact, relays_confirmation, ContactDetails, RelaysConfirmation};
 
 // static CONTACTS_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
 static CHAT_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
@@ -39,6 +43,7 @@ pub enum ModalState {
         profile: nostr_sdk::Metadata,
         profile_image_handle: image::Handle,
     },
+    RelaysConfirmation(RelaysConfirmation),
 }
 impl ModalState {
     pub fn basic_profile(contact: &DbContact, conn: &mut BackEndConnection) -> Self {
@@ -47,6 +52,9 @@ impl ModalState {
     pub fn view<'a>(&'a self, underlay: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
         let view: Element<_> = match self {
             ModalState::Off => underlay.into(),
+            ModalState::RelaysConfirmation(state) => state
+                .view(underlay)
+                .map(|m| Message::RelaysConfirmationMessage(Box::new(m))),
             ModalState::BasicProfile(state) => state
                 .view(underlay)
                 .map(|m| Message::BasicContactMessage(Box::new(m))),
@@ -121,14 +129,21 @@ impl ModalState {
             profile_image_handle,
         }
     }
+
+    fn backend_event(&mut self, event: Event, conn: &mut BackEndConnection) {
+        if let ModalState::BasicProfile(state) = self {
+            state.backend_event(event, conn)
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
     CopyPressed,
     ReplyPressed,
-    RelaysPressed,
+    RelaysConfirmationPress,
     BasicContactMessage(Box<basic_contact::CMessage<Message>>),
+    RelaysConfirmationMessage(Box<relays_confirmation::CMessage<Message>>),
     StatusBarMessage(status_bar::Message),
     OnVerResize(u16),
     GoToChannelsPress,
@@ -307,6 +322,8 @@ impl State {
         conn: &mut BackEndConnection,
     ) -> Command<Message> {
         let _command = self.status_bar.backend_event(event.clone(), conn);
+        self.modal_state.backend_event(event.clone(), conn);
+
         let command = match event {
             Event::GotContacts(db_contacts) => {
                 self.contacts = db_contacts
@@ -485,9 +502,15 @@ impl State {
             Message::CloseCtxMenu => {
                 self.hide_context_menu = true;
             }
-            Message::RelaysPressed => {
-                tracing::info!("Relays Pressed");
+            Message::RelaysConfirmationPress => {
+                // already have the relays responses
                 self.hide_context_menu = true;
+                if let Some(resp) = &self.last_relays_response {
+                    self.modal_state = ModalState::RelaysConfirmation(RelaysConfirmation::new(
+                        &resp.confirmed_relays,
+                        &resp.all_relays,
+                    ));
+                }
             }
             Message::CloseModal => {
                 command = self.close_modal();
@@ -495,6 +518,22 @@ impl State {
             Message::OpenContactProfile => {
                 if let Some(contact) = &self.active_contact {
                     self.modal_state = ModalState::basic_profile(contact, conn);
+                }
+            }
+            Message::RelaysConfirmationMessage(modal_msg) => {
+                if let ModalState::RelaysConfirmation(state) = &mut self.modal_state {
+                    match *modal_msg {
+                        relays_confirmation::CMessage::UnderlayMessage(message) => {
+                            return self.update(message, conn);
+                        }
+                        other => {
+                            let (cmd, close_modal) = state.update(other, conn);
+                            if close_modal {
+                                return self.close_modal();
+                            }
+                            command = cmd.map(|m| Message::RelaysConfirmationMessage(Box::new(m)));
+                        }
+                    }
                 }
             }
             Message::BasicContactMessage(modal_msg) => {
@@ -616,8 +655,8 @@ impl State {
         }
 
         // check height for collision
-        if window_h - (self.context_menu_position.y + CONTEXT_MENU_HEIGHT) < 0.0 {
-            self.context_menu_position.y -= CONTEXT_MENU_HEIGHT;
+        if window_h - (self.context_menu_position.y + ctx_menu_height()) < 0.0 {
+            self.context_menu_position.y -= ctx_menu_height();
         }
 
         if let Some(div_pos) = self.ver_divider_position {
@@ -745,37 +784,77 @@ fn header_action_buttons<'a>() -> Element<'a, Message> {
     .into()
 }
 
+fn ctx_menu_height() -> f32 {
+    let n = 3.0;
+    let padding = 0.0;
+    let ctx_elements_h = (CTX_BUTTON_HEIGHT + padding * 2.0) * n;
+
+    let times = n - 1.0;
+    let spacing = 5.0;
+    let ctx_spacing_h = times * spacing;
+
+    let menu_padding = 10.0;
+
+    ctx_elements_h + ctx_spacing_h + menu_padding
+}
+
 fn make_context_menu<'a>(response: &Option<RelaysResponse>) -> Element<'a, Message> {
-    let copy_btn = button("Copy")
-        .width(Length::Fill)
-        .on_press(Message::CopyPressed)
-        .style(style::Button::ContextMenuButton)
-        .padding(5);
-    let reply_btn = button("Reply")
-        .width(Length::Fill)
-        // .on_press(Message::ReplyPressed)
-        .style(style::Button::ContextMenuButton)
-        .padding(5);
+    let copy_btn = button(
+        row![
+            text("Copy").size(18),
+            Space::with_width(Length::Fill),
+            copy_icon().size(16)
+        ]
+        .align_items(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .height(CTX_BUTTON_HEIGHT)
+    .on_press(Message::CopyPressed)
+    .style(style::Button::ContextMenuButton);
+    let reply_btn = button(
+        row![
+            text("Reply").size(18),
+            Space::with_width(Length::Fill),
+            reply_icon().size(16)
+        ]
+        .align_items(Alignment::Center),
+    )
+    .height(CTX_BUTTON_HEIGHT)
+    .width(Length::Fill)
+    // .on_press(Message::ReplyPressed)
+    .style(style::Button::ContextMenuButton);
     let relays_btn: Element<_> = if let Some(response) = response {
         let resp_txt = format!(
-            "Relays {}/{}",
+            "{}/{}",
             &response.confirmed_relays.len(),
             &response.all_relays.len()
         );
-        button(text(&resp_txt))
-            .width(Length::Fill)
-            .on_press(Message::RelaysPressed)
-            .style(style::Button::ContextMenuButton)
-            .padding(5)
-            .into()
+        button(
+            row![
+                text("Relays").size(18),
+                Space::with_width(Length::Fill),
+                text(&resp_txt).size(18),
+                satellite_icon().size(16)
+            ]
+            .align_items(Alignment::Center)
+            .spacing(2),
+        )
+        .width(Length::Fill)
+        .height(CTX_BUTTON_HEIGHT)
+        .on_press(Message::RelaysConfirmationPress)
+        .style(style::Button::ContextMenuButton)
+        .into()
     } else {
-        text("Relays ...").into()
+        container(text("No confirmation"))
+            .width(Length::Fill)
+            .height(CTX_BUTTON_HEIGHT)
+            .into()
     };
 
     let buttons = column![copy_btn, reply_btn, relays_btn].spacing(5);
 
     container(buttons)
-        .height(CONTEXT_MENU_HEIGHT)
+        .height(ctx_menu_height())
         .width(CONTEXT_MENU_WIDTH)
         .style(style::Container::ContextMenu)
         .padding(5)
@@ -806,5 +885,5 @@ const PIC_WIDTH: u16 = 50;
 const NAVBAR_HEIGHT: f32 = 50.0;
 const CHAT_INPUT_HEIGHT: f32 = 50.0;
 const MODAL_WIDTH: f32 = 400.0;
-const CONTEXT_MENU_WIDTH: f32 = 100.0;
-const CONTEXT_MENU_HEIGHT: f32 = 150.0;
+const CONTEXT_MENU_WIDTH: f32 = 130.0;
+const CTX_BUTTON_HEIGHT: f32 = 30.0;

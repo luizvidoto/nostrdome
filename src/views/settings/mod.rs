@@ -1,7 +1,6 @@
 use iced::widget::{button, column, container, row, Space};
 use iced::{Command, Length, Subscription};
 
-use crate::db::DbContact;
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
 use crate::style;
@@ -9,8 +8,8 @@ use crate::style;
 use crate::widget::{Button, Element};
 
 use super::modal::{
-    basic_contact, import_contact_list, profile_view, ContactDetails, ImportContactList,
-    ProfileView,
+    basic_contact, import_contact_list, relays_confirmation, ContactDetails, ImportContactList,
+    RelaysConfirmation,
 };
 
 mod about;
@@ -31,7 +30,7 @@ pub enum Message {
     // Modals
     ContactDetailsMessage(Box<basic_contact::CMessage<Message>>),
     ImportContactListMessage(Box<import_contact_list::CMessage<Message>>),
-    ProfileViewMessage(Box<profile_view::CMessage<Message>>),
+    RelaysConfirmationMessage(Box<relays_confirmation::CMessage<Message>>),
     // Menu
     MenuAccountPress,
     MenuAppearancePress,
@@ -167,7 +166,7 @@ impl Settings {
                     .map(Message::AboutMessage)
             }
             MenuState::Account { state } => {
-                state.update(account::Message::BackEndEvent(event), conn)
+                let _ = state.update(account::Message::BackEndEvent(event), conn);
             }
             MenuState::Appearance { state } => {
                 state.update(appearance::Message::BackEndEvent(event))
@@ -194,7 +193,18 @@ impl Settings {
         match message {
             Message::AccountMessage(msg) => {
                 if let MenuState::Account { state } = &mut self.menu_state {
-                    state.update(msg, conn);
+                    match msg {
+                        account::Message::RelaysConfirmationPress(acc_resp) => {
+                            if let Some(acc_resp) = acc_resp {
+                                self.modal_state =
+                                    ModalState::RelaysConfirmation(RelaysConfirmation::new(
+                                        &acc_resp.confirmed_relays,
+                                        &acc_resp.all_relays,
+                                    ))
+                            }
+                        }
+                        other => state.update(other, conn),
+                    }
                 }
             }
             Message::AboutMessage(msg) => {
@@ -256,6 +266,14 @@ impl Settings {
         // TODO: make it better
         if let MenuState::Contacts { state } = &mut self.menu_state {
             match msg {
+                contacts::Message::RelaysConfirmationPress(ct_resp) => {
+                    if let Some(ct_resp) = ct_resp {
+                        self.modal_state = ModalState::RelaysConfirmation(RelaysConfirmation::new(
+                            &ct_resp.confirmed_relays,
+                            &ct_resp.all_relays,
+                        ))
+                    }
+                }
                 contacts::Message::OpenAddContactModal => {
                     self.modal_state = ModalState::ContactDetails(ContactDetails::new());
                 }
@@ -270,7 +288,9 @@ impl Settings {
                                     ModalState::ContactDetails(ContactDetails::edit(&contact, conn))
                             }
                             contacts::Message::OpenProfileModal(contact) => {
-                                self.modal_state = ModalState::profile(contact);
+                                self.modal_state = ModalState::ContactDetails(
+                                    ContactDetails::viewer(&contact, conn),
+                                )
                             }
                             _ => (),
                         }
@@ -345,7 +365,7 @@ impl Settings {
 
 #[derive(Debug, Clone)]
 enum ModalState {
-    Profile(ProfileView),
+    RelaysConfirmation(RelaysConfirmation),
     ContactDetails(ContactDetails),
     ImportList(ImportContactList),
     Off,
@@ -356,9 +376,6 @@ impl ModalState {
         match self {
             _ => Subscription::none(),
         }
-    }
-    fn profile(db_contact: DbContact) -> Self {
-        Self::Profile(ProfileView::new(db_contact))
     }
     pub fn import_contacts() -> Self {
         Self::ImportList(ImportContactList::new())
@@ -371,6 +388,22 @@ impl ModalState {
                 println!("Send contacts to all relays");
             }
 
+            Message::RelaysConfirmationMessage(modal_msg) => {
+                if let ModalState::RelaysConfirmation(state) = self {
+                    match *modal_msg {
+                        relays_confirmation::CMessage::UnderlayMessage(message) => {
+                            return self.update(message, conn);
+                        }
+                        other => {
+                            let (cmd, close_modal) = state.update(other, conn);
+                            if close_modal {
+                                *self = ModalState::Off;
+                            }
+                            command = cmd.map(|m| Message::RelaysConfirmationMessage(Box::new(m)));
+                        }
+                    }
+                }
+            }
             Message::ContactDetailsMessage(modal_msg) => {
                 if let ModalState::ContactDetails(state) = self {
                     match *modal_msg {
@@ -402,21 +435,6 @@ impl ModalState {
                     }
                 }
             }
-            Message::ProfileViewMessage(modal_msg) => {
-                if let ModalState::Profile(state) = self {
-                    match *modal_msg {
-                        profile_view::CMessage::UnderlayMessage(message) => {
-                            return self.update(message, conn);
-                        }
-                        other => {
-                            let close_modal = state.update(other, conn);
-                            if close_modal {
-                                *self = ModalState::Off
-                            }
-                        }
-                    }
-                }
-            }
             _ => (),
         }
 
@@ -425,9 +443,9 @@ impl ModalState {
 
     pub fn view<'a>(&'a self, underlay: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
         let view: Element<_> = match self {
-            ModalState::Profile(state) => state
+            ModalState::RelaysConfirmation(state) => state
                 .view(underlay)
-                .map(|m| Message::ProfileViewMessage(Box::new(m))),
+                .map(|m| Message::RelaysConfirmationMessage(Box::new(m))),
             ModalState::ContactDetails(state) => state
                 .view(underlay)
                 .map(|m| Message::ContactDetailsMessage(Box::new(m))),

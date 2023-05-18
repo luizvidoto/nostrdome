@@ -9,4 +9,4 @@ CREATE TABLE IF NOT EXISTS relay_response (
 );
 
 -- Relay Responses Indexes
--- CREATE UNIQUE INDEX IF NOT EXISTS event_hash_relay_url_index ON relay_response(event_hash, relay_url);
+CREATE UNIQUE INDEX IF NOT EXISTS event_hash_relay_url_index ON relay_response(event_hash, relay_url);

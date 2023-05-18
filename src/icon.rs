@@ -129,6 +129,10 @@ pub fn copy_icon() -> Text<'static> {
     solid_icon('\u{F0C5}')
 }
 
+pub fn reply_icon() -> Text<'static> {
+    solid_icon('\u{F3E5}')
+}
+
 // Fonts
 const SOLID_ICONS: Font = Font::External {
     name: "FA_Solid_Icons",

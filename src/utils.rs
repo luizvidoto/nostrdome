@@ -84,9 +84,12 @@ pub fn millis_to_naive(millis: i64) -> Result<NaiveDateTime, Error> {
     NaiveDateTime::from_timestamp_opt(ts_secs, ts_ns as u32).ok_or(Error::InvalidTimestamp(millis))
 }
 
-pub fn event_tt_to_naive(timestamp: nostr_sdk::Timestamp) -> Result<NaiveDateTime, Error> {
-    let as_milli = timestamp.as_i64() * 1000;
-    Ok(millis_to_naive(as_milli)?)
+pub fn ns_event_to_millis(created_at: nostr_sdk::Timestamp) -> i64 {
+    created_at.as_i64() * 1000
+}
+
+pub fn ns_event_to_naive(created_at: nostr_sdk::Timestamp) -> Result<NaiveDateTime, Error> {
+    Ok(millis_to_naive(ns_event_to_millis(created_at))?)
 }
 
 pub fn naive_to_event_tt(naive_utc: NaiveDateTime) -> nostr_sdk::Timestamp {
@@ -135,6 +138,10 @@ pub fn contact_matches_search_selected_name(contact: &DbContact, search: &str) -
         .contains(&search.to_lowercase())
 }
 
+pub fn url_matches_search(url: &Url, search: &str) -> bool {
+    url.as_str().to_lowercase().contains(&search.to_lowercase())
+}
+
 pub fn from_naive_utc_to_local(naive_utc: NaiveDateTime) -> DateTime<Local> {
     DateTime::from_utc(naive_utc, Local::now().offset().fix())
 }
@@ -178,8 +185,6 @@ pub fn qr_code_handle(code: &str) -> Result<Handle, Error> {
         }
         Ok(code) => code,
     };
-
-    tracing::info!("QR code created");
 
     // Render the bits into an image.
     let image = code.render::<Luma<u8>>().build();

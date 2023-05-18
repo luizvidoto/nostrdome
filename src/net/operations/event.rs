@@ -172,7 +172,7 @@ pub async fn on_relay_message(
                 });
             }
 
-            tracing::info!("Relay message: Ok");
+            tracing::debug!("Relay message: Ok");
             let db_event = confirm_event(pool, event_hash, relay_url).await?;
             BackEndInput::RelayConfirmation(db_event)
         }

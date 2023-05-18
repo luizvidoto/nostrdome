@@ -2,10 +2,12 @@ use std::fmt::Debug;
 
 use crate::components::common_scrollable;
 use crate::components::text_input_group::TextInputGroup;
-use crate::consts::{MEDIUM_PROFILE_PIC_HEIGHT, MEDIUM_PROFILE_PIC_WIDTH};
-use crate::db::{DbContact, DbContactError};
+use crate::consts::{MEDIUM_PROFILE_PIC_HEIGHT, MEDIUM_PROFILE_PIC_WIDTH, YMD_FORMAT};
+use crate::db::{DbContact, DbContactError, DbEvent};
 use crate::icon::{copy_icon, edit_icon};
+use crate::net::events::Event;
 use crate::net::{self, BackEndConnection, ImageSize};
+use crate::utils::from_naive_utc_to_local;
 use iced::widget::{button, column, container, image, row, text, tooltip, Space};
 use iced::{alignment, clipboard};
 use iced::{Alignment, Command, Length};
@@ -42,6 +44,7 @@ pub struct ContactDetails {
     is_pub_invalid: bool,
     is_relay_invalid: bool,
     profile_img_handle: Option<image::Handle>,
+    db_event: Option<DbEvent>,
 }
 impl ContactDetails {
     pub(crate) fn new() -> Self {
@@ -54,6 +57,7 @@ impl ContactDetails {
             is_pub_invalid: false,
             is_relay_invalid: false,
             profile_img_handle: None,
+            db_event: None,
         }
     }
     pub(crate) fn edit(db_contact: &DbContact, conn: &mut BackEndConnection) -> Self {
@@ -69,9 +73,13 @@ impl ContactDetails {
             is_pub_invalid: false,
             is_relay_invalid: false,
             profile_img_handle: Some(db_contact.profile_image(ImageSize::Medium, conn)),
+            db_event: None,
         }
     }
     pub(crate) fn viewer(db_contact: &DbContact, conn: &mut BackEndConnection) -> Self {
+        if let Some(cache) = db_contact.get_profile_cache() {
+            conn.send(net::Message::GetDbEventWithHash(cache.event_hash));
+        }
         let mut details = Self::edit(db_contact, conn);
         details.mode = Mode::View;
         details
@@ -203,11 +211,54 @@ impl ContactDetails {
                                     .style(style::Container::ChatSearchCopy),
                             ]
                             .spacing(2);
+
+                            let last_update_txt: Element<_> = if let Some(db_event) = &self.db_event
+                            {
+                                if let Some(last_update) = db_event.remote_creation() {
+                                    text(&from_naive_utc_to_local(last_update).format(YMD_FORMAT))
+                                        .into()
+                                } else {
+                                    text("No last update").into()
+                                }
+                            } else {
+                                text("No last update").into()
+                            };
+
+                            let last_update_group = column![
+                                text("Last Update"),
+                                container(last_update_txt)
+                                    .padding([2, 8])
+                                    .style(style::Container::ChatSearchCopy),
+                            ]
+                            .spacing(2);
+
+                            let rcv_from_txt: Element<_> = if let Some(db_event) = &self.db_event {
+                                if let Some(url) = &db_event.relay_url {
+                                    text(url).into()
+                                } else {
+                                    text("No relay").into()
+                                }
+                            } else {
+                                text("No relay").into()
+                            };
+                            let recv_from_relay_group = column![
+                                text("Received From"),
+                                container(rcv_from_txt)
+                                    .padding([2, 8])
+                                    .style(style::Container::ChatSearchCopy),
+                            ]
+                            .spacing(2);
+
                             let image_row = row![
                                 image_container,
-                                column![profile_name_group, profile_username_group,]
-                                    .padding([0, 10])
-                                    .spacing(10)
+                                column![
+                                    profile_name_group,
+                                    profile_username_group,
+                                    last_update_group,
+                                    recv_from_relay_group
+                                ]
+                                .padding([0, 10])
+                                .spacing(10)
                             ];
                             let divider = container(Rule::horizontal(2))
                                 .padding(10)
@@ -257,6 +308,13 @@ impl ContactDetails {
         .backdrop(CMessage::CloseModal)
         .on_esc(CMessage::CloseModal)
         .into()
+    }
+
+    pub fn backend_event(&mut self, event: Event, conn: &mut BackEndConnection) {
+        match event {
+            Event::GotDbEvent(db_event) => self.db_event = Some(db_event),
+            _ => (),
+        }
     }
 
     /// Returns true if modal is to be closed

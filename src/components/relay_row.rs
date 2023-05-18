@@ -3,7 +3,7 @@ use crate::icon::{delete_icon, exclamation_icon, solid_circle_icon};
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
 use crate::style;
-use crate::utils::event_tt_to_naive;
+use crate::utils::ns_event_to_naive;
 use crate::widget::{Element, Text};
 use chrono::Utc;
 use iced::futures::channel::mpsc;
@@ -243,7 +243,7 @@ impl RelayRow {
             Message::UpdateStatus((status, last_connected_at)) => {
                 self.db_relay = self.db_relay.clone().with_status(status);
                 if last_connected_at.as_i64() != 0 {
-                    if let Ok(last_connected_at) = event_tt_to_naive(last_connected_at) {
+                    if let Ok(last_connected_at) = ns_event_to_naive(last_connected_at) {
                         self.db_relay = self
                             .db_relay
                             .clone()

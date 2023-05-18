@@ -89,7 +89,7 @@ pub enum ResponseStatus {
     Error(String),
 }
 impl ResponseStatus {
-    fn from_bool(value: bool, error_message: Option<String>) -> Self {
+    pub fn from_bool(value: bool, error_message: Option<String>) -> Self {
         match value {
             true => Self::Ok,
             false => {
@@ -97,7 +97,7 @@ impl ResponseStatus {
             }
         }
     }
-    fn to_bool(&self) -> (bool, Option<String>) {
+    pub fn to_bool(&self) -> (bool, Option<String>) {
         match self {
             Self::Ok => (true, None),
             Self::Error(e) => (false, Some(e.to_string())),

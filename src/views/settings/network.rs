@@ -1,17 +1,18 @@
 use iced::alignment::{self, Horizontal};
-use iced::widget::{button, column, container, row, text, tooltip};
+use iced::widget::{button, column, container, row, text, text_input, tooltip, Space};
 use iced::{Command, Length, Subscription};
 use iced_aw::{Card, Modal};
 use nostr_sdk::Url;
 
 use crate::components::text::title;
 use crate::components::text_input_group::TextInputGroup;
-use crate::components::{relay_row, RelayRow};
+use crate::components::{common_scrollable, relay_row, RelayRow};
 use crate::db::DbRelay;
 use crate::icon::plus_icon;
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
 use crate::style;
+use crate::utils::url_matches_search;
 use crate::widget::Element;
 
 #[derive(Debug, Clone)]
@@ -23,6 +24,7 @@ pub enum Message {
     OkButtonPressed,
     CloseModal,
     AddRelayInputChange(String),
+    SearchInputChange(String),
 }
 
 #[derive(Debug, Clone)]
@@ -31,6 +33,7 @@ pub struct State {
     show_modal: bool,
     add_relay_input: String,
     is_invalid: bool,
+    search_input: String,
 }
 impl State {
     pub fn subscription(&self) -> Subscription<Message> {
@@ -48,11 +51,15 @@ impl State {
             show_modal: false,
             add_relay_input: "".into(),
             is_invalid: false,
+            search_input: "".into(),
         }
     }
 
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Command<Message> {
         match message {
+            Message::SearchInputChange(text) => {
+                self.search_input = text;
+            }
             Message::AddRelayInputChange(relay_addrs) => {
                 self.add_relay_input = relay_addrs;
                 self.is_invalid = false;
@@ -110,15 +117,8 @@ impl State {
     }
 
     pub fn view(&self) -> Element<Message> {
-        let title = title("Network");
-        let header = column![RelayRow::view_header().map(|mut message| {
-            message.from = -1;
-            Message::RelayMessage(message)
-        })];
-        let relays = self.relays.iter().fold(header, |col, relay| {
-            col.push(relay.view().map(Message::RelayMessage))
-        });
-        let empty = container(text("")).width(Length::Fill);
+        let title = title("Network").height(HEADER_HEIGHT);
+
         let add_btn = tooltip(
             button(
                 row![text("Add").size(18), plus_icon().size(14)]
@@ -131,9 +131,26 @@ impl State {
             tooltip::Position::Top,
         )
         .style(style::Container::TooltipBg);
+        let search_input = text_input("Search", &self.search_input)
+            .on_input(Message::SearchInputChange)
+            .style(style::TextInput::ChatSearch)
+            .width(SEARCH_WIDTH);
+        let utils_row = row![search_input, Space::with_width(Length::Fill), add_btn];
 
-        let add_row = row![empty, add_btn];
-        let content: Element<_> = container(column![title, add_row, relays])
+        let table_header = column![RelayRow::view_header().map(|mut message| {
+            message.from = -1;
+            Message::RelayMessage(message)
+        })];
+        let relay_rows = self
+            .relays
+            .iter()
+            .filter(|row| url_matches_search(&row.db_relay.url, &self.search_input))
+            .fold(column![].spacing(4), |col, relay| {
+                col.push(relay.view().map(Message::RelayMessage))
+            });
+        let relays_ct = container(table_header.push(common_scrollable(relay_rows)));
+
+        let content: Element<_> = container(column![title, utils_row, relays_ct])
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
@@ -177,3 +194,5 @@ impl State {
 }
 
 const CARD_MAX_WIDTH: f32 = 300.0;
+const HEADER_HEIGHT: f32 = 50.0;
+const SEARCH_WIDTH: f32 = 200.0;

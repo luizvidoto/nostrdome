@@ -29,6 +29,10 @@ pub enum Event {
         responses: Vec<DbRelayResponse>,
         all_relays: Vec<DbRelay>,
     },
+    GotRelayResponsesContactList {
+        responses: Vec<DbRelayResponse>,
+        all_relays: Vec<DbRelay>,
+    },
     GotContacts(Vec<DbContact>),
     RelayCreated(DbRelay),
     RelayUpdated(DbRelay),
@@ -46,6 +50,8 @@ pub enum Event {
     UpdatedMetadata(XOnlyPublicKey),
     GotAllMessages(Vec<DbEvent>),
     GotLastChatMessage((DbContact, ChatMessage)),
+    GotDbEvent(DbEvent),
+
     // --- Nostr ---
     SentEventToRelays(nostr_sdk::EventId),
     SentEventTo((url::Url, nostr_sdk::EventId)),
@@ -114,6 +120,10 @@ pub enum Event {
 impl std::fmt::Display for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Event::GotDbEvent(db_event) => write!(f, "Got DB Event: {}", db_event.event_hash),
+            Event::GotRelayResponsesContactList { .. } => {
+                write!(f, "Got Relay Responses Contact List")
+            }
             Event::GotRelayResponsesUserProfile { .. } => {
                 write!(f, "Got Relay Responses User Profile")
             }

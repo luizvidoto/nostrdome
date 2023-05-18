@@ -25,16 +25,19 @@ pub enum Message {
     NIP05Change(String),
     SavePress,
     BackEndEvent(Event),
-    RelaysPressed,
+    RelaysConfirmationPress(Option<AccountRelaysResponse>),
 }
 
 #[derive(Debug, Clone)]
-pub struct RelaysResponse {
+pub struct AccountRelaysResponse {
     pub confirmed_relays: Vec<DbRelayResponse>,
     pub all_relays: Vec<DbRelay>,
 }
-impl RelaysResponse {
-    fn new(confirmed_relays: Vec<DbRelayResponse>, all_relays: Vec<DbRelay>) -> RelaysResponse {
+impl AccountRelaysResponse {
+    fn new(
+        confirmed_relays: Vec<DbRelayResponse>,
+        all_relays: Vec<DbRelay>,
+    ) -> AccountRelaysResponse {
         Self {
             confirmed_relays,
             all_relays,
@@ -56,7 +59,7 @@ pub struct State {
     picture_url_is_invalid: bool,
     website_url_is_invalid: bool,
     banner_url_is_invalid: bool,
-    relays_response: Option<RelaysResponse>,
+    relays_response: Option<AccountRelaysResponse>,
 }
 impl State {
     pub fn new(conn: &mut BackEndConnection) -> Self {
@@ -81,9 +84,7 @@ impl State {
 
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
         match message {
-            Message::RelaysPressed => {
-                tracing::info!("Open modal relays confirmation");
-            }
+            Message::RelaysConfirmationPress(_) => (),
             Message::BackEndEvent(back_ev) => match back_ev {
                 Event::ConfirmedMetadata { is_user, .. } => {
                     if is_user {
@@ -94,7 +95,7 @@ impl State {
                     responses,
                     all_relays,
                 } => {
-                    self.relays_response = Some(RelaysResponse::new(responses, all_relays));
+                    self.relays_response = Some(AccountRelaysResponse::new(responses, all_relays));
                 }
                 Event::GotUserProfileCache(cache) => {
                     if let Some(profile_cache) = cache {
@@ -188,7 +189,9 @@ impl State {
                     ]
                     .spacing(5),
                 )
-                .on_press(Message::RelaysPressed)
+                .on_press(Message::RelaysConfirmationPress(
+                    self.relays_response.to_owned(),
+                ))
                 .style(style::Button::MenuBtn)
                 .padding(5),
                 "Relays Confirmation",
@@ -197,7 +200,7 @@ impl State {
             .style(style::Container::TooltipBg)
             .into()
         } else {
-            text("Profile is not confirmed on any relays")
+            text("Profile not confirmed on any relays")
                 .size(18)
                 .style(style::Text::Placeholder)
                 .into()
@@ -205,13 +208,17 @@ impl State {
     }
     pub fn view(&self) -> Element<Message> {
         let title = title("Account");
-        let title_group = row![
-            title,
-            Space::with_width(Length::Fill),
-            self.make_relays_response()
-        ]
-        .align_items(Alignment::Center)
-        .spacing(10);
+        let title_group = container(
+            row![
+                title,
+                Space::with_width(Length::Fill),
+                self.make_relays_response()
+            ]
+            .align_items(Alignment::Center)
+            .spacing(10),
+        )
+        .width(Length::Fill)
+        .height(HEADER_HEIGHT);
 
         let profile_name_input =
             TextInputGroup::new("Name", &self.name, Message::ProfileNameChange)
@@ -271,15 +278,8 @@ impl State {
         .tooltip("Easily find and confirm users using their email-like identifiers on NOSTR")
         .build();
 
-        let mut save_btn = button("Save");
-
-        if self.all_valid() {
-            save_btn = save_btn.on_press(Message::SavePress);
-        }
-
-        container(common_scrollable(
+        let form = container(common_scrollable(
             column![
-                title_group,
                 profile_name_input,
                 user_name_input,
                 about_input,
@@ -289,10 +289,23 @@ impl State {
                 ln_url_input,
                 ln_input,
                 nostr_addrs_input,
-                row![Space::with_width(Length::Fill), save_btn].spacing(10)
             ]
-            .spacing(4),
+            .spacing(10),
         ))
-        .into()
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+        let mut save_btn = button("Save").padding(10);
+        if self.all_valid() {
+            save_btn = save_btn.on_press(Message::SavePress);
+        }
+        let footer_row = container(row![Space::with_width(Length::Fill), save_btn].spacing(10))
+            .width(Length::Fill)
+            .height(FOOTER_HEIGHT);
+
+        container(column![title_group, form, footer_row].spacing(10)).into()
     }
 }
+
+const HEADER_HEIGHT: f32 = 50.0;
+const FOOTER_HEIGHT: f32 = 50.0;

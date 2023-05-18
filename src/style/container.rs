@@ -7,6 +7,7 @@ pub enum Container {
     #[default]
     Default,
     Bordered,
+    Modal,
     TooltipIcon,
     SentMessage,
     ReceivedMessage,
@@ -40,6 +41,13 @@ impl container::StyleSheet for Theme {
                 border_width: 1.0,
                 border_radius: 4.0,
                 ..def
+            },
+            Container::Modal => container::Appearance {
+                border_color: Color::TRANSPARENT,
+                border_width: 0.0,
+                border_radius: 10.0,
+                background: self.pallete().background.into(),
+                text_color: None,
             },
             Container::ChatSearchCopy => container::Appearance {
                 background: self.pallete().chat_search_input_bg.into(),

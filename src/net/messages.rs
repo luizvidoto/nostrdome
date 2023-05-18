@@ -21,6 +21,7 @@ pub enum Message {
     PrepareClient,
     FetchRelayResponses(ChatMessage),
     FetchRelayResponsesUserProfile,
+    FetchRelayResponsesContactList,
     FetchMessages(DbContact),
     FetchContacts,
     AddContact(DbContact),
@@ -36,6 +37,7 @@ pub enum Message {
     ExportMessages((Vec<DbEvent>, PathBuf)),
     ExportContacts(std::path::PathBuf),
     FetchLastChatMessage(DbContact),
+    GetDbEventWithHash(nostr_sdk::EventId),
 
     // -------- NOSTR CLIENT MESSAGES
     RequestEventsOf(DbRelay),

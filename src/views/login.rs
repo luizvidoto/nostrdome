@@ -75,6 +75,7 @@ impl State {
     pub fn import_account() -> Self {
         Self::ImportAccount {
             // secret_key_input: "4510459b74db68371be462f19ef4f7ef1e6c5a95b1d83a7adf00987c51ac56fe"
+            //     .into(),
             secret_key_input: "".into(),
             is_invalid: false,
         }

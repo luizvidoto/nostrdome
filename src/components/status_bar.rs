@@ -1,7 +1,7 @@
 use futures::channel::mpsc;
 use iced::widget::{button, container, row, text, Space};
 use iced::Subscription;
-use iced::{alignment, Command, Length};
+use iced::{alignment, Alignment, Command, Length};
 use nostr_sdk::RelayStatus;
 
 use crate::consts::NOSTRTALK_VERSION;
@@ -167,23 +167,28 @@ impl StatusBar {
             .height(Length::Fill)
             .on_press(Message::GoToAbout)
             .style(style::Button::StatusBarButton);
-        let signal = button(row![
-            text(&self.connected_relays).size(18),
-            signal_icon().size(12),
-        ])
+        let signal = button(
+            row![
+                text(&self.connected_relays).size(18),
+                signal_icon().size(12),
+            ]
+            .align_items(Alignment::Center),
+        )
         .height(Length::Fill)
         .padding([0, 2])
         .on_press(Message::GoToNetwork)
         .style(style::Button::StatusBarButton);
 
-        container(row![about, Space::with_width(Length::Fill), signal])
-            .padding(0)
-            .align_x(alignment::Horizontal::Right)
-            .align_y(alignment::Vertical::Bottom)
-            .height(Length::Fixed(STATUS_BAR_HEIGHT))
-            .width(Length::Fill)
-            .style(style::Container::StatusBar)
-            .into()
+        container(
+            row![about, Space::with_width(Length::Fill), signal].align_items(Alignment::Center),
+        )
+        .padding(0)
+        .align_x(alignment::Horizontal::Right)
+        .align_y(alignment::Vertical::Bottom)
+        .height(Length::Fixed(STATUS_BAR_HEIGHT))
+        .width(Length::Fill)
+        .style(style::Container::StatusBar)
+        .into()
     }
 }
 
