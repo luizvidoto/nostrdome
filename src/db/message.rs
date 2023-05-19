@@ -137,7 +137,9 @@ impl DbMessage {
         db_event: &DbEvent,
         contact_pubkey: &XOnlyPublicKey,
     ) -> Result<Self, Error> {
-        let confirmed_at = db_event.remote_creation().ok_or(Error::NotConfirmedEvent)?;
+        let confirmed_at = db_event
+            .remote_creation()
+            .ok_or(Error::NotConfirmedEvent(db_event.event_hash.to_owned()))?;
         let msg = Self::new(db_event, contact_pubkey)?
             .with_relay_url(db_event.relay_url.as_ref())
             .with_status(MessageStatus::Delivered)

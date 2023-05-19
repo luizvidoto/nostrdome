@@ -2,12 +2,10 @@ use nostr_sdk::{secp256k1::XOnlyPublicKey, Keys, Url};
 use sqlx::SqlitePool;
 
 use crate::{
-    db::{DbEvent, DbMessage, TagInfo},
+    db::{DbContact, DbEvent, DbMessage, TagInfo},
     error::Error,
-    net::{
-        events::Event,
-        operations::{contact::fetch_or_create_contact, event::relay_response_ok},
-    },
+    net::{events::Event, operations::event::relay_response_ok},
+    types::ChatMessage,
 };
 
 pub async fn handle_dm(
@@ -15,21 +13,9 @@ pub async fn handle_dm(
     cache_pool: &SqlitePool,
     keys: &Keys,
     relay_url: &Url,
-    ns_event: nostr_sdk::Event,
+    db_event: DbEvent,
 ) -> Result<Event, Error> {
     tracing::debug!("handle_dm");
-    // create event struct
-    let mut db_event = DbEvent::confirmed_event(ns_event, relay_url)?;
-    // insert into database
-    let (row_id, rows_changed) = DbEvent::insert(pool, &db_event).await?;
-    db_event = db_event.with_id(row_id);
-    relay_response_ok(pool, relay_url, &db_event).await?;
-
-    if rows_changed == 0 {
-        tracing::info!("Event already in database");
-        return Ok(Event::None);
-    }
-
     let info = TagInfo::from_db_event(&db_event)?;
     let contact_pubkey = info.contact_pubkey(keys)?;
 
@@ -43,21 +29,26 @@ pub async fn handle_dm(
     }
 
     // Determine the contact's public key and whether the message is from the user
-    let (contact_pubkey, _is_from_user) =
-        determine_sender_receiver(&db_message, &keys.public_key());
+    let contact_pubkey = determine_sender_receiver(&db_message, &keys.public_key());
 
-    // Fetch or create the associated contact, update the contact's message, and return the event
-    let event = fetch_or_create_contact(
-        pool,
-        cache_pool,
-        keys,
-        relay_url,
-        &contact_pubkey,
-        &db_message,
-    )
-    .await?;
+    tracing::debug!("fetch_or_create_contact");
+    let db_contact = match DbContact::fetch_one(pool, cache_pool, &contact_pubkey).await? {
+        Some(db_contact) => db_contact,
+        None => {
+            tracing::debug!("Creating new contact with pubkey: {}", &contact_pubkey);
+            let db_contact = DbContact::new(&contact_pubkey);
+            DbContact::insert(pool, &db_contact).await?;
+            db_contact
+        }
+    };
 
-    Ok(event)
+    let chat_message = ChatMessage::from_db_message(keys, &db_message, &db_contact)?;
+
+    Ok(Event::ReceivedDM {
+        chat_message,
+        db_contact,
+        relay_url: relay_url.to_owned(),
+    })
 }
 
 async fn insert_message_from_event(
@@ -74,13 +65,13 @@ async fn insert_message_from_event(
 fn determine_sender_receiver(
     db_message: &DbMessage,
     user_pubkey: &XOnlyPublicKey,
-) -> (XOnlyPublicKey, bool) {
+) -> XOnlyPublicKey {
     tracing::debug!("determine_sender_receiver");
     if db_message.im_author(user_pubkey) {
         tracing::debug!("Message is from the user");
-        (db_message.to_pubkey(), true)
+        db_message.to_pubkey()
     } else {
         tracing::debug!("Message is from contact");
-        (db_message.from_pubkey(), false)
+        db_message.from_pubkey()
     }
 }

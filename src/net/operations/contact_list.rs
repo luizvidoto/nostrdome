@@ -14,17 +14,17 @@ use crate::{
 };
 
 pub async fn handle_contact_list(
-    event: nostr_sdk::Event,
+    ns_event: nostr_sdk::Event,
     keys: &Keys,
     pool: &SqlitePool,
     back_sender: &mut mpsc::Sender<BackEndInput>,
     nostr_sender: &mut mpsc::Sender<NostrInput>,
     relay_url: &Url,
 ) -> Result<Event, Error> {
-    if event.pubkey == keys.public_key() {
-        handle_user_contact_list(event, keys, pool, back_sender, nostr_sender, relay_url).await
+    if ns_event.pubkey == keys.public_key() {
+        handle_user_contact_list(ns_event, keys, pool, back_sender, nostr_sender, relay_url).await
     } else {
-        handle_other_contact_list(event)
+        handle_other_contact_list(ns_event)
     }
 }
 
@@ -39,12 +39,12 @@ async fn handle_user_contact_list(
     tracing::debug!("Received a ContactList");
 
     if let Some((remote_creation, db_event)) = last_kind_filtered(pool).await? {
-        if db_event.event_hash == ns_event.id {
-            // if event already in the database, just confirmed it
-            tracing::info!("ContactList already in the database");
-            relay_response_ok(pool, relay_url, &db_event).await?;
-            return Ok(Event::None);
-        }
+        // if db_event.event_hash == ns_event.id {
+        //     // if event already in the database, just confirmed it
+        //     tracing::info!("ContactList already in the database");
+        //     relay_response_ok(pool, relay_url, &db_event).await?;
+        //     return Ok(Event::None);
+        // }
         // if event is older than the last one, ignore it
         if remote_creation.timestamp_millis() > (ns_event_to_millis(ns_event.created_at)) {
             tracing::info!("ContactList is older than the last one");
@@ -110,7 +110,10 @@ async fn handle_user_contact_list(
     })
 }
 
-fn handle_other_contact_list(_event: nostr_sdk::Event) -> Result<Event, Error> {
+fn handle_other_contact_list(_ns_event: nostr_sdk::Event) -> Result<Event, Error> {
+    // Others ContactList That Im in
+    // which means that someone else added me to their contact list
+    // so I could build a followers list from this
     tracing::info!("*** Others ContactList That Im in ***");
     Ok(Event::None)
 }

@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use crate::components::common_scrollable;
 use crate::components::text_input_group::TextInputGroup;
 use crate::consts::{MEDIUM_PROFILE_PIC_HEIGHT, MEDIUM_PROFILE_PIC_WIDTH, YMD_FORMAT};
-use crate::db::{DbContact, DbContactError, DbEvent};
+use crate::db::{DbContact, DbContactError};
 use crate::icon::{copy_icon, edit_icon};
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection, ImageSize};
@@ -44,7 +44,6 @@ pub struct ContactDetails {
     is_pub_invalid: bool,
     is_relay_invalid: bool,
     profile_img_handle: Option<image::Handle>,
-    db_event: Option<DbEvent>,
 }
 impl ContactDetails {
     pub(crate) fn new() -> Self {
@@ -57,7 +56,6 @@ impl ContactDetails {
             is_pub_invalid: false,
             is_relay_invalid: false,
             profile_img_handle: None,
-            db_event: None,
         }
     }
     pub(crate) fn edit(db_contact: &DbContact, conn: &mut BackEndConnection) -> Self {
@@ -73,7 +71,6 @@ impl ContactDetails {
             is_pub_invalid: false,
             is_relay_invalid: false,
             profile_img_handle: Some(db_contact.profile_image(ImageSize::Medium, conn)),
-            db_event: None,
         }
     }
     pub(crate) fn viewer(db_contact: &DbContact, conn: &mut BackEndConnection) -> Self {
@@ -212,38 +209,19 @@ impl ContactDetails {
                             ]
                             .spacing(2);
 
-                            let last_update_txt: Element<_> = if let Some(db_event) = &self.db_event
-                            {
-                                if let Some(last_update) = db_event.remote_creation() {
-                                    text(&from_naive_utc_to_local(last_update).format(YMD_FORMAT))
-                                        .into()
-                                } else {
-                                    text("No last update").into()
-                                }
-                            } else {
-                                text("No last update").into()
-                            };
-
                             let last_update_group = column![
                                 text("Last Update"),
-                                container(last_update_txt)
-                                    .padding([2, 8])
-                                    .style(style::Container::ChatSearchCopy),
+                                container(text(
+                                    &from_naive_utc_to_local(profile.updated_at).format(YMD_FORMAT)
+                                ))
+                                .padding([2, 8])
+                                .style(style::Container::ChatSearchCopy),
                             ]
                             .spacing(2);
 
-                            let rcv_from_txt: Element<_> = if let Some(db_event) = &self.db_event {
-                                if let Some(url) = &db_event.relay_url {
-                                    text(url).into()
-                                } else {
-                                    text("No relay").into()
-                                }
-                            } else {
-                                text("No relay").into()
-                            };
                             let recv_from_relay_group = column![
                                 text("Received From"),
-                                container(rcv_from_txt)
+                                container(text(profile.from_relay))
                                     .padding([2, 8])
                                     .style(style::Container::ChatSearchCopy),
                             ]
@@ -310,9 +288,8 @@ impl ContactDetails {
         .into()
     }
 
-    pub fn backend_event(&mut self, event: Event, conn: &mut BackEndConnection) {
+    pub fn backend_event(&mut self, event: Event, _conn: &mut BackEndConnection) {
         match event {
-            Event::GotDbEvent(db_event) => self.db_event = Some(db_event),
             _ => (),
         }
     }

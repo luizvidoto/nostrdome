@@ -193,6 +193,10 @@ impl ContactCard {
             .into(),
         }
     }
+
+    pub(crate) fn height(&self) -> f32 {
+        CARD_HEIGHT
+    }
 }
 
 const CARD_HEIGHT: f32 = 80.0;

@@ -62,7 +62,7 @@ pub enum Error {
     #[error("Unkown chat message: from_pubkey:{0} - to_pubkey:{1}")]
     UnknownChatMessage(String, String),
     #[error("Event need to be confirmed")]
-    NotConfirmedEvent,
+    NotConfirmedEvent(EventId),
     #[error("Unable to update contact: message ID is required but not provided.")]
     MissingMessageIdForContactUpdate,
     #[error("Outdated contact insert")]

@@ -2,7 +2,7 @@ use iced::widget::{button, container, row, text, tooltip};
 use iced::Length;
 
 use crate::db::DbContact;
-use crate::icon::{delete_icon, edit_icon, file_icon_regular};
+use crate::icon::{delete_icon, edit_icon, file_icon_regular, reply_icon};
 use crate::style;
 use crate::utils::format_pubkey;
 use crate::widget::Element;
@@ -11,7 +11,7 @@ use crate::widget::Element;
 pub enum Message {
     DeleteContact(DbContact),
     EditContact(DbContact),
-    OpenProfile(DbContact),
+    SendMessageTo(DbContact),
 }
 #[derive(Debug, Clone)]
 pub struct ContactRow {
@@ -80,9 +80,8 @@ impl ContactRow {
             .width(Length::Fill),
             container(
                 tooltip(
-                    button(file_icon_regular().size(16))
-                        .on_press(Message::OpenProfile(self.into())),
-                    "Open Profile",
+                    button(reply_icon().size(16)).on_press(Message::SendMessageTo(self.into())),
+                    "Send Message",
                     tooltip::Position::Left
                 )
                 .style(style::Container::TooltipBg)

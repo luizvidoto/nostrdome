@@ -32,49 +32,62 @@ pub async fn insert_confirmed_event(
 
     match ns_event.kind {
         nostr_sdk::Kind::ContactList => {
+            // contact_list is validating differently
             handle_contact_list(ns_event, keys, pool, back_sender, nostr_sender, relay_url).await
         }
-        nostr_sdk::Kind::Metadata => {
-            handle_metadata_event(pool, cache_pool, relay_url, ns_event).await
+        other => {
+            if let Some(db_event) = confirmed_event(ns_event, relay_url, pool).await? {
+                match other {
+                    nostr_sdk::Kind::Metadata => {
+                        handle_metadata_event(pool, cache_pool, relay_url, db_event).await
+                    }
+                    nostr_sdk::Kind::EncryptedDirectMessage => {
+                        handle_dm(pool, cache_pool, keys, relay_url, db_event).await
+                    }
+                    nostr_sdk::Kind::RecommendRelay => handle_recommend_relay(db_event).await,
+                    // nostr_sdk::Kind::ChannelCreation => {}
+                    // nostr_sdk::Kind::ChannelMetadata => {
+                    // nostr_sdk::Kind::ChannelMessage => {}
+                    // nostr_sdk::Kind::ChannelHideMessage => {}
+                    // nostr_sdk::Kind::ChannelMuteUser => {}
+                    // Kind::EventDeletion => {},
+                    // Kind::PublicChatReserved45 => {},
+                    // Kind::PublicChatReserved46 => {},
+                    // Kind::PublicChatReserved47 => {},
+                    // Kind::PublicChatReserved48 => {},
+                    // Kind::PublicChatReserved49 => {},
+                    // Kind::ZapRequest => {},
+                    // Kind::Zap => {},
+                    // Kind::MuteList => {},
+                    // Kind::PinList => {},
+                    // Kind::RelayList => {},
+                    // Kind::Authentication => {},
+                    _other_kind => insert_other_kind(db_event).await,
+                }
+            } else {
+                return Ok(Event::None);
+            }
         }
-        nostr_sdk::Kind::EncryptedDirectMessage => {
-            handle_dm(pool, cache_pool, keys, relay_url, ns_event).await
-        }
-        nostr_sdk::Kind::RecommendRelay => handle_recommend_relay(ns_event).await,
-        // nostr_sdk::Kind::ChannelCreation => {}
-        // nostr_sdk::Kind::ChannelMetadata => {
-        // nostr_sdk::Kind::ChannelMessage => {}
-        // nostr_sdk::Kind::ChannelHideMessage => {}
-        // nostr_sdk::Kind::ChannelMuteUser => {}
-        // Kind::EventDeletion => {},
-        // Kind::PublicChatReserved45 => {},
-        // Kind::PublicChatReserved46 => {},
-        // Kind::PublicChatReserved47 => {},
-        // Kind::PublicChatReserved48 => {},
-        // Kind::PublicChatReserved49 => {},
-        // Kind::ZapRequest => {},
-        // Kind::Zap => {},
-        // Kind::MuteList => {},
-        // Kind::PinList => {},
-        // Kind::RelayList => {},
-        // Kind::Authentication => {},
-        _other_kind => insert_other_kind(ns_event, relay_url, pool).await,
     }
 }
 
-async fn insert_other_kind(
+async fn confirmed_event(
     ns_event: nostr_sdk::Event,
-    relay_url: &nostr_sdk::Url,
-    pool: &SqlitePool,
-) -> Result<Event, Error> {
+    relay_url: &Url,
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+) -> Result<Option<DbEvent>, Error> {
     let mut db_event = DbEvent::confirmed_event(ns_event, relay_url)?;
     let (row_id, rows_changed) = DbEvent::insert(pool, &db_event).await?;
     db_event = db_event.with_id(row_id);
     relay_response_ok(pool, relay_url, &db_event).await?;
     if rows_changed == 0 {
-        tracing::info!("Received duplicate event: {:?}", db_event.event_hash);
-        return Ok(Event::None);
+        tracing::info!("Event already in database");
+        return Ok(None);
     }
+    Ok(Some(db_event))
+}
+
+async fn insert_other_kind(db_event: DbEvent) -> Result<Event, Error> {
     Ok(Event::OtherKindEventInserted(db_event))
 }
 

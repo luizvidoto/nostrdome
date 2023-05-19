@@ -8,14 +8,20 @@ use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use crate::{
     error::Error,
     net::ImageKind,
-    utils::{event_hash_or_err, millis_to_naive_or_err, profile_meta_or_err, public_key_or_err},
+    utils::{
+        event_hash_or_err, millis_to_naive_or_err, profile_meta_or_err, public_key_or_err,
+        url_or_err,
+    },
 };
+
+use super::DbEvent;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileCache {
     pub public_key: XOnlyPublicKey,
     pub updated_at: NaiveDateTime,
     pub event_hash: nostr_sdk::EventId,
+    pub from_relay: nostr_sdk::Url,
     pub metadata: nostr_sdk::Metadata,
     pub profile_image_path: Option<PathBuf>,
     pub banner_image_path: Option<PathBuf>,
@@ -48,13 +54,21 @@ impl ProfileCache {
     //     }
     // }
 
-    pub async fn insert_by_public_key(
+    pub async fn insert_with_event(
         cache_pool: &SqlitePool,
-        public_key: &XOnlyPublicKey,
-        event_hash: &nostr_sdk::EventId,
-        event_date: &NaiveDateTime,
-        metadata: &nostr_sdk::Metadata,
+        db_event: &DbEvent,
     ) -> Result<u64, Error> {
+        let metadata = nostr_sdk::Metadata::from_json(&db_event.content)
+            .map_err(|_| Error::JsonToMetadata(db_event.content.clone()))?;
+        let public_key = &db_event.pubkey;
+        let event_hash = &db_event.event_hash;
+        let event_date = &db_event
+            .remote_creation()
+            .ok_or(Error::NotConfirmedEvent(event_hash.to_owned()))?;
+        let relay_url = db_event
+            .relay_url
+            .as_ref()
+            .ok_or(Error::NotConfirmedEvent(event_hash.to_owned()))?;
         if let Some(last_cache) = Self::fetch_by_public_key(cache_pool, public_key).await? {
             if &last_cache.event_hash == event_hash {
                 tracing::info!(
@@ -78,13 +92,14 @@ impl ProfileCache {
 
         let update_query = r#"
             UPDATE profile_meta_cache 
-            SET updated_at=?, event_hash=?, metadata=?
+            SET updated_at=?, event_hash=?, metadata=?, from_relay=?
             WHERE public_key = ?
         "#;
         let mut rows_affected = sqlx::query(&update_query)
             .bind(&event_date.timestamp_millis())
             .bind(&event_hash.to_string())
             .bind(&metadata.as_json())
+            .bind(&relay_url.to_string())
             .bind(&public_key.to_string())
             .execute(&mut tx)
             .await?
@@ -93,14 +108,15 @@ impl ProfileCache {
         if rows_affected == 0 {
             let insert_query = r#"
                 INSERT INTO profile_meta_cache
-                    (public_key, updated_at, event_hash, metadata) 
-                VALUES (?, ?, ?, ?)
+                    (public_key, updated_at, event_hash, metadata, from_relay) 
+                VALUES (?, ?, ?, ?, ?)
             "#;
             rows_affected = sqlx::query(&insert_query)
                 .bind(&public_key.to_string())
                 .bind(&event_date.timestamp_millis())
                 .bind(&event_hash.to_string())
                 .bind(&metadata.as_json())
+                .bind(&relay_url.to_string())
                 .execute(&mut tx)
                 .await?
                 .rows_affected();
@@ -156,6 +172,9 @@ impl sqlx::FromRow<'_, SqliteRow> for ProfileCache {
         let public_key = row.try_get::<String, &str>("public_key")?;
         let public_key = public_key_or_err(&public_key, "public_key")?;
 
+        let from_relay = row.try_get::<String, &str>("from_relay")?;
+        let from_relay = url_or_err(&from_relay, "from_relay")?;
+
         let updated_at =
             millis_to_naive_or_err(row.try_get::<i64, &str>("updated_at")?, "updated_at")?;
 
@@ -170,6 +189,7 @@ impl sqlx::FromRow<'_, SqliteRow> for ProfileCache {
             updated_at,
             event_hash,
             metadata,
+            from_relay,
             profile_image_path,
             banner_image_path,
         })

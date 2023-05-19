@@ -178,9 +178,9 @@ pub async fn backend_processing(
     }
 }
 
-pub async fn handle_recommend_relay(ns_event: nostr_sdk::Event) -> Result<Event, Error> {
+pub async fn handle_recommend_relay(db_event: DbEvent) -> Result<Event, Error> {
     tracing::debug!("handle_recommend_relay");
-    dbg!(&ns_event);
+    dbg!(&db_event);
     Ok(Event::None)
 }
 
@@ -215,7 +215,7 @@ async fn handle_dm_confirmation(
     let relay_url = db_event
         .relay_url
         .as_ref()
-        .ok_or(Error::NotConfirmedEvent)?;
+        .ok_or(Error::NotConfirmedEvent(db_event.event_hash.to_owned()))?;
 
     if let Some(db_message) = DbMessage::fetch_by_event(pool, db_event.event_id()?).await? {
         let db_message = DbMessage::relay_confirmation(pool, relay_url, db_message).await?;

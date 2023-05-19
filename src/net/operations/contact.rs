@@ -132,36 +132,6 @@ pub async fn delete_contact(pool: &SqlitePool, db_contact: &DbContact) -> Result
     Ok(Event::ContactDeleted(db_contact.clone()))
 }
 
-pub async fn fetch_or_create_contact(
-    pool: &SqlitePool,
-    cache_pool: &SqlitePool,
-    keys: &Keys,
-    relay_url: &Url,
-    contact_pubkey: &XOnlyPublicKey,
-    db_message: &DbMessage,
-) -> Result<Event, Error> {
-    tracing::debug!("fetch_or_create_contact");
-    let mut db_contact = match DbContact::fetch_one(pool, cache_pool, contact_pubkey).await? {
-        Some(db_contact) => db_contact,
-        None => {
-            tracing::debug!("Creating new contact with pubkey: {}", contact_pubkey);
-            let db_contact = DbContact::new(contact_pubkey);
-            DbContact::insert(pool, &db_contact).await?;
-            db_contact
-        }
-    };
-
-    tracing::debug!("Update last message and contact in the database");
-    let chat_message = ChatMessage::from_db_message(keys, db_message, &db_contact)?;
-    // db_contact = DbContact::new_message(pool, db_contact, &chat_message).await?;
-
-    Ok(Event::ReceivedDM {
-        chat_message,
-        db_contact,
-        relay_url: relay_url.to_owned(),
-    })
-}
-
 pub async fn import_contacts(
     keys: &Keys,
     pool: &SqlitePool,

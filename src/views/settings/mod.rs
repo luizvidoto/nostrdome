@@ -1,6 +1,7 @@
 use iced::widget::{button, column, container, row, Space};
 use iced::{Command, Length, Subscription};
 
+use crate::db::DbContact;
 use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
 use crate::style;
@@ -11,6 +12,7 @@ use super::modal::{
     basic_contact, import_contact_list, relays_confirmation, ContactDetails, ImportContactList,
     RelaysConfirmation,
 };
+use super::RouterMessage;
 
 mod about;
 mod account;
@@ -18,6 +20,14 @@ pub mod appearance;
 mod backup;
 mod contacts;
 mod network;
+
+pub enum SettingsRouterMessage {
+    OpenEditContactModal(DbContact),
+    OpenProfileModal(DbContact),
+    RouterMessage(RouterMessage),
+    OpenImportContactModal,
+    OpenAddContactModal,
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -31,7 +41,7 @@ pub enum Message {
     ContactDetailsMessage(Box<basic_contact::CMessage<Message>>),
     ImportContactListMessage(Box<import_contact_list::CMessage<Message>>),
     RelaysConfirmationMessage(Box<relays_confirmation::CMessage<Message>>),
-    // Menu
+    // Navigation
     MenuAccountPress,
     MenuAppearancePress,
     MenuNetworkPress,
@@ -189,7 +199,10 @@ impl Settings {
         message: Message,
         conn: &mut BackEndConnection,
         selected_theme: Option<style::Theme>,
-    ) -> Command<Message> {
+    ) -> (Command<Message>, Option<RouterMessage>) {
+        let command = Command::none();
+        let router_message = None;
+
         match message {
             Message::AccountMessage(msg) => {
                 if let MenuState::Account { state } = &mut self.menu_state {
@@ -209,7 +222,7 @@ impl Settings {
             }
             Message::AboutMessage(msg) => {
                 if let MenuState::About { state } = &mut self.menu_state {
-                    return state.update(msg).map(Message::AboutMessage);
+                    return (state.update(msg).map(Message::AboutMessage), None);
                 }
             }
             Message::AppearanceMessage(msg) => {
@@ -219,7 +232,7 @@ impl Settings {
             }
             Message::NetworkMessage(msg) => {
                 if let MenuState::Network { state } = &mut self.menu_state {
-                    return state.update(msg, conn).map(Message::NetworkMessage);
+                    return (state.update(msg, conn).map(Message::NetworkMessage), None);
                 }
             }
             Message::BackupMessage(msg) => {
@@ -227,7 +240,9 @@ impl Settings {
                     state.update(msg, conn);
                 }
             }
-            Message::ContactsMessage(msg) => self.handle_contacts_message(msg, conn),
+            Message::ContactsMessage(msg) => {
+                return (command, self.handle_contacts_message(msg, conn));
+            }
             Message::NavEscPress => (),
             Message::MenuAccountPress
             | Message::MenuAppearancePress
@@ -240,9 +255,9 @@ impl Settings {
             Message::LogoutPress => {
                 conn.send(net::Message::Logout);
             }
-            other => return self.modal_state.update(other, conn),
+            other => return (self.modal_state.update(other, conn), None),
         }
-        Command::none()
+        (command, router_message)
     }
 
     fn handle_menu_press(
@@ -262,8 +277,11 @@ impl Settings {
         }
     }
 
-    fn handle_contacts_message(&mut self, msg: contacts::Message, conn: &mut BackEndConnection) {
-        // TODO: make it better
+    fn handle_contacts_message(
+        &mut self,
+        msg: contacts::Message,
+        conn: &mut BackEndConnection,
+    ) -> Option<RouterMessage> {
         if let MenuState::Contacts { state } = &mut self.menu_state {
             match msg {
                 contacts::Message::RelaysConfirmationPress(ct_resp) => {
@@ -274,30 +292,34 @@ impl Settings {
                         ))
                     }
                 }
-                contacts::Message::OpenAddContactModal => {
-                    self.modal_state = ModalState::ContactDetails(ContactDetails::new());
-                }
-                contacts::Message::OpenImportContactModal => {
-                    self.modal_state = ModalState::import_contacts();
-                }
                 other => {
                     if let Some(received_msg) = state.update(other, conn) {
                         match received_msg {
-                            contacts::Message::OpenEditContactModal(contact) => {
+                            SettingsRouterMessage::OpenAddContactModal => {
+                                self.modal_state =
+                                    ModalState::ContactDetails(ContactDetails::new());
+                            }
+                            SettingsRouterMessage::OpenImportContactModal => {
+                                self.modal_state = ModalState::import_contacts();
+                            }
+                            SettingsRouterMessage::OpenEditContactModal(contact) => {
                                 self.modal_state =
                                     ModalState::ContactDetails(ContactDetails::edit(&contact, conn))
                             }
-                            contacts::Message::OpenProfileModal(contact) => {
+                            SettingsRouterMessage::RouterMessage(router_msg) => {
+                                return Some(router_msg);
+                            }
+                            SettingsRouterMessage::OpenProfileModal(contact) => {
                                 self.modal_state = ModalState::ContactDetails(
                                     ContactDetails::viewer(&contact, conn),
                                 )
                             }
-                            _ => (),
                         }
                     }
                 }
             }
         }
+        None
     }
 
     pub fn view(&self) -> Element<Message> {

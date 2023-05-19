@@ -9,7 +9,9 @@ use iced::widget::{
 use iced::Size;
 use iced::{alignment, Alignment, Command, Length};
 use iced_aw::{Card, Modal};
+use iced_native::widget::scrollable::RelativeOffset;
 
+use crate::components::contact_card::ContactCard;
 use crate::components::floating_element::{Anchor, FloatingElement, Offset};
 use crate::components::text::title;
 use crate::components::{common_scrollable, contact_card, status_bar, Responsive, StatusBar};
@@ -28,7 +30,7 @@ use once_cell::sync::Lazy;
 
 use super::modal::{basic_contact, relays_confirmation, ContactDetails, RelaysConfirmation};
 
-// static CONTACTS_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
+static CONTACTS_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
 static CHAT_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
 static CHAT_INPUT_ID: Lazy<text_input::Id> = Lazy::new(text_input::Id::unique);
 
@@ -178,6 +180,7 @@ pub struct State {
     hide_context_menu: bool,
     chat_message_pressed: Option<ChatMessage>,
     last_relays_response: Option<RelaysResponse>,
+    focus_contact: Option<DbContact>,
 }
 
 impl State {
@@ -200,7 +203,16 @@ impl State {
             hide_context_menu: true,
             chat_message_pressed: None,
             last_relays_response: None,
+            focus_contact: None,
         }
+    }
+    pub(crate) fn chat_to(
+        db_contact: DbContact,
+        conn: &mut BackEndConnection,
+    ) -> (Self, Command<Message>) {
+        let mut state = Self::new(conn);
+        state.focus_contact = Some(db_contact);
+        (state, Command::none())
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -221,18 +233,18 @@ impl State {
             .width(Length::Fill)
             .into()
         } else {
-            common_scrollable(
-                self.contacts
-                    .iter()
-                    .filter(|c| {
-                        contact_matches_search_selected_name(&c.contact, &self.search_contact_input)
-                    })
-                    .fold(column![].spacing(0), |col, contact| {
-                        col.push(contact.view().map(Message::ContactCardMessage))
-                    }),
-            )
-            // .id(CONTACTS_SCROLLABLE_ID.clone())
-            .into()
+            let contact_list = self
+                .contacts
+                .iter()
+                .filter(|c| {
+                    contact_matches_search_selected_name(&c.contact, &self.search_contact_input)
+                })
+                .fold(column![].spacing(0), |col, contact| {
+                    col.push(contact.view().map(Message::ContactCardMessage))
+                });
+            common_scrollable(contact_list)
+                .id(CONTACTS_SCROLLABLE_ID.clone())
+                .into()
         };
         let search_contact: Element<_> = match self.show_only_profile {
             true => text("").into(),
@@ -324,7 +336,7 @@ impl State {
         let _command = self.status_bar.backend_event(event.clone(), conn);
         self.modal_state.backend_event(event.clone(), conn);
 
-        let command = match event {
+        match event {
             Event::GotContacts(db_contacts) => {
                 self.contacts = db_contacts
                     .iter()
@@ -332,7 +344,9 @@ impl State {
                     .map(|(idx, c)| contact_card::ContactCard::from_db_contact(idx as i32, c, conn))
                     .collect();
                 self.sort_contacts();
-                Command::none()
+                if let Some(commands) = self.handle_focus_contact(conn) {
+                    return Command::batch(commands);
+                }
             }
             Event::GotRelayResponses {
                 chat_message,
@@ -341,7 +355,6 @@ impl State {
             } => {
                 self.last_relays_response =
                     Some(RelaysResponse::new(chat_message, responses, all_relays));
-                Command::none()
             }
             Event::GotChatMessages((db_contact, chat_msgs)) => {
                 self.update_contact(db_contact.clone(), conn);
@@ -352,32 +365,25 @@ impl State {
                         .sort_by(|a, b| a.display_time.cmp(&b.display_time));
 
                     self.current_scroll_offset = scrollable::RelativeOffset::END;
-                    scrollable::snap_to(CHAT_SCROLLABLE_ID.clone(), self.current_scroll_offset)
-                } else {
-                    Command::none()
+                    return scrollable::snap_to(
+                        CHAT_SCROLLABLE_ID.clone(),
+                        self.current_scroll_offset,
+                    );
                 }
             }
-            Event::ConfirmedDM((db_contact, chat_msg)) => {
-                // self.update_contact(db_contact, conn);
-                self.update_card_last_msg(&db_contact, &chat_msg, conn);
+            Event::ConfirmedDM((_db_contact, chat_msg)) => {
                 self.messages
                     .iter_mut()
                     .find(|m| m.msg_id == chat_msg.msg_id)
                     .map(|m| m.confirm_msg(&chat_msg));
-                // self.messages
-                //     .sort_by(|a, b| a.display_time.cmp(&b.display_time));
-                Command::none()
             }
             Event::UpdatedContactMetadata { db_contact, .. } => {
                 self.update_contact(db_contact, conn);
-                Command::none()
             }
             Event::PendingDM((_db_contact, msg)) => {
                 self.messages.push(msg.clone());
-
                 self.current_scroll_offset = scrollable::RelativeOffset::END;
-                //COMMAND
-                scrollable::snap_to(CHAT_SCROLLABLE_ID.clone(), self.current_scroll_offset)
+                return scrollable::snap_to(CHAT_SCROLLABLE_ID.clone(), self.current_scroll_offset);
             }
             Event::ReceivedDM {
                 chat_message: msg,
@@ -388,17 +394,15 @@ impl State {
                 if self.active_contact.as_ref() == Some(&db_contact) {
                     // estou na conversa
                     self.messages.push(msg.clone());
-                    // self.messages
-                    //     .sort_by(|a, b| a.display_time.cmp(&b.display_time));
                     self.current_scroll_offset = scrollable::RelativeOffset::END;
-
-                    //COMMAND
-                    scrollable::snap_to(CHAT_SCROLLABLE_ID.clone(), self.current_scroll_offset)
+                    return scrollable::snap_to(
+                        CHAT_SCROLLABLE_ID.clone(),
+                        self.current_scroll_offset,
+                    );
                 } else {
                     // não estou na conversa
+                    self.move_contact_to_top(&db_contact);
                     conn.send(net::Message::AddToUnseenCount(db_contact));
-                    self.sort_contacts();
-                    Command::none()
                 }
             }
             Event::ContactCreated(db_contact) => {
@@ -408,21 +412,50 @@ impl State {
                         &db_contact,
                         conn,
                     ));
-                Command::none()
             }
             Event::GotLastChatMessage((db_contact, chat_message)) => {
                 self.update_card_last_msg(&db_contact, &chat_message, conn);
                 self.sort_contacts();
-                Command::none()
             }
             Event::ContactUpdated(db_contact) => {
                 self.update_contact(db_contact, conn);
-                Command::none()
             }
-            _ => Command::none(),
+            _ => (),
         };
 
-        command
+        Command::none()
+    }
+
+    fn handle_focus_contact(
+        &mut self,
+        conn: &mut BackEndConnection,
+    ) -> Option<Vec<Command<Message>>> {
+        if let Some(db_contact) = self.focus_contact.take() {
+            let mut commands = vec![self.set_active_contact(&db_contact, conn)];
+
+            let list_height: f32 = self.contacts.iter().map(|c| c.height()).sum();
+            let position_opt = find_contact_position(&self.contacts, &db_contact);
+
+            // Handle case when position is not found.
+            let position = match position_opt {
+                Some(pos) => pos,
+                None => {
+                    // Log an error or handle this situation as needed.
+                    return None;
+                }
+            };
+
+            let card = &mut self.contacts[position];
+            card.update(contact_card::Message::TurnOnActive, conn);
+
+            let offset = calculate_scroll_offset(position, list_height, card.height());
+
+            commands.push(scrollable::snap_to(CONTACTS_SCROLLABLE_ID.clone(), offset));
+
+            Some(commands)
+        } else {
+            None
+        }
     }
 
     fn update_card_last_msg(
@@ -611,28 +644,57 @@ impl State {
             Message::NavSettingsPress => (),
             Message::ContactCardMessage(wrapped) => {
                 if let contact_card::Message::ContactPress(contact) = &wrapped.message.clone() {
-                    if self.active_contact.as_ref() != Some(&contact) {
-                        conn.send(net::Message::FetchMessages(contact.clone()));
-                        self.messages = vec![];
-                        command = text_input::focus(CHAT_INPUT_ID.clone());
-                    }
-                    self.dm_msg = "".into();
-                    self.active_contact = Some(contact.clone());
-
-                    for c in &mut self.contacts {
-                        c.update(contact_card::Message::TurnOffActive, conn);
-                    }
-
-                    if let Some(contact_card) =
-                        self.contacts.iter_mut().find(|c| c.id == wrapped.from)
-                    {
-                        contact_card.update(contact_card::Message::TurnOnActive, conn);
-                    }
+                    command = self.set_active_contact(contact, conn);
+                    self.update_all_contacts(contact_card::Message::TurnOffActive, conn);
+                    self.find_and_update_contact(
+                        contact_card::Message::TurnOnActive,
+                        conn,
+                        |contact| contact.id == wrapped.from,
+                    );
                 }
             }
         }
 
         command
+    }
+
+    fn set_active_contact(
+        &mut self,
+        contact: &DbContact,
+        conn: &mut BackEndConnection,
+    ) -> Command<Message> {
+        let mut command = Command::none();
+        if self.active_contact.as_ref() != Some(&contact) {
+            conn.send(net::Message::FetchMessages(contact.clone()));
+            self.messages = vec![];
+            command = text_input::focus(CHAT_INPUT_ID.clone());
+        }
+        self.dm_msg = "".into();
+        self.active_contact = Some(contact.clone());
+        command
+    }
+
+    fn update_all_contacts(
+        &mut self,
+        message: contact_card::Message,
+        conn: &mut BackEndConnection,
+    ) {
+        for contact in &mut self.contacts {
+            contact.update(message.clone(), conn);
+        }
+    }
+
+    fn find_and_update_contact<F>(
+        &mut self,
+        message: contact_card::Message,
+        conn: &mut BackEndConnection,
+        predicate: F,
+    ) where
+        F: Fn(&&mut ContactCard) -> bool,
+    {
+        if let Some(contact_card) = self.contacts.iter_mut().find(predicate) {
+            contact_card.update(message, conn);
+        }
     }
 
     fn calculate_ctx_menu_pos(&mut self, point: iced_native::Point) {
@@ -667,6 +729,16 @@ impl State {
             {
                 self.context_menu_position.x -= CONTEXT_MENU_WIDTH;
             }
+        }
+    }
+
+    fn move_contact_to_top(&mut self, db_contact: &DbContact) {
+        // Get the position of the contact to be moved.
+        if let Some(position) = find_contact_position(&self.contacts, db_contact) {
+            // If found, remove it from its current position.
+            let contact_card = self.contacts.remove(position);
+            // Insert it at the top.
+            self.contacts.insert(0, contact_card);
         }
     }
 }
@@ -861,6 +933,25 @@ fn make_context_menu<'a>(response: &Option<RelaysResponse>) -> Element<'a, Messa
         .into()
 }
 
+// Function to find the position of a contact in the contacts list
+fn find_contact_position(contacts: &[ContactCard], db_contact: &DbContact) -> Option<usize> {
+    contacts
+        .iter()
+        .position(|card| card.contact.pubkey() == db_contact.pubkey())
+}
+
+// Function to calculate the scroll offset for a given position
+fn calculate_scroll_offset(position: usize, total_height: f32, card_height: f32) -> RelativeOffset {
+    let card_list_height = position as f32 * card_height + card_height;
+    let y = card_list_height / total_height;
+    tracing::info!("position: {}", position);
+    tracing::info!("card list height: {}", card_list_height);
+    tracing::info!("total_height: {}", total_height);
+    tracing::info!("scroll offset: {}", y);
+    tracing::info!("-----END----");
+    RelativeOffset { x: 0.0, y }
+}
+
 #[derive(Debug, Clone)]
 pub struct RelaysResponse {
     pub confirmed_relays: Vec<DbRelayResponse>,
@@ -887,3 +978,44 @@ const CHAT_INPUT_HEIGHT: f32 = 50.0;
 const MODAL_WIDTH: f32 = 400.0;
 const CONTEXT_MENU_WIDTH: f32 = 130.0;
 const CTX_BUTTON_HEIGHT: f32 = 30.0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_scroll_offset_at_zero() {
+        let position = 0;
+        let total_height = 200.0;
+        let card_height = 20.0;
+        let expected_offset = RelativeOffset { x: 0.0, y: 0.0 };
+        assert_eq!(
+            calculate_scroll_offset(position, total_height, card_height),
+            expected_offset
+        );
+    }
+
+    #[test]
+    fn test_calculate_scroll_offset_at_middle() {
+        let position = 5;
+        let total_height = 200.0;
+        let card_height = 20.0;
+        let expected_offset = RelativeOffset { x: 0.0, y: 0.5 };
+        assert_eq!(
+            calculate_scroll_offset(position, total_height, card_height),
+            expected_offset
+        );
+    }
+
+    #[test]
+    fn test_calculate_scroll_offset_at_end() {
+        let position = 10;
+        let total_height = 200.0;
+        let card_height = 20.0;
+        let expected_offset = RelativeOffset { x: 0.0, y: 1.0 };
+        assert_eq!(
+            calculate_scroll_offset(position, total_height, card_height),
+            expected_offset
+        );
+    }
+}

@@ -19,37 +19,16 @@ pub async fn handle_metadata_event(
     pool: &SqlitePool,
     cache_pool: &SqlitePool,
     relay_url: &Url,
-    ns_event: nostr_sdk::Event,
+    db_event: DbEvent,
 ) -> Result<Event, Error> {
     tracing::debug!("handle_metadata_event");
-
-    // create event struct
-    let mut db_event = DbEvent::confirmed_event(ns_event, relay_url)?;
-    // insert into database
-    let (row_id, rows_changed) = DbEvent::insert(pool, &db_event).await?;
-    db_event = db_event.with_id(row_id);
-    relay_response_ok(pool, relay_url, &db_event).await?;
-
-    if rows_changed == 0 {
-        tracing::info!("Event already in database");
-        return Ok(Event::None);
-    }
-
     tracing::info!(
         "Received metadata event for public key: {}",
         db_event.pubkey
     );
     tracing::debug!("{:?}", db_event);
-    let metadata = nostr_sdk::Metadata::from_json(&db_event.content)
-        .map_err(|_| Error::JsonToMetadata(db_event.content.clone()))?;
-    let rows_changed = ProfileCache::insert_by_public_key(
-        cache_pool,
-        &db_event.pubkey,
-        &db_event.event_hash,
-        &db_event.remote_creation().unwrap(),
-        &metadata,
-    )
-    .await?;
+
+    let rows_changed = ProfileCache::insert_with_event(cache_pool, &db_event).await?;
 
     if rows_changed == 0 {
         tracing::info!("Cache already up to date");

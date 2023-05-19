@@ -8,8 +8,11 @@ use crate::net::events::Event;
 use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::utils::contact_matches_search_full;
+use crate::views::RouterMessage;
 use crate::widget::Element;
 use crate::{components::text::title, db::DbContact};
+
+use super::SettingsRouterMessage;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -18,12 +21,12 @@ pub enum Message {
     OpenProfileModal(DbContact),
     ContactRowMessage(contact_row::Message),
     OpenAddContactModal,
-    OpenEditContactModal(DbContact),
     OpenImportContactModal,
     SearchContactInputChange(String),
     RefreshContacts,
     SendContactList,
     RelaysConfirmationPress(Option<ContactsRelaysResponse>),
+    SendMessageTo(DbContact),
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +51,7 @@ pub struct State {
     contacts: Vec<DbContact>,
     search_contact_input: String,
     relays_response: Option<ContactsRelaysResponse>,
+    contact_list_changed: bool,
 }
 impl State {
     pub fn new(conn: &mut BackEndConnection) -> Self {
@@ -57,11 +61,17 @@ impl State {
             contacts: vec![],
             search_contact_input: "".into(),
             relays_response: None,
+            contact_list_changed: false,
         }
     }
 
-    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Option<Message> {
+    pub fn update(
+        &mut self,
+        message: Message,
+        conn: &mut BackEndConnection,
+    ) -> Option<SettingsRouterMessage> {
         match message {
+            Message::SendMessageTo(_) => (),
             Message::RelaysConfirmationPress(_) => (),
             Message::SendContactList => {
                 conn.send(net::Message::SendContactListToRelays);
@@ -69,22 +79,28 @@ impl State {
             Message::RefreshContacts => {
                 conn.send(net::Message::RefreshContactsProfile);
             }
-            Message::OpenProfileModal(_) => (),
-            Message::OpenEditContactModal(_) => (),
-            Message::OpenAddContactModal => (),
-            Message::OpenImportContactModal => (),
+            Message::OpenProfileModal(db_contact) => {
+                return Some(SettingsRouterMessage::OpenProfileModal(db_contact))
+            }
+            Message::OpenAddContactModal => {
+                return Some(SettingsRouterMessage::OpenAddContactModal)
+            }
+            Message::OpenImportContactModal => {
+                return Some(SettingsRouterMessage::OpenImportContactModal)
+            }
             Message::SearchContactInputChange(text) => self.search_contact_input = text,
             Message::ContactRowMessage(ct_msg) => match ct_msg {
                 // TODO: dont return a message, find a better way
-                contact_row::Message::OpenProfile(contact) => {
-                    return Some(Message::OpenProfileModal(contact));
+                contact_row::Message::SendMessageTo(contact) => {
+                    return Some(SettingsRouterMessage::RouterMessage(
+                        RouterMessage::GoToChatTo(contact),
+                    ));
                 }
                 contact_row::Message::DeleteContact(contact) => {
                     conn.send(net::Message::DeleteContact(contact))
                 }
                 contact_row::Message::EditContact(contact) => {
-                    // self.modal_state = ModalState::add_contact(Some(contact));
-                    return Some(Message::OpenEditContactModal(contact));
+                    return Some(SettingsRouterMessage::OpenEditContactModal(contact));
                 }
             },
             Message::DeleteContact(contact) => {
@@ -93,6 +109,7 @@ impl State {
             Message::BackEndEvent(event) => match event {
                 Event::ConfirmedContactList(_) => {
                     conn.send(net::Message::FetchRelayResponsesContactList);
+                    self.contact_list_changed = false;
                 }
                 Event::GotRelayResponsesContactList {
                     responses,
@@ -112,12 +129,15 @@ impl State {
                         *contact = db_contact;
                     }
                 }
+                Event::ReceivedContactList { .. } => {
+                    conn.send(net::Message::FetchContacts);
+                }
                 Event::FileContactsImported(_)
-                | Event::ReceivedContactList { .. }
                 | Event::ContactCreated(_)
                 | Event::ContactUpdated(_)
                 | Event::ContactDeleted(_) => {
                     conn.send(net::Message::FetchContacts);
+                    self.contact_list_changed = true;
                 }
                 _ => (),
             },
