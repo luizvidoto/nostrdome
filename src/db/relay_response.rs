@@ -1,4 +1,4 @@
-use nostr_sdk::{EventId, Url};
+use nostr::{EventId, Url};
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{FromRow, Row, SqlitePool};
@@ -77,10 +77,10 @@ impl DbRelayResponse {
         Ok(output.last_insert_rowid())
     }
 
-    pub(crate) fn with_id(mut self, id: i64) -> Self {
-        self.id = Some(id);
-        self
-    }
+    // pub(crate) fn with_id(mut self, id: i64) -> Self {
+    //     self.id = Some(id);
+    //     self
+    // }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -1,4 +1,4 @@
-pub mod contact_card;
+pub mod chat_contact;
 pub mod relay_row;
 pub mod text;
 pub mod text_input_group;

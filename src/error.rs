@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use nostr_sdk::{prelude::TagKind, EventId};
+use nostr::{prelude::TagKind, EventId};
 use thiserror::Error;
 
 use crate::{db::DbContactError, net::ImageSize};
@@ -41,7 +41,7 @@ pub enum Error {
     #[error("Invalid content-type header: {0}")]
     ImageInvalidContentType(String),
 
-    #[error("Error parsing JSON content into nostr_sdk::Metadata: {0}")]
+    #[error("Error parsing JSON content into nostr::Metadata: {0}")]
     JsonToMetadata(String),
 
     #[error("Failed to send to nostr input channel: {0}")]
@@ -133,16 +133,18 @@ pub enum Error {
     Io(#[from] std::io::Error),
 
     // Nostr Sdk errors
-    #[error("Nostr Sdk Client Error: {0}")]
-    NostrSdkError(#[from] nostr_sdk::client::Error),
+    #[error("Nostr SDK Client Error: {0}")]
+    NostrClientError(#[from] nostr_sdk::client::Error),
+    #[error("Nostr Nip 19 Error: {0}")]
+    NostrNip19Error(#[from] nostr::nips::nip19::Error),
+
     #[error("Nostr Sdk Key Error: {0}")]
-    NostrSdkKeyError(#[from] nostr_sdk::key::Error),
+    NostrSdkKeyError(#[from] nostr::key::Error),
     #[error("Nostr Sdk Event Builder Error: {0}")]
-    NostrSdkEventBuilderError(#[from] nostr_sdk::prelude::builder::Error),
+    NostrSdkEventBuilderError(#[from] nostr::prelude::builder::Error),
     #[error("Nostr secp256k1 Error: {0}")]
-    NostrSecp256k1Error(#[from] nostr_sdk::secp256k1::Error),
-    #[error("Nostr relay Error: {0}")]
-    NostrSdkRelayError(#[from] nostr_sdk::relay::Error),
+    NostrSecp256k1Error(#[from] nostr::secp256k1::Error),
+
     #[error("Invalid Date: {0}")]
     InvalidDate(String),
     #[error(

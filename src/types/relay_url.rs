@@ -1,6 +1,6 @@
 use crate::error::Error;
 
-use nostr_sdk::prelude::UncheckedUrl;
+use nostr::prelude::UncheckedUrl;
 use regex::Regex;
 use std::{fmt, str::FromStr};
 

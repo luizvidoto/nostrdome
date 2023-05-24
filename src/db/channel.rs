@@ -4,7 +4,7 @@ use crate::{
     utils::{event_hash_or_err, millis_to_naive_or_err},
 };
 use chrono::NaiveDateTime;
-use nostr_sdk::EventId;
+use nostr::EventId;
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
@@ -69,7 +69,7 @@ impl DbChannel {
     fn info_from_tags(_db_event: &DbEvent) -> Result<ChannelContent, Error> {
         // let tag = db_event.tags.get(0).ok_or(Error::NoTags)?;
         // match tag {
-        //     nostr_sdk::Tag:: =>
+        //     nostr::Tag:: =>
         //     _ => Err(Error::WrongTag),
         // }
         Ok(ChannelContent::empty())

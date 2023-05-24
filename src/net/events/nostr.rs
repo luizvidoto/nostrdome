@@ -1,6 +1,6 @@
 use sqlx::SqlitePool;
 
-use crate::db::{DbContact, DbEvent, DbRelay};
+use crate::db::{DbContact, DbEvent, DbRelay, UserConfig};
 use crate::error::Error;
 use crate::net::operations::contact::get_contact_list_profile;
 use crate::net::operations::relay::{
@@ -12,7 +12,8 @@ use async_stream::stream;
 use futures::channel::mpsc;
 use futures::{Future, Stream, StreamExt};
 use iced::futures::stream::Fuse;
-use nostr_sdk::{Client, Keys, RelayPoolNotification};
+use nostr::Keys;
+use nostr_sdk::{Client, Options, RelayPoolNotification};
 use std::pin::Pin;
 
 use super::{backend::BackEndInput, Event};
@@ -24,14 +25,14 @@ pub enum NostrInput {
         last_event: Option<DbEvent>,
         contact_list: Vec<DbContact>,
     },
-    FetchRelayServer(nostr_sdk::Url),
+    FetchRelayServer(nostr::Url),
     FetchRelayServers,
     AddRelay(DbRelay),
     DeleteRelay(DbRelay),
     ToggleRelayRead((DbRelay, bool)),
     ToggleRelayWrite((DbRelay, bool)),
     ConnectToRelay((DbRelay, Option<DbEvent>)),
-    SendEventToRelays(nostr_sdk::Event),
+    SendEventToRelays(nostr::Event),
     GetContactListProfiles(Vec<DbContact>),
     CreateChannel,
     RequestEventsOf((DbRelay, Vec<DbContact>)),
@@ -204,8 +205,10 @@ pub async fn prepare_client(
     tracing::debug!("prepare_client");
     tracing::info!("Fetching relays and last event to nostr client");
     let relays = DbRelay::fetch(pool).await?;
-    let last_event = DbEvent::fetch_last(pool).await?;
+    let last_event = DbEvent::fetch_last_kind(pool, nostr::Kind::EncryptedDirectMessage).await?;
     let contact_list = DbContact::fetch(pool, cache_pool).await?;
+
+    UserConfig::store_first_login(pool).await?;
 
     Ok(NostrInput::PrepareClient {
         relays,
@@ -222,7 +225,13 @@ pub async fn client_with_stream(
 ) {
     // Create new client
     tracing::debug!("Creating Nostr Client");
-    let nostr_client = Client::new(keys);
+    let nostr_client = Client::with_opts(
+        keys,
+        Options::new()
+            .wait_for_connection(false)
+            .wait_for_send(false)
+            .wait_for_subscription(false),
+    );
 
     let mut notifications = nostr_client.notifications();
     let notifications_stream = stream! {

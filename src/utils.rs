@@ -1,9 +1,9 @@
 #![allow(dead_code)]
-use crate::{db::DbContact, error::Error};
+use crate::{components::chat_contact::ChatContact, db::DbContact, error::Error};
 use chrono::{DateTime, Local, NaiveDateTime, Offset};
 use iced::widget::image::Handle;
 use image::{ImageBuffer, Luma, Rgba};
-use nostr_sdk::prelude::*;
+use nostr::prelude::*;
 use qrcode::QrCode;
 use serde::de::DeserializeOwned;
 use std::{
@@ -14,7 +14,7 @@ use std::{
 };
 
 // Accepts both hex and bech32 keys and returns the hex encoded key
-pub fn parse_key(key: String) -> Result<String, anyhow::Error> {
+pub fn parse_key(key: String) -> Result<String, Error> {
     // Check if the key is a bech32 encoded key
     let parsed_key = if key.starts_with("npub") {
         XOnlyPublicKey::from_bech32(key)?.to_string()
@@ -84,16 +84,16 @@ pub fn millis_to_naive(millis: i64) -> Result<NaiveDateTime, Error> {
     NaiveDateTime::from_timestamp_opt(ts_secs, ts_ns as u32).ok_or(Error::InvalidTimestamp(millis))
 }
 
-pub fn ns_event_to_millis(created_at: nostr_sdk::Timestamp) -> i64 {
+pub fn ns_event_to_millis(created_at: nostr::Timestamp) -> i64 {
     created_at.as_i64() * 1000
 }
 
-pub fn ns_event_to_naive(created_at: nostr_sdk::Timestamp) -> Result<NaiveDateTime, Error> {
+pub fn ns_event_to_naive(created_at: nostr::Timestamp) -> Result<NaiveDateTime, Error> {
     Ok(millis_to_naive(ns_event_to_millis(created_at))?)
 }
 
-pub fn naive_to_event_tt(naive_utc: NaiveDateTime) -> nostr_sdk::Timestamp {
-    nostr_sdk::Timestamp::from(naive_utc.timestamp() as u64)
+pub fn naive_to_event_tt(naive_utc: NaiveDateTime) -> nostr::Timestamp {
+    nostr::Timestamp::from(naive_utc.timestamp() as u64)
 }
 
 pub fn handle_decode_error<E>(error: E, index: &str) -> sqlx::Error
@@ -126,13 +126,13 @@ pub fn url_or_err(url: &str, index: &str) -> Result<Url, sqlx::Error> {
 pub fn unchecked_url_or_err(url: &str, index: &str) -> Result<UncheckedUrl, sqlx::Error> {
     UncheckedUrl::from_str(url).map_err(|e| handle_decode_error(e, index))
 }
-pub fn profile_meta_or_err(json: &str, index: &str) -> Result<nostr_sdk::Metadata, sqlx::Error> {
+pub fn profile_meta_or_err(json: &str, index: &str) -> Result<nostr::Metadata, sqlx::Error> {
     tracing::debug!("profile meta json: {}", json);
-    nostr_sdk::Metadata::from_json(json).map_err(|e| handle_decode_error(e, index))
+    nostr::Metadata::from_json(json).map_err(|e| handle_decode_error(e, index))
 }
 
-pub fn contact_matches_search_selected_name(contact: &DbContact, search: &str) -> bool {
-    let selected_name = contact.select_name();
+pub fn chat_matches_search(chat: &ChatContact, search: &str) -> bool {
+    let selected_name = chat.contact.select_name();
     selected_name
         .to_lowercase()
         .contains(&search.to_lowercase())

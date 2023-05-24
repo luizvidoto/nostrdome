@@ -1,6 +1,6 @@
 use iced::widget::{button, column, container, row, text, tooltip, Space};
 use iced::{Alignment, Length};
-use nostr_sdk::Metadata;
+use nostr::Metadata;
 
 use crate::components::common_scrollable;
 use crate::components::text::title;
@@ -63,8 +63,8 @@ pub struct State {
 }
 impl State {
     pub fn new(conn: &mut BackEndConnection) -> Self {
-        conn.send(net::Message::GetUserProfileMeta);
-        conn.send(net::Message::FetchRelayResponsesUserProfile);
+        conn.send(net::ToBackend::GetUserProfileMeta);
+        conn.send(net::ToBackend::FetchRelayResponsesUserProfile);
         Self {
             name: "".into(),
             user_name: "".into(),
@@ -88,7 +88,7 @@ impl State {
             Message::BackEndEvent(back_ev) => match back_ev {
                 Event::ConfirmedMetadata { is_user, .. } => {
                     if is_user {
-                        conn.send(net::Message::FetchRelayResponsesUserProfile);
+                        conn.send(net::ToBackend::FetchRelayResponsesUserProfile);
                     }
                 }
                 Event::GotRelayResponsesUserProfile {
@@ -134,7 +134,7 @@ impl State {
             Message::SavePress => {
                 let meta = self.make_meta();
                 if self.all_valid() {
-                    conn.send(net::Message::UpdateUserProfileMeta(meta))
+                    conn.send(net::ToBackend::UpdateUserProfileMeta(meta))
                 }
             }
         }
@@ -150,21 +150,21 @@ impl State {
             .nip05(self.nostr_addrs.clone());
 
         if !self.picture_url.is_empty() {
-            match nostr_sdk::Url::parse(&self.picture_url) {
+            match nostr::Url::parse(&self.picture_url) {
                 Ok(picture_url) => meta = meta.picture(picture_url),
                 Err(_e) => self.picture_url_is_invalid = true,
             }
         }
 
         if !self.banner.is_empty() {
-            match nostr_sdk::Url::parse(&self.banner) {
+            match nostr::Url::parse(&self.banner) {
                 Ok(banner_url) => meta = meta.banner(banner_url),
                 Err(_e) => self.banner_url_is_invalid = true,
             }
         }
 
         if !self.website.is_empty() {
-            match nostr_sdk::Url::parse(&self.website) {
+            match nostr::Url::parse(&self.website) {
                 Ok(website_url) => meta = meta.website(website_url),
                 Err(_e) => self.website_url_is_invalid = true,
             }

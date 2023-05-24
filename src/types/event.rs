@@ -1,4 +1,4 @@
-use nostr_sdk::{Kind, Tag};
+use nostr::{Kind, Tag};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

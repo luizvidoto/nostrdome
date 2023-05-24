@@ -2,7 +2,7 @@ use iced::alignment::{self, Horizontal};
 use iced::widget::{button, column, container, row, text, text_input, tooltip, Space};
 use iced::{Command, Length, Subscription};
 use iced_aw::{Card, Modal};
-use nostr_sdk::Url;
+use nostr::Url;
 
 use crate::components::text::title;
 use crate::components::text_input_group::TextInputGroup;
@@ -45,7 +45,7 @@ impl State {
         iced::Subscription::batch(relay_subs)
     }
     pub fn new(conn: &mut BackEndConnection) -> Self {
-        conn.send(net::Message::FetchRelays);
+        conn.send(net::ToBackend::FetchRelays);
         Self {
             relays: vec![],
             show_modal: false,
@@ -74,7 +74,7 @@ impl State {
                     self.show_modal = false;
                     self.add_relay_input = "".into();
                     let db_relay = DbRelay::new(url);
-                    conn.send(net::Message::AddRelay(db_relay));
+                    conn.send(net::ToBackend::AddRelay(db_relay));
                 }
                 Err(e) => {
                     tracing::error!("{}", e);
@@ -91,7 +91,7 @@ impl State {
 
             Message::BackEndEvent(ev) => match ev {
                 Event::RelayCreated(db_relay) => {
-                    conn.send(net::Message::RequestEventsOf(db_relay.clone()));
+                    conn.send(net::ToBackend::RequestEventsOf(db_relay.clone()));
                     self.relays
                         .push(RelayRow::new(self.relays.len() as i32, db_relay, conn))
                 }

@@ -9,7 +9,8 @@ use chrono::Utc;
 use iced::futures::channel::mpsc;
 use iced::widget::{button, checkbox, container, row, text, tooltip, Space};
 use iced::{alignment, Command, Length, Subscription};
-use nostr_sdk::{Relay, RelayStatus, Timestamp};
+use nostr::Timestamp;
+use nostr_sdk::{Relay, RelayStatus};
 
 #[derive(Debug, Clone)]
 pub struct RelayRowConnection(mpsc::Sender<Input>);
@@ -106,7 +107,7 @@ pub struct RelayRow {
 
 impl RelayRow {
     pub fn new(id: i32, db_relay: DbRelay, conn: &mut BackEndConnection) -> Self {
-        conn.send(net::Message::FetchRelayServer(db_relay.url.clone()));
+        conn.send(net::ToBackend::FetchRelayServer(db_relay.url.clone()));
         Self {
             id,
             db_relay,
@@ -221,24 +222,24 @@ impl RelayRow {
             Message::None => (),
             Message::SendContactListToRelays => {
                 if let Mode::ModalView { .. } = &mut self.mode {
-                    conn.send(net::Message::SendContactListToRelays);
+                    conn.send(net::ToBackend::SendContactListToRelays);
                     self.mode.loading();
                 }
             }
 
             Message::ConnectToRelay(db_relay) => {
-                conn.send(net::Message::ConnectToRelay(db_relay));
+                conn.send(net::ToBackend::ConnectToRelay(db_relay));
             }
             Message::DeleteRelay(db_relay) => {
-                conn.send(net::Message::DeleteRelay(db_relay));
+                conn.send(net::ToBackend::DeleteRelay(db_relay));
             }
             Message::ToggleRead(db_relay) => {
                 let read = !db_relay.read;
-                conn.send(net::Message::ToggleRelayRead((db_relay, read)));
+                conn.send(net::ToBackend::ToggleRelayRead((db_relay, read)));
             }
             Message::ToggleWrite(db_relay) => {
                 let write = !db_relay.write;
-                conn.send(net::Message::ToggleRelayWrite((db_relay, write)));
+                conn.send(net::ToBackend::ToggleRelayWrite((db_relay, write)));
             }
             Message::UpdateStatus((status, last_connected_at)) => {
                 self.db_relay = self.db_relay.clone().with_status(status);
@@ -281,7 +282,7 @@ impl RelayRow {
                 }
                 None => {
                     // fetch relays again?
-                    conn.send(net::Message::FetchRelayServer(self.db_relay.url.clone()));
+                    conn.send(net::ToBackend::FetchRelayServer(self.db_relay.url.clone()));
                     ch.send(Input::Wait);
                 }
             }

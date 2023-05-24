@@ -33,6 +33,7 @@ pub enum CMessage<M: Clone + Debug> {
     EditMode,
     UnderlayMessage(M),
     CopyPubkey,
+    DeleteContact,
 }
 #[derive(Debug, Clone)]
 pub struct ContactDetails {
@@ -75,7 +76,7 @@ impl ContactDetails {
     }
     pub(crate) fn viewer(db_contact: &DbContact, conn: &mut BackEndConnection) -> Self {
         if let Some(cache) = db_contact.get_profile_cache() {
-            conn.send(net::Message::GetDbEventWithHash(cache.event_hash));
+            conn.send(net::ToBackend::GetDbEventWithHash(cache.event_hash));
         }
         let mut details = Self::edit(db_contact, conn);
         details.mode = Mode::View;
@@ -268,6 +269,10 @@ impl ContactDetails {
             Card::new(title, modal_body)
                 .foot(
                     row![
+                        button(text("Delete").horizontal_alignment(alignment::Horizontal::Center),)
+                            .width(Length::Fill)
+                            .on_press(CMessage::DeleteContact)
+                            .style(style::Button::Danger),
                         button(text("Cancel").horizontal_alignment(alignment::Horizontal::Center),)
                             .width(Length::Fill)
                             .on_press(CMessage::CloseModal),
@@ -302,6 +307,12 @@ impl ContactDetails {
     ) -> (Command<CMessage<M>>, bool) {
         let mut command = Command::none();
         match message {
+            CMessage::DeleteContact => {
+                if let Some(contact) = &self.db_contact {
+                    conn.send(net::ToBackend::DeleteContact(contact.to_owned()));
+                }
+                return (command, true);
+            }
             CMessage::CopyPubkey => {
                 command = clipboard::write(self.modal_pubkey_input.to_owned());
             }
@@ -347,8 +358,8 @@ impl ContactDetails {
         match submit_result {
             Ok(db_contact) => {
                 match self.mode {
-                    Mode::Edit => conn.send(net::Message::UpdateContact(db_contact)),
-                    Mode::Add => conn.send(net::Message::AddContact(db_contact)),
+                    Mode::Edit => conn.send(net::ToBackend::UpdateContact(db_contact)),
+                    Mode::Add => conn.send(net::ToBackend::AddContact(db_contact)),
                     Mode::View => (),
                 }
 

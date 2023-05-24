@@ -55,8 +55,8 @@ pub struct State {
 }
 impl State {
     pub fn new(conn: &mut BackEndConnection) -> Self {
-        conn.send(net::Message::FetchContacts);
-        conn.send(net::Message::FetchRelayResponsesContactList);
+        conn.send(net::ToBackend::FetchContacts);
+        conn.send(net::ToBackend::FetchRelayResponsesContactList);
         Self {
             contacts: vec![],
             search_contact_input: "".into(),
@@ -74,10 +74,10 @@ impl State {
             Message::SendMessageTo(_) => (),
             Message::RelaysConfirmationPress(_) => (),
             Message::SendContactList => {
-                conn.send(net::Message::SendContactListToRelays);
+                conn.send(net::ToBackend::SendContactListToRelays);
             }
             Message::RefreshContacts => {
-                conn.send(net::Message::RefreshContactsProfile);
+                conn.send(net::ToBackend::RefreshContactsProfile);
             }
             Message::OpenProfileModal(db_contact) => {
                 return Some(SettingsRouterMessage::OpenProfileModal(db_contact))
@@ -97,18 +97,18 @@ impl State {
                     ));
                 }
                 contact_row::Message::DeleteContact(contact) => {
-                    conn.send(net::Message::DeleteContact(contact))
+                    conn.send(net::ToBackend::DeleteContact(contact))
                 }
                 contact_row::Message::EditContact(contact) => {
                     return Some(SettingsRouterMessage::OpenEditContactModal(contact));
                 }
             },
             Message::DeleteContact(contact) => {
-                conn.send(net::Message::DeleteContact(contact));
+                conn.send(net::ToBackend::DeleteContact(contact));
             }
             Message::BackEndEvent(event) => match event {
                 Event::ConfirmedContactList(_) => {
-                    conn.send(net::Message::FetchRelayResponsesContactList);
+                    conn.send(net::ToBackend::FetchRelayResponsesContactList);
                     self.contact_list_changed = false;
                 }
                 Event::GotRelayResponsesContactList {
@@ -130,13 +130,13 @@ impl State {
                     }
                 }
                 Event::ReceivedContactList { .. } => {
-                    conn.send(net::Message::FetchContacts);
+                    conn.send(net::ToBackend::FetchContacts);
                 }
                 Event::FileContactsImported(_)
                 | Event::ContactCreated(_)
                 | Event::ContactUpdated(_)
                 | Event::ContactDeleted(_) => {
-                    conn.send(net::Message::FetchContacts);
+                    conn.send(net::ToBackend::FetchContacts);
                     self.contact_list_changed = true;
                 }
                 _ => (),

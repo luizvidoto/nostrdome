@@ -1,6 +1,7 @@
 use std::time::Duration;
 
-use nostr_sdk::{secp256k1::XOnlyPublicKey, Client, Filter, Keys, Kind, Url};
+use nostr::{Filter, Keys, Kind};
+use nostr_sdk::Client;
 use sqlx::SqlitePool;
 
 use crate::{
@@ -30,20 +31,8 @@ pub async fn fetch_and_decrypt_chat(
         chat_messages.push(chat_message);
     }
 
-    let db_contact = DbContact::update_unseen_count(pool, db_contact, 0).await?;
-
     Ok(Event::GotChatMessages((db_contact, chat_messages)))
 }
-
-// pub async fn get_contact_profile(client: &Client, db_contact: DbContact) -> Result<Event, Error> {
-//     tracing::debug!("get_contact_profile");
-//     let filter = Filter::new()
-//         .author(db_contact.pubkey().to_string())
-//         .kind(Kind::Metadata);
-//     let timeout = Some(Duration::from_secs(10));
-//     client.req_events_of(vec![filter], timeout).await;
-//     Ok(Event::RequestedContactProfile(db_contact))
-// }
 
 pub async fn get_contact_list_profile(
     client: &Client,

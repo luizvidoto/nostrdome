@@ -26,8 +26,8 @@ pub struct State {
 }
 impl State {
     pub fn new(conn: &mut BackEndConnection) -> Self {
-        conn.send(net::Message::FetchContacts);
-        conn.send(net::Message::FetchAllMessageEvents);
+        conn.send(net::ToBackend::FetchContacts);
+        conn.send(net::ToBackend::FetchAllMessageEvents);
         Self {
             contacts: Vec::new(),
             messages: Vec::new(),
@@ -58,7 +58,7 @@ impl State {
             Message::ExportContacts => {
                 self.contacts_state = LoadingState::Loading;
                 if let Some(path) = FileDialog::new().set_directory("/").save_file() {
-                    conn.send(net::Message::ExportContacts(path))
+                    conn.send(net::ToBackend::ExportContacts(path))
                 } else {
                     self.contacts_state = LoadingState::Idle;
                 }
@@ -66,7 +66,10 @@ impl State {
             Message::ExportMessages => {
                 self.messages_state = LoadingState::Loading;
                 if let Some(path) = FileDialog::new().set_directory("/").save_file() {
-                    conn.send(net::Message::ExportMessages((self.messages.clone(), path)));
+                    conn.send(net::ToBackend::ExportMessages((
+                        self.messages.clone(),
+                        path,
+                    )));
                 } else {
                     self.messages_state = LoadingState::Idle;
                 }

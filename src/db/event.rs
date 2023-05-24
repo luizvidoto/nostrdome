@@ -7,7 +7,7 @@ use crate::{
     error::{Error, FromDbEventError},
     utils::{handle_decode_error, millis_to_naive_or_err, ns_event_to_naive, url_or_err},
 };
-use nostr_sdk::{
+use nostr::{
     secp256k1::{schnorr::Signature, XOnlyPublicKey},
     EventId, Kind, Tag, Timestamp,
 };
@@ -22,8 +22,8 @@ pub struct DbEvent {
     pub local_creation: NaiveDateTime, // this is the time when the event was created at the app
     pub received_at: Option<NaiveDateTime>, // this is the time when the event was received at the app
     remote_creation: Option<NaiveDateTime>, // this is the time that the relay says the event was created at
-    pub relay_url: Option<nostr_sdk::Url>,
-    pub tags: Vec<nostr_sdk::Tag>,
+    pub relay_url: Option<nostr::Url>,
+    pub tags: Vec<nostr::Tag>,
     pub kind: Kind,
     pub content: String,
     pub sig: Signature,
@@ -32,8 +32,8 @@ pub struct DbEvent {
 impl DbEvent {
     const FETCH_QUERY: &'static str = "SELECT * FROM event";
 
-    pub fn to_ns_event(&self) -> Result<nostr_sdk::Event, Error> {
-        Ok(nostr_sdk::Event {
+    pub fn to_ns_event(&self) -> Result<nostr::Event, Error> {
+        Ok(nostr::Event {
             id: self.event_hash,
             pubkey: self.pubkey,
             created_at: Timestamp::from(
@@ -50,10 +50,7 @@ impl DbEvent {
 
     // when the app creates the event, there is no relay_url
     // when it receives from a relay there is
-    fn from_event(
-        event: nostr_sdk::Event,
-        relay_url: Option<&nostr_sdk::Url>,
-    ) -> Result<Self, Error> {
+    fn from_event(event: nostr::Event, relay_url: Option<&nostr::Url>) -> Result<Self, Error> {
         let (received_at, remote_creation, relay_url) = if let Some(relay_url) = relay_url {
             // the difference between remote creation and confirmed at
             (
@@ -80,15 +77,12 @@ impl DbEvent {
         })
     }
 
-    pub fn confirmed_event(
-        event: nostr_sdk::Event,
-        relay_url: &nostr_sdk::Url,
-    ) -> Result<Self, Error> {
+    pub fn confirmed_event(event: nostr::Event, relay_url: &nostr::Url) -> Result<Self, Error> {
         Ok(Self::from_event(event, Some(relay_url))?)
     }
 
     // pending event is not confirmed yet
-    pub fn pending_event(event: nostr_sdk::Event) -> Result<Self, Error> {
+    pub fn pending_event(event: nostr::Event) -> Result<Self, Error> {
         Ok(Self::from_event(event, None)?)
     }
 
@@ -113,10 +107,7 @@ impl DbEvent {
 
         Ok(output)
     }
-    pub async fn fetch_kind(
-        pool: &SqlitePool,
-        kind: nostr_sdk::Kind,
-    ) -> Result<Vec<DbEvent>, Error> {
+    pub async fn fetch_kind(pool: &SqlitePool, kind: nostr::Kind) -> Result<Vec<DbEvent>, Error> {
         let sql = format!("{} WHERE kind = ?", Self::FETCH_QUERY);
         let output = sqlx::query_as::<_, DbEvent>(&sql)
             .bind(kind.as_u32())
@@ -147,7 +138,7 @@ impl DbEvent {
 
     pub async fn fetch_last_kind(
         pool: &SqlitePool,
-        kind: nostr_sdk::Kind,
+        kind: nostr::Kind,
     ) -> Result<Option<DbEvent>, Error> {
         let sql = format!(
             "{} WHERE kind = ? ORDER BY event_id DESC LIMIT 1",
@@ -161,7 +152,7 @@ impl DbEvent {
 
     pub async fn fetch_last_kind_pubkey(
         pool: &SqlitePool,
-        kind: nostr_sdk::Kind,
+        kind: nostr::Kind,
         pubkey: &XOnlyPublicKey,
     ) -> Result<Option<DbEvent>, Error> {
         let sql = format!(
@@ -217,7 +208,7 @@ impl DbEvent {
 
     pub async fn confirm_event(
         pool: &SqlitePool,
-        relay_url: &nostr_sdk::Url,
+        relay_url: &nostr::Url,
         mut db_event: DbEvent,
     ) -> Result<DbEvent, Error> {
         tracing::info!("Confirming event");

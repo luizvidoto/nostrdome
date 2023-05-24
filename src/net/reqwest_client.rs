@@ -3,7 +3,7 @@ use directories::ProjectDirs;
 use futures::TryStreamExt;
 use futures_util::StreamExt;
 use image::ImageFormat;
-use nostr_sdk::{secp256k1::XOnlyPublicKey, Url};
+use nostr::{secp256k1::XOnlyPublicKey, Url};
 use serde::Deserialize;
 use sqlx::SqlitePool;
 use std::env;

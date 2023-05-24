@@ -2,7 +2,7 @@ use futures::channel::mpsc;
 use iced::widget::{button, container, row, text, Space};
 use iced::Subscription;
 use iced::{alignment, Alignment, Command, Length};
-use nostr_sdk::RelayStatus;
+use nostr_sdk::{Relay, RelayStatus};
 
 use crate::consts::NOSTRTALK_VERSION;
 use crate::icon::signal_icon;
@@ -24,7 +24,7 @@ impl NetConnection {
 #[derive(Debug, Clone)]
 pub enum Input {
     Wait,
-    GetStatus(Vec<nostr_sdk::Relay>),
+    GetStatus(Vec<Relay>),
 }
 pub enum NetState {
     Initial,
@@ -33,7 +33,7 @@ pub enum NetState {
     },
     Querying {
         receiver: mpsc::UnboundedReceiver<Input>,
-        relays: Vec<nostr_sdk::Relay>,
+        relays: Vec<Relay>,
     },
 }
 
@@ -49,7 +49,7 @@ pub enum Message {
 pub struct StatusBar {
     pub connected_relays: usize,
     pub sub_channel: Option<NetConnection>,
-    pub client_relays: Option<Vec<nostr_sdk::Relay>>,
+    pub client_relays: Option<Vec<Relay>>,
 }
 impl StatusBar {
     pub fn new() -> Self {
@@ -70,7 +70,7 @@ impl StatusBar {
                 self.send_action_to_channel(conn);
             }
             Event::RelayConnected(_) => {
-                conn.send(net::Message::FetchRelayServers);
+                conn.send(net::ToBackend::FetchRelayServers);
             }
             _ => (),
         }
@@ -106,7 +106,7 @@ impl StatusBar {
             let input_msg = match &self.client_relays {
                 Some(relays) => Input::GetStatus(relays.clone()),
                 None => {
-                    conn.send(net::Message::FetchRelayServers);
+                    conn.send(net::ToBackend::FetchRelayServers);
                     Input::Wait
                 }
             };

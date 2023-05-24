@@ -6,8 +6,8 @@ use crate::style;
 use crate::widget::Element;
 use iced::alignment;
 use iced::widget::{button, column, container, row, text, tooltip, Space};
-use iced::{Alignment, Command, Length};
-use iced_aw::{Card, Modal};
+use iced::{Command, Length};
+use iced_aw::Modal;
 use std::fmt::Debug;
 
 #[derive(Debug, Clone)]
@@ -46,7 +46,12 @@ impl RelaysConfirmation {
     ) -> Element<'a, CMessage<M>> {
         let underlay_component = underlay.into().map(CMessage::UnderlayMessage);
         Modal::new(true, underlay_component, move || {
-            let title = title("Relays Confirmation").center_x();
+            let title_txt = format!(
+                "Relays Confirmation {}/{}",
+                self.responses.len(),
+                self.all_relays.len()
+            );
+            let title = title(title_txt).center_x();
             let header = container(title)
                 .width(Length::Fill)
                 .height(HEADER_HEIGHT)

@@ -2,7 +2,7 @@ use chrono::NaiveDateTime;
 use iced::widget::{column, container, row, text, Space};
 use iced::{alignment, Length};
 use iced::{clipboard, Point};
-use nostr_sdk::{secp256k1::XOnlyPublicKey, EventId};
+use nostr::{secp256k1::XOnlyPublicKey, EventId};
 use serde::{Deserialize, Serialize};
 
 use crate::components::MouseArea;
@@ -27,7 +27,7 @@ pub trait EventLike {
     fn pubkey(&self) -> XOnlyPublicKey;
 }
 
-impl EventLike for nostr_sdk::Event {
+impl EventLike for nostr::Event {
     fn created_at(&self) -> i64 {
         self.created_at.as_i64()
     }
@@ -59,7 +59,7 @@ pub struct ChatMessage {
 
 impl ChatMessage {
     pub fn from_db_message(
-        keys: &nostr_sdk::Keys,
+        keys: &nostr::Keys,
         db_message: &DbMessage,
         contact: &DbContact,
     ) -> Result<Self, Error> {
@@ -70,7 +70,7 @@ impl ChatMessage {
     }
 
     pub fn from_db_message_content(
-        keys: &nostr_sdk::Keys,
+        keys: &nostr::Keys,
         db_message: &DbMessage,
         contact: &DbContact,
         content: &str,

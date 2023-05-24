@@ -1,6 +1,6 @@
 use chrono::NaiveDateTime;
 use futures::channel::mpsc;
-use nostr_sdk::{Keys, Url};
+use nostr::{Keys, Url};
 use sqlx::SqlitePool;
 
 use crate::{
@@ -14,7 +14,7 @@ use crate::{
 };
 
 pub async fn handle_contact_list(
-    ns_event: nostr_sdk::Event,
+    ns_event: nostr::Event,
     keys: &Keys,
     pool: &SqlitePool,
     back_sender: &mut mpsc::Sender<BackEndInput>,
@@ -29,7 +29,7 @@ pub async fn handle_contact_list(
 }
 
 async fn handle_user_contact_list(
-    ns_event: nostr_sdk::Event,
+    ns_event: nostr::Event,
     keys: &Keys,
     pool: &SqlitePool,
     back_sender: &mut mpsc::Sender<BackEndInput>,
@@ -110,7 +110,7 @@ async fn handle_user_contact_list(
     })
 }
 
-fn handle_other_contact_list(_ns_event: nostr_sdk::Event) -> Result<Event, Error> {
+fn handle_other_contact_list(_ns_event: nostr::Event) -> Result<Event, Error> {
     // Others ContactList That Im in
     // which means that someone else added me to their contact list
     // so I could build a followers list from this
@@ -119,7 +119,7 @@ fn handle_other_contact_list(_ns_event: nostr_sdk::Event) -> Result<Event, Error
 }
 
 async fn last_kind_filtered(pool: &SqlitePool) -> Result<Option<(NaiveDateTime, DbEvent)>, Error> {
-    let last_event = match DbEvent::fetch_last_kind(pool, nostr_sdk::Kind::ContactList).await? {
+    let last_event = match DbEvent::fetch_last_kind(pool, nostr::Kind::ContactList).await? {
         Some(last_event) => last_event,
         None => return Ok(None),
     };

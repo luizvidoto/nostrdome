@@ -3,7 +3,7 @@ use iced::{
     widget::{button, column, container, row, text, Space},
     Length,
 };
-use nostr_sdk::{prelude::FromSkStr, Keys};
+use nostr::{prelude::FromSkStr, Keys};
 
 use crate::{
     components::{text::title, text_input_group::TextInputGroup},
@@ -26,7 +26,7 @@ impl BasicProfile {
         }
     }
 }
-impl From<BasicProfile> for nostr_sdk::Metadata {
+impl From<BasicProfile> for nostr::Metadata {
     fn from(profile: BasicProfile) -> Self {
         Self {
             name: Some(profile.name),

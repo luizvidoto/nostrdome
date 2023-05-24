@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
-use nostr_sdk::secp256k1::XOnlyPublicKey;
+use nostr::secp256k1::XOnlyPublicKey;
 
 use crate::{
+    components::chat_contact::ChatInfo,
     db::{DbContact, DbEvent, DbRelay, DbRelayResponse, ProfileCache},
     net::{BackEndConnection, ImageKind},
     types::ChatMessage,
@@ -49,13 +50,13 @@ pub enum Event {
     SystemTime((chrono::NaiveDateTime, i64)),
     UpdatedMetadata(XOnlyPublicKey),
     GotAllMessages(Vec<DbEvent>),
-    GotLastChatMessage((DbContact, ChatMessage)),
     GotDbEvent(DbEvent),
+    GotSingleContact((XOnlyPublicKey, Option<DbContact>)),
 
     // --- Nostr ---
-    SentEventToRelays(nostr_sdk::EventId),
-    SentEventTo((url::Url, nostr_sdk::EventId)),
-    EndOfStoredEvents((nostr_sdk::Url, nostr_sdk::SubscriptionId)),
+    SentEventToRelays(nostr::EventId),
+    SentEventTo((url::Url, nostr::EventId)),
+    EndOfStoredEvents((nostr::Url, nostr::SubscriptionId)),
     SubscribedToEvents,
     RequestedEventsOf(DbRelay),
     RequestedMetadata(DbContact),
@@ -63,13 +64,14 @@ pub enum Event {
     RequestedContactProfile(DbContact),
     GotRelayServer(Option<nostr_sdk::Relay>),
     GotRelayServers(Vec<nostr_sdk::Relay>),
-    RelayMessage(nostr_sdk::RelayMessage),
+    GotChatInfo((DbContact, Option<ChatInfo>)),
+    RelayMessage(nostr::RelayMessage),
     Shutdown,
     RelayConnected(DbRelay),
-    ChannelCreated(nostr_sdk::EventId),
+    ChannelCreated(nostr::EventId),
     NostrLoading,
     RequestedEvents,
-    SentDirectMessage(nostr_sdk::EventId),
+    SentDirectMessage(nostr::EventId),
     ExportedMessagesSucessfully,
     ExportedContactsSucessfully,
 
@@ -78,25 +80,24 @@ pub enum Event {
     FirstLogin,
     Connected(BackEndConnection),
     Disconnected,
-    FirstLoginStored,
     FinishedPreparing,
     // --- Specific Events ---
     ReceivedDM {
-        relay_url: nostr_sdk::Url,
+        relay_url: nostr::Url,
         db_contact: DbContact,
         chat_message: ChatMessage,
     },
     ReceivedContactList {
-        relay_url: nostr_sdk::Url,
+        relay_url: nostr::Url,
         contact_list: Vec<DbContact>,
     },
     UpdatedContactMetadata {
-        relay_url: nostr_sdk::Url,
+        relay_url: nostr::Url,
         db_contact: DbContact,
     },
     UpdatedUserProfileMeta {
-        relay_url: nostr_sdk::Url,
-        metadata: nostr_sdk::Metadata,
+        relay_url: nostr::Url,
+        metadata: nostr::Metadata,
     },
     // --- Confirmed Events ---
     ConfirmedDM((DbContact, ChatMessage)),
@@ -120,6 +121,12 @@ pub enum Event {
 impl std::fmt::Display for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Event::GotSingleContact((pubkey, ct)) => write!(
+                f,
+                "Got Single Contact: {} - is_some: {}",
+                pubkey,
+                ct.is_some()
+            ),
             Event::GotDbEvent(db_event) => write!(f, "Got DB Event: {}", db_event.event_hash),
             Event::GotRelayResponsesContactList { .. } => {
                 write!(f, "Got Relay Responses Contact List")
@@ -127,7 +134,7 @@ impl std::fmt::Display for Event {
             Event::GotRelayResponsesUserProfile { .. } => {
                 write!(f, "Got Relay Responses User Profile")
             }
-            Event::GotLastChatMessage(_) => write!(f, "Got Last Chat Message"),
+            Event::GotChatInfo(_) => write!(f, "Got Chat Info"),
             Event::ExportedContactsSucessfully => write!(f, "Exported Contacts Sucessfully"),
             Event::ExportedMessagesSucessfully => write!(f, "Exported Messages Sucessfully"),
             Event::GotAllMessages(messages) => write!(f, "Got All Messages: {}", messages.len()),
@@ -215,7 +222,6 @@ impl std::fmt::Display for Event {
             Event::FirstLogin => write!(f, "First Login"),
             Event::Connected(_) => write!(f, "Connected"),
             Event::Disconnected => write!(f, "Disconnected"),
-            Event::FirstLoginStored => write!(f, "First Login Stored"),
             Event::FinishedPreparing => write!(f, "Finished Preparing"),
             Event::BackendClosed => write!(f, "Backend Closed"),
             Event::LoggedOut => write!(f, "Logged Out"),

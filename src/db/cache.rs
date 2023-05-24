@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use chrono::NaiveDateTime;
-use nostr_sdk::secp256k1::XOnlyPublicKey;
+use nostr::secp256k1::XOnlyPublicKey;
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
@@ -20,9 +20,9 @@ use super::DbEvent;
 pub struct ProfileCache {
     pub public_key: XOnlyPublicKey,
     pub updated_at: NaiveDateTime,
-    pub event_hash: nostr_sdk::EventId,
-    pub from_relay: nostr_sdk::Url,
-    pub metadata: nostr_sdk::Metadata,
+    pub event_hash: nostr::EventId,
+    pub from_relay: nostr::Url,
+    pub metadata: nostr::Metadata,
     pub profile_image_path: Option<PathBuf>,
     pub banner_image_path: Option<PathBuf>,
 }
@@ -58,7 +58,7 @@ impl ProfileCache {
         cache_pool: &SqlitePool,
         db_event: &DbEvent,
     ) -> Result<u64, Error> {
-        let metadata = nostr_sdk::Metadata::from_json(&db_event.content)
+        let metadata = nostr::Metadata::from_json(&db_event.content)
             .map_err(|_| Error::JsonToMetadata(db_event.content.clone()))?;
         let public_key = &db_event.pubkey;
         let event_hash = &db_event.event_hash;

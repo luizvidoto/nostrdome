@@ -1,9 +1,10 @@
 use crate::{
     error::{Error, FromDbEventError},
+    types::ChatMessage,
     utils::{event_hash_or_err, millis_to_naive_or_err, public_key_or_err, url_or_err},
 };
 use chrono::{NaiveDateTime, Utc};
-use nostr_sdk::{nips::nip04, secp256k1::XOnlyPublicKey, EventId, Keys};
+use nostr::{nips::nip04, secp256k1::XOnlyPublicKey, EventId, Keys};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
@@ -20,7 +21,7 @@ impl TagInfo {
     pub fn from_db_event(db_event: &DbEvent) -> Result<Self, FromDbEventError> {
         let tag = db_event.tags.get(0).ok_or(FromDbEventError::NoTags)?;
         match tag {
-            nostr_sdk::Tag::PubKey(to_pub, _url) => Ok(Self {
+            nostr::Tag::PubKey(to_pub, _url) => Ok(Self {
                 from_pubkey: db_event.pubkey,
                 to_pubkey: to_pub.clone(),
                 event_id: db_event.event_id()?,
@@ -54,7 +55,7 @@ pub struct DbMessage {
     created_at: chrono::NaiveDateTime,
     confirmed_at: Option<chrono::NaiveDateTime>,
     status: MessageStatus,
-    relay_url: Option<nostr_sdk::Url>,
+    relay_url: Option<nostr::Url>,
     // option because we can create the struct before inserting into the database
     event_id: Option<i64>,
     event_hash: Option<EventId>,
@@ -111,7 +112,7 @@ impl DbMessage {
         self.event_id = Some(event_id);
         self
     }
-    pub fn with_relay_url(mut self, relay_url: Option<&nostr_sdk::Url>) -> Self {
+    pub fn with_relay_url(mut self, relay_url: Option<&nostr::Url>) -> Self {
         self.relay_url = relay_url.cloned();
         self
     }
@@ -213,7 +214,7 @@ impl DbMessage {
 
     pub async fn relay_confirmation(
         pool: &SqlitePool,
-        relay_url: &nostr_sdk::Url,
+        relay_url: &nostr::Url,
         mut db_message: DbMessage,
     ) -> Result<DbMessage, Error> {
         tracing::debug!("Confirming message");
@@ -256,10 +257,32 @@ impl DbMessage {
             SELECT *
             FROM message
             WHERE contact_pubkey=?
+            ORDER BY confirmed_at DESC
+            LIMIT 10
         "#;
 
         let messages = sqlx::query_as::<_, DbMessage>(sql)
             .bind(&contact_pubkey.to_string())
+            .fetch_all(pool)
+            .await?;
+
+        Ok(messages)
+    }
+
+    pub async fn fetch_more(
+        pool: &SqlitePool,
+        contact_pubkey: &XOnlyPublicKey,
+        first_message: ChatMessage,
+    ) -> Result<Vec<DbMessage>, Error> {
+        let sql = r#"
+            SELECT *
+            FROM message
+            WHERE contact_pubkey=? and confirmed_at < ? ORDER BY confirmed_at DESC
+            LIMIT 10
+        "#;
+        let messages = sqlx::query_as::<_, DbMessage>(&sql)
+            .bind(&contact_pubkey.to_string())
+            .bind(first_message.display_time.timestamp_millis())
             .fetch_all(pool)
             .await?;
 

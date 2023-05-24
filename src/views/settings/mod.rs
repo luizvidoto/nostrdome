@@ -253,7 +253,7 @@ impl Settings {
                 self.handle_menu_press(message, conn, selected_theme);
             }
             Message::LogoutPress => {
-                conn.send(net::Message::Logout);
+                conn.send(net::ToBackend::Logout);
             }
             other => return (self.modal_state.update(other, conn), None),
         }

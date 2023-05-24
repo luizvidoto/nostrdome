@@ -1,4 +1,4 @@
-use nostr_sdk::{secp256k1::XOnlyPublicKey, Keys, Url};
+use nostr::{secp256k1::XOnlyPublicKey, Keys, Url};
 use sqlx::SqlitePool;
 
 use crate::{

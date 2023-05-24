@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use futures::channel::mpsc;
-use nostr_sdk::{secp256k1::XOnlyPublicKey, Keys};
+use nostr::{secp256k1::XOnlyPublicKey, Keys};
 use sqlx::SqlitePool;
 
 use crate::{
@@ -28,15 +28,15 @@ pub enum BackEndInput {
     ToggleRelayWrite((DbRelay, bool)),
     AddRelayToDb(DbRelay),
     DeleteRelayFromDb(DbRelay),
-    StorePendingContactList((nostr_sdk::Event, Vec<DbContact>)),
-    StorePendingMetadata((nostr_sdk::Event, nostr_sdk::Metadata)),
+    StorePendingContactList((nostr::Event, Vec<DbContact>)),
+    StorePendingMetadata((nostr::Event, nostr::Metadata)),
     StorePendingMessage {
-        ns_event: nostr_sdk::Event,
+        ns_event: nostr::Event,
         db_contact: DbContact,
         content: String,
     },
-    StoreConfirmedEvent((nostr_sdk::Url, nostr_sdk::Event)),
-    StoreRelayMessage((nostr_sdk::Url, nostr_sdk::RelayMessage)),
+    StoreConfirmedEvent((nostr::Url, nostr::Event)),
+    StoreRelayMessage((nostr::Url, nostr::RelayMessage)),
     LatestVersion(String),
     ImageDownloaded {
         kind: ImageKind,
@@ -48,8 +48,8 @@ pub enum BackEndInput {
     Error(String),
     Ok(Event),
     FailedToSendEvent {
-        relay_url: nostr_sdk::Url,
-        event_hash: nostr_sdk::EventId,
+        relay_url: nostr::Url,
+        event_hash: nostr::EventId,
         status: bool,
         message: String,
     },
@@ -191,15 +191,15 @@ pub async fn on_event_confirmation(
     db_event: &DbEvent,
 ) -> Result<Event, Error> {
     match db_event.kind {
-        nostr_sdk::Kind::ContactList => Ok(Event::ConfirmedContactList(db_event.to_owned())),
-        nostr_sdk::Kind::Metadata => {
+        nostr::Kind::ContactList => Ok(Event::ConfirmedContactList(db_event.to_owned())),
+        nostr::Kind::Metadata => {
             let is_user = db_event.pubkey == keys.public_key();
             Ok(Event::ConfirmedMetadata {
                 db_event: db_event.to_owned(),
                 is_user,
             })
         }
-        nostr_sdk::Kind::EncryptedDirectMessage => {
+        nostr::Kind::EncryptedDirectMessage => {
             handle_dm_confirmation(pool, cache_pool, keys, db_event).await
         }
         _ => Ok(Event::None),

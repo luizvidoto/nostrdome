@@ -1,6 +1,6 @@
 use chrono::{NaiveDateTime, Utc};
 use iced::widget::image::Handle;
-use nostr_sdk::{prelude::UncheckedUrl, secp256k1::XOnlyPublicKey, Tag};
+use nostr::{prelude::UncheckedUrl, secp256k1::XOnlyPublicKey, Tag};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use std::borrow::Borrow;
@@ -13,11 +13,11 @@ use crate::db::UserConfig;
 use crate::error::Error;
 use crate::net::{self, sized_image, BackEndConnection, ImageKind, ImageSize};
 use crate::{
-    types::{ChatMessage, RelayUrl},
+    types::RelayUrl,
     utils::{millis_to_naive_or_err, unchecked_url_or_err},
 };
 
-use super::{DbMessage, ProfileCache};
+use super::ProfileCache;
 
 type Result<T> = std::result::Result<T, DbContactError>;
 
@@ -62,13 +62,10 @@ pub struct DbContact {
     created_at: NaiveDateTime,
     updated_at: NaiveDateTime,
     status: ContactStatus,
-    unseen_messages: u8,
-    last_message_content: Option<String>,
-    last_message_date: Option<NaiveDateTime>,
     profile_cache: Option<ProfileCache>,
 }
 
-impl From<&DbContact> for nostr_sdk::Contact {
+impl From<&DbContact> for nostr::Contact {
     fn from(c: &DbContact) -> Self {
         Self {
             pk: c.pubkey.to_owned(),
@@ -95,9 +92,6 @@ impl DbContact {
             status: ContactStatus::Unknown,
             created_at: chrono::Utc::now().naive_utc(),
             updated_at: chrono::Utc::now().naive_utc(),
-            unseen_messages: 0,
-            last_message_content: None,
-            last_message_date: None,
             profile_cache: None,
         }
     }
@@ -184,18 +178,7 @@ impl DbContact {
     pub fn get_relay_url(&self) -> Option<UncheckedUrl> {
         self.relay_url.clone()
     }
-    pub fn last_message_content(&self) -> Option<String> {
-        self.last_message_content.clone()
-    }
-    pub fn last_message_date(&self) -> Option<NaiveDateTime> {
-        self.last_message_date.clone()
-    }
-    pub fn last_message_pair(&self) -> (Option<String>, Option<NaiveDateTime>) {
-        (self.last_message_content(), self.last_message_date())
-    }
-    pub fn unseen_messages(&self) -> u8 {
-        self.unseen_messages
-    }
+
     pub fn with_profile_cache(mut self, cache: &ProfileCache) -> Self {
         self.profile_cache = Some(cache.clone());
         self
@@ -255,7 +238,7 @@ impl DbContact {
                     return Handle::from_path(path);
                 }
                 (None, Some(image_url)) => {
-                    conn.send(net::Message::DownloadImage {
+                    conn.send(net::ToBackend::DownloadImage {
                         image_url: image_url.to_owned(),
                         kind,
                         public_key: self.pubkey.clone(),
@@ -272,99 +255,6 @@ impl DbContact {
             tracing::info!("no profile cache for contact: {}", self.pubkey.to_string());
         }
         Handle::from_memory(default_profile_image(size))
-    }
-
-    // pub async fn new_message(
-    //     pool: &SqlitePool,
-    //     mut db_contact: DbContact,
-    //     chat_message: &ChatMessage,
-    // ) -> Result<DbContact> {
-    //     // do not update unseen count here because we may be in the chat
-    //     if Some(&chat_message.display_time) >= db_contact.last_message_date.as_ref() {
-    //         let now_utc = UserConfig::get_corrected_time(pool)
-    //             .await
-    //             .unwrap_or(Utc::now().naive_utc());
-    //         db_contact.updated_at = now_utc;
-    //         db_contact.last_message_content = Some(chat_message.content.to_owned());
-    //         db_contact.last_message_date = Some(chat_message.display_time);
-
-    //         let sql = r#"
-    //             UPDATE contact
-    //             SET updated_at=?, last_message_content=?, last_message_date=?
-    //             WHERE pubkey=?
-    //         "#;
-
-    //         sqlx::query(sql)
-    //             .bind(&db_contact.updated_at.timestamp_millis())
-    //             .bind(&db_contact.last_message_content)
-    //             .bind(
-    //                 &db_contact
-    //                     .last_message_date
-    //                     .as_ref()
-    //                     .map(|d| d.timestamp_millis()),
-    //             )
-    //             .bind(&db_contact.pubkey.to_string())
-    //             .execute(pool)
-    //             .await?;
-    //     } else {
-    //         tracing::debug!("Can't update last_message with an older message.");
-    //     }
-
-    //     Ok(db_contact)
-    // }
-
-    pub async fn add_to_unseen_count(
-        pool: &SqlitePool,
-        mut db_contact: DbContact,
-    ) -> Result<DbContact> {
-        let now_utc = UserConfig::get_corrected_time(pool)
-            .await
-            .unwrap_or(Utc::now().naive_utc());
-
-        db_contact.unseen_messages += 1;
-
-        let sql = r#"
-                UPDATE contact
-                SET updated_at = ?, unseen_messages = ?
-                WHERE pubkey = ?
-            "#;
-
-        sqlx::query(sql)
-            .bind(now_utc.timestamp_millis())
-            .bind(&db_contact.unseen_messages)
-            .bind(&db_contact.pubkey.to_string())
-            .execute(pool)
-            .await?;
-
-        Ok(db_contact)
-    }
-
-    pub async fn update_unseen_count(
-        pool: &SqlitePool,
-        mut db_contact: DbContact,
-        count: u8,
-    ) -> Result<DbContact> {
-        tracing::debug!("updated contact count: {}", count);
-
-        db_contact.unseen_messages = count;
-
-        let now_utc = UserConfig::get_corrected_time(pool)
-            .await
-            .unwrap_or(Utc::now().naive_utc());
-        let sql = r#"
-                UPDATE contact 
-                SET updated_at=?, unseen_messages=?
-                WHERE pubkey=?
-            "#;
-
-        sqlx::query(sql)
-            .bind(now_utc.timestamp_millis())
-            .bind(db_contact.unseen_messages)
-            .bind(&db_contact.pubkey.to_string())
-            .execute(pool)
-            .await?;
-
-        Ok(db_contact)
     }
 
     pub async fn fetch(
@@ -419,9 +309,8 @@ impl DbContact {
         tracing::debug!("{:?}", contact); //todo: replace with debug
         let sql = r#"
             INSERT INTO contact 
-                (pubkey, relay_url, petname, status, unseen_messages, 
-                created_at, updated_at, last_message_content, last_message_date) 
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                (pubkey, relay_url, petname, status, created_at, updated_at) 
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
         "#;
 
         sqlx::query(sql)
@@ -429,16 +318,8 @@ impl DbContact {
             .bind(&contact.relay_url.as_ref().map(|url| url.to_string()))
             .bind(&contact.petname)
             .bind(contact.status as u8)
-            .bind(contact.unseen_messages)
             .bind(contact.created_at.timestamp_millis())
             .bind(contact.updated_at.timestamp_millis())
-            .bind(&contact.last_message_content)
-            .bind(
-                contact
-                    .last_message_date
-                    .as_ref()
-                    .map(|date| date.timestamp_millis()),
-            )
             .execute(tx)
             .await?;
 
@@ -502,8 +383,7 @@ impl DbContact {
 
         let sql = r#"
             UPDATE contact 
-            SET relay_url=?, petname=?, status=?, unseen_messages=?,  
-                last_message_content=?, last_message_date=?, updated_at=?
+            SET relay_url=?, petname=?, status=?, updated_at=?
             WHERE pubkey=?
         "#;
 
@@ -511,14 +391,6 @@ impl DbContact {
             .bind(&contact.relay_url.as_ref().map(|url| url.to_string()))
             .bind(&contact.petname)
             .bind(contact.status as u8)
-            .bind(contact.unseen_messages)
-            .bind(&contact.last_message_content)
-            .bind(
-                contact
-                    .last_message_date
-                    .as_ref()
-                    .map(|date| date.timestamp_millis()),
-            )
             .bind(now_utc.timestamp_millis())
             .bind(&contact.pubkey.to_string())
             .execute(pool)
@@ -538,23 +410,6 @@ impl DbContact {
         Ok(())
     }
 
-    pub(crate) async fn last_update_at(
-        pool: &sqlx::Pool<sqlx::Sqlite>,
-        pubkey: &XOnlyPublicKey,
-    ) -> Result<Option<NaiveDateTime>> {
-        let sql = "SELECT updated_at FROM contact WHERE pubkey=?";
-        let result = sqlx::query(sql)
-            .bind(&pubkey.to_string())
-            .fetch_one(pool)
-            .await
-            .ok();
-        let date = result.map(|row| row.get::<i64, &str>("updated_at"));
-        let date = date
-            .map(|d| millis_to_naive_or_err(d, "updated_at"))
-            .transpose()?;
-        Ok(date)
-    }
-
     pub(crate) async fn have_contact(pool: &SqlitePool, pubkey: &XOnlyPublicKey) -> Result<bool> {
         let sql = "SELECT pubkey FROM contact WHERE pubkey=?";
         let result = sqlx::query(sql)
@@ -563,12 +418,6 @@ impl DbContact {
             .await
             .ok();
         Ok(result.is_some())
-    }
-
-    pub(crate) fn with_last_message(mut self, chat_message: ChatMessage) -> Self {
-        self.last_message_content = Some(chat_message.content);
-        self.last_message_date = Some(chat_message.display_time);
-        self
     }
 }
 
@@ -599,12 +448,6 @@ impl sqlx::FromRow<'_, SqliteRow> for DbContact {
             petname,
             relay_url,
             status: row.get::<u8, &str>("status").into(),
-            unseen_messages: row.try_get::<i64, &str>("unseen_messages")? as u8,
-            last_message_content: row.get::<Option<String>, &str>("last_message_content"),
-            last_message_date: row
-                .get::<Option<i64>, &str>("last_message_date")
-                .map(|n| millis_to_naive_or_err(n, "last_message_date"))
-                .transpose()?,
         })
     }
 }

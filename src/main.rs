@@ -21,7 +21,7 @@ use iced::{
     window, Application, Command, Settings,
 };
 use net::{backend_connect, events::Event, BackEndConnection};
-use nostr_sdk::Keys;
+use nostr::Keys;
 // use tracing_appender::{non_blocking, rolling};
 use tracing_subscriber::{
     fmt::SubscriberBuilder, prelude::__tracing_subscriber_SubscriberExt, EnvFilter,
@@ -201,13 +201,8 @@ impl Application for App {
                 {
                     match welcome_msg {
                         welcome::Message::Exit => {
-                            conn.send(net::Message::Logout);
+                            conn.send(net::ToBackend::Logout);
                             self.state = State::logging_out(keys, conn);
-                        }
-                        welcome::Message::ToApp => {
-                            conn.send(net::Message::StoreFirstLogin);
-                            conn.send(net::Message::PrepareClient);
-                            state.update(welcome::Message::ToApp, conn);
                         }
                         other => state.update(other, conn),
                     }
@@ -268,10 +263,10 @@ impl Application for App {
                     tracing::info!("Connected to backend");
                     if let State::LoadingBackend { keys, new_profile } = &mut self.state {
                         if let Some(profile) = new_profile {
-                            ready_conn.send(net::Message::CreateAccount(profile.to_owned()));
+                            ready_conn.send(net::ToBackend::CreateAccount(profile.to_owned()));
                         }
-                        ready_conn.send(net::Message::FetchLatestVersion);
-                        ready_conn.send(net::Message::QueryFirstLogin);
+                        ready_conn.send(net::ToBackend::FetchLatestVersion);
+                        ready_conn.send(net::ToBackend::QueryFirstLogin);
                         self.state = State::backend_loaded(keys, &mut ready_conn);
                     }
                 }

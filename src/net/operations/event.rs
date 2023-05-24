@@ -1,5 +1,5 @@
 use futures::channel::mpsc;
-use nostr_sdk::{Keys, RelayMessage, Url};
+use nostr::{Keys, RelayMessage, Url};
 use sqlx::SqlitePool;
 
 use crate::{
@@ -26,30 +26,28 @@ pub async fn insert_confirmed_event(
     back_sender: &mut mpsc::Sender<BackEndInput>,
     nostr_sender: &mut mpsc::Sender<NostrInput>,
     relay_url: &Url,
-    ns_event: nostr_sdk::Event,
+    ns_event: nostr::Event,
 ) -> Result<Event, Error> {
     tracing::debug!("insert_event");
 
     match ns_event.kind {
-        nostr_sdk::Kind::ContactList => {
+        nostr::Kind::ContactList => {
             // contact_list is validating differently
             handle_contact_list(ns_event, keys, pool, back_sender, nostr_sender, relay_url).await
         }
         other => {
             if let Some(db_event) = confirmed_event(ns_event, relay_url, pool).await? {
                 match other {
-                    nostr_sdk::Kind::Metadata => {
-                        handle_metadata_event(pool, cache_pool, relay_url, db_event).await
-                    }
-                    nostr_sdk::Kind::EncryptedDirectMessage => {
+                    nostr::Kind::Metadata => handle_metadata_event(cache_pool, db_event).await,
+                    nostr::Kind::EncryptedDirectMessage => {
                         handle_dm(pool, cache_pool, keys, relay_url, db_event).await
                     }
-                    nostr_sdk::Kind::RecommendRelay => handle_recommend_relay(db_event).await,
-                    // nostr_sdk::Kind::ChannelCreation => {}
-                    // nostr_sdk::Kind::ChannelMetadata => {
-                    // nostr_sdk::Kind::ChannelMessage => {}
-                    // nostr_sdk::Kind::ChannelHideMessage => {}
-                    // nostr_sdk::Kind::ChannelMuteUser => {}
+                    nostr::Kind::RecommendRelay => handle_recommend_relay(db_event).await,
+                    // nostr::Kind::ChannelCreation => {}
+                    // nostr::Kind::ChannelMetadata => {
+                    // nostr::Kind::ChannelMessage => {}
+                    // nostr::Kind::ChannelHideMessage => {}
+                    // nostr::Kind::ChannelMuteUser => {}
                     // Kind::EventDeletion => {},
                     // Kind::PublicChatReserved45 => {},
                     // Kind::PublicChatReserved46 => {},
@@ -72,7 +70,7 @@ pub async fn insert_confirmed_event(
 }
 
 async fn confirmed_event(
-    ns_event: nostr_sdk::Event,
+    ns_event: nostr::Event,
     relay_url: &Url,
     pool: &sqlx::Pool<sqlx::Sqlite>,
 ) -> Result<Option<DbEvent>, Error> {
@@ -92,7 +90,7 @@ async fn insert_other_kind(db_event: DbEvent) -> Result<Event, Error> {
 }
 
 async fn insert_pending(
-    ns_event: nostr_sdk::Event,
+    ns_event: nostr::Event,
     pool: &SqlitePool,
     nostr_sender: &mut mpsc::Sender<NostrInput>,
 ) -> Result<DbEvent, Error> {
@@ -115,8 +113,8 @@ async fn insert_pending(
 
 pub async fn insert_pending_metadata(
     pool: &SqlitePool,
-    ns_event: nostr_sdk::Event,
-    _metadata: nostr_sdk::Metadata,
+    ns_event: nostr::Event,
+    _metadata: nostr::Metadata,
     nostr_sender: &mut mpsc::Sender<NostrInput>,
 ) -> Result<Event, Error> {
     match insert_pending(ns_event, pool, nostr_sender).await {
@@ -128,7 +126,7 @@ pub async fn insert_pending_metadata(
 
 pub async fn insert_pending_contact_list(
     pool: &SqlitePool,
-    ns_event: nostr_sdk::Event,
+    ns_event: nostr::Event,
     _contact_list: Vec<DbContact>,
     nostr_sender: &mut mpsc::Sender<NostrInput>,
 ) -> Result<Event, Error> {
@@ -142,7 +140,7 @@ pub async fn insert_pending_contact_list(
 pub async fn insert_pending_dm(
     pool: &SqlitePool,
     keys: &Keys,
-    ns_event: nostr_sdk::Event,
+    ns_event: nostr::Event,
     db_contact: DbContact,
     content: String,
     nostr_sender: &mut mpsc::Sender<NostrInput>,
@@ -230,7 +228,7 @@ pub async fn on_relay_message(
 
 async fn confirm_event(
     pool: &SqlitePool,
-    event_hash: &nostr_sdk::EventId,
+    event_hash: &nostr::EventId,
     relay_url: &Url,
 ) -> Result<DbEvent, Error> {
     let mut db_event = DbEvent::fetch_one(pool, event_hash)
@@ -245,7 +243,7 @@ async fn confirm_event(
 
 pub async fn relay_response_ok(
     pool: &SqlitePool,
-    relay_url: &nostr_sdk::Url,
+    relay_url: &nostr::Url,
     db_event: &DbEvent,
 ) -> Result<(), Error> {
     let relay_response = DbRelayResponse::ok(db_event.event_id()?, &db_event.event_hash, relay_url);

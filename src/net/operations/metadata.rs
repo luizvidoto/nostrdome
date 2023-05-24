@@ -1,5 +1,5 @@
 use futures::channel::mpsc;
-use nostr_sdk::{Keys, Url};
+use nostr::{Keys, Url};
 use sqlx::SqlitePool;
 
 use crate::{
@@ -7,7 +7,6 @@ use crate::{
     error::Error,
     net::{
         events::{backend::BackEndInput, Event},
-        operations::event::relay_response_ok,
         to_backend_channel,
     },
 };
@@ -16,9 +15,7 @@ use super::builder::build_profile_event;
 
 // Handle metadata events and update user profile or contact metadata accordingly.
 pub async fn handle_metadata_event(
-    pool: &SqlitePool,
     cache_pool: &SqlitePool,
-    relay_url: &Url,
     db_event: DbEvent,
 ) -> Result<Event, Error> {
     tracing::debug!("handle_metadata_event");
@@ -118,7 +115,7 @@ pub async fn update_user_metadata(
     pool: &SqlitePool,
     keys: &Keys,
     back_sender: &mut mpsc::Sender<BackEndInput>,
-    profile_meta: nostr_sdk::Metadata,
+    profile_meta: nostr::Metadata,
 ) -> Event {
     match build_profile_event(pool, keys, &profile_meta).await {
         Ok(ns_event) => to_backend_channel(

@@ -1,15 +1,13 @@
 use std::time::Duration;
 
-use futures::channel::mpsc;
-use nostr_sdk::{
-    secp256k1::XOnlyPublicKey, Client, ClientMessage, Filter, Keys, Kind, RelayStatus, Timestamp,
-};
-
 use crate::{
     db::{DbContact, DbEvent, DbRelay},
     error::Error,
     net::events::{nostr::NostrOutput, Event},
 };
+use futures::channel::mpsc;
+use nostr::{secp256k1::XOnlyPublicKey, ClientMessage, Filter, Keys, Kind, Timestamp};
+use nostr_sdk::{Client, RelayStatus};
 
 pub async fn request_events_of(
     client: &Client,
@@ -33,7 +31,7 @@ pub async fn subscribe_to_events(
     last_event: Option<DbEvent>,
     contact_list: Vec<DbContact>,
 ) -> Result<Event, Error> {
-    tracing::debug!("Subscribing to events");
+    tracing::info!("Subscribing to events");
 
     let client = client.clone();
     let public_key = keys.public_key().clone();
@@ -85,7 +83,7 @@ fn make_nostr_filters(
 pub async fn send_event_to_relays(
     client: &Client,
     channel: &mut mpsc::Sender<NostrOutput>,
-    ns_event: nostr_sdk::Event,
+    ns_event: nostr::Event,
 ) -> Result<Event, Error> {
     tracing::debug!("send_event_to_relays ID: {}", ns_event.id);
     tracing::debug!("{:?}", ns_event);

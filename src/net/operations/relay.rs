@@ -1,6 +1,7 @@
 use std::str::FromStr;
 
-use nostr_sdk::{Client, Keys, Metadata, RelayOptions, Url};
+use nostr::{Keys, Metadata, Url};
+use nostr_sdk::{Client, Relay, RelayOptions, RelayStatus};
 
 use crate::{
     db::{DbContact, DbEvent, DbRelay},
@@ -43,7 +44,7 @@ pub async fn fetch_relay_server(client: &Client, url: &Url) -> Result<Event, Err
 
 pub async fn fetch_relay_servers(client: &Client) -> Result<Event, Error> {
     tracing::debug!("fetch_relay_servers");
-    let relays: Vec<nostr_sdk::Relay> = client.relays().await.values().cloned().collect();
+    let relays: Vec<Relay> = client.relays().await.values().cloned().collect();
     Ok(Event::GotRelayServers(relays))
 }
 
@@ -92,7 +93,7 @@ pub async fn connect_to_relay(
         .values()
         .find(|r| &r.url() == &db_relay.url)
     {
-        if nostr_sdk::RelayStatus::Connected != relay.status().await {
+        if RelayStatus::Connected != relay.status().await {
             tracing::info!("Trying to connect to relay: {}", db_relay.url);
             let client = client.clone();
             let db_relay_clone = db_relay.clone();

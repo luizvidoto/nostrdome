@@ -209,7 +209,8 @@ impl ViewState {
                 if let ViewState::Settings { state } = self {
                     match msg {
                         settings::Message::NavEscPress => {
-                            router_message = Some(RouterMessage::GoBack)
+                            // router_message = Some(RouterMessage::GoBack)
+                            router_message = Some(RouterMessage::GoToChat)
                         }
                         msg => {
                             let (cmd, msg) = state.update(msg, conn, selected_theme);

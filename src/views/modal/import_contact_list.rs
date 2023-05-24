@@ -10,7 +10,7 @@ use iced::alignment;
 use iced::widget::{button, column, row, text};
 use iced::Length;
 use iced_aw::{Card, Modal};
-use nostr_sdk::Tag;
+use nostr::Tag;
 use std::fmt::Debug;
 
 #[derive(Debug, Clone)]
@@ -45,7 +45,7 @@ impl ImportContactList {
             CMessage::SaveImportedContacts(imported_contacts) => {
                 // TODO: two buttons, one replace. other merge
                 let is_replace = true;
-                conn.send(net::Message::ImportContacts((
+                conn.send(net::ToBackend::ImportContacts((
                     imported_contacts,
                     is_replace,
                 )));
@@ -64,7 +64,7 @@ impl ImportContactList {
         if let file_importer::Message::OnChoose(path) = returned_msg {
             match json_reader::<String, UncheckedEvent>(path) {
                 Ok(contact_event) => {
-                    if let nostr_sdk::event::Kind::ContactList = contact_event.kind {
+                    if let nostr::event::Kind::ContactList = contact_event.kind {
                         self.update_imported_contacts(&contact_event.tags);
                     }
                 }
