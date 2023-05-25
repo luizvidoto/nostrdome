@@ -343,7 +343,7 @@ async fn main() {
 
     // Cria um filtro de ambiente que define o nível de log padrão para todas as bibliotecas como ERROR e o nível de log do seu aplicativo como INFO
     let filter = EnvFilter::from_default_env()
-        .add_directive("nostrtalk=debug".parse().unwrap())
+        .add_directive("nostrtalk=info".parse().unwrap())
         .add_directive("warn".parse().unwrap());
 
     let subscriber = SubscriberBuilder::default()

@@ -62,8 +62,6 @@ pub enum BackendEvent {
     RequestedMetadata(DbContact),
     RequestedContactListProfiles,
     RequestedContactProfile(DbContact),
-    GotRelayServer(Option<nostr_sdk::Relay>),
-    GotRelayServers(Vec<nostr_sdk::Relay>),
     GotChatInfo((DbContact, Option<ChatInfo>)),
     RelayMessage(nostr::RelayMessage),
     Shutdown,
@@ -74,7 +72,7 @@ pub enum BackendEvent {
     SentDirectMessage(nostr::EventId),
     ExportedMessagesSucessfully,
     ExportedContactsSucessfully,
-
+    GotRelayStatus(ns_client::RelayStatus),
     // --- Config ---
     SyncedWithNtpServer,
     FirstLogin,
@@ -119,10 +117,13 @@ pub enum BackendEvent {
     BackendLoading,
     Empty,
     CacheFileRemoved((ProfileCache, ImageKind)),
+    RelaysConnected(usize),
 }
 impl std::fmt::Display for BackendEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            BackendEvent::GotRelayStatus(status) => write!(f, "Got relay status: {:?}", status),
+            BackendEvent::RelaysConnected(count) => write!(f, "Relays connected: {}", count),
             BackendEvent::CacheFileRemoved((cache, kind)) => write!(
                 f,
                 "Cache file removed: {} - {}",
@@ -230,8 +231,6 @@ impl std::fmt::Display for BackendEvent {
             BackendEvent::GotUserProfileCache(metadata) => {
                 write!(f, "Got User Profile Metadata: {:?}", metadata)
             }
-            BackendEvent::GotRelayServer(_server) => write!(f, "Got Relay Server"),
-            BackendEvent::GotRelayServers(_servers) => write!(f, "Got Relay Servers"),
             BackendEvent::RelayMessage(message) => write!(f, "Relay Message: {:?}", message),
             BackendEvent::Shutdown => write!(f, "Shutdown"),
             BackendEvent::RelayConnected(db_relay) => {

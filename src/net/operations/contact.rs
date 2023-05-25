@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use nostr::{Filter, Keys, Kind};
-use nostr_sdk::Client;
+use ns_client::RelayPool;
 use sqlx::SqlitePool;
 
 use crate::{
@@ -35,18 +35,19 @@ pub async fn fetch_and_decrypt_chat(
 }
 
 pub async fn get_contact_list_profile(
-    client: &Client,
+    client: &RelayPool,
     db_contacts: Vec<DbContact>,
 ) -> Result<BackendEvent, Error> {
-    tracing::debug!("get_contact_list_profile: {}", db_contacts.len());
-    let all_pubkeys = db_contacts
-        .iter()
-        .map(|c| c.pubkey().to_string())
-        .collect::<Vec<_>>();
-    let filter = Filter::new().authors(all_pubkeys).kind(Kind::Metadata);
-    let timeout = Some(Duration::from_secs(10));
-    client.req_events_of(vec![filter], timeout).await;
-    Ok(BackendEvent::RequestedContactListProfiles)
+    // tracing::debug!("get_contact_list_profile: {}", db_contacts.len());
+    // let all_pubkeys = db_contacts
+    //     .iter()
+    //     .map(|c| c.pubkey().to_string())
+    //     .collect::<Vec<_>>();
+    // let filter = Filter::new().authors(all_pubkeys).kind(Kind::Metadata);
+    // let timeout = Some(Duration::from_secs(10));
+    // client.req_events_of(vec![filter], timeout).await;
+    // Ok(BackendEvent::RequestedContactListProfiles)
+    todo!()
 }
 
 pub async fn insert_contact_from_event(

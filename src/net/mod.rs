@@ -18,7 +18,7 @@ use iced::subscription;
 use iced::Subscription;
 use nostr::secp256k1::XOnlyPublicKey;
 use nostr::{Keys, RelayMessage};
-use nostr_sdk::RelayPoolNotification;
+use ns_client::NotificationEvent;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use tokio::sync::broadcast;
@@ -80,7 +80,6 @@ pub enum ToBackend {
     DeleteRelay(DbRelay),
     ToggleRelayRead((DbRelay, bool)),
     ToggleRelayWrite((DbRelay, bool)),
-    ConnectToRelay(DbRelay),
     SendDM((DbContact, String)),
     SendContactListToRelays,
     CreateChannel,
@@ -126,21 +125,44 @@ impl BackendState {
 
     pub async fn process_notification(
         &mut self,
-        notification: RelayPoolNotification,
+        notification: NotificationEvent,
     ) -> Option<BackendEvent> {
-        // Cria uma tarefa separada para processar a notificação
-        let backend_input = match notification {
-            RelayPoolNotification::Event(relay_url, event) => {
-                BackEndInput::StoreConfirmedEvent((relay_url, event))
+        // let backend_input = match notification {
+        //     RelayPoolNotification::Event(relay_url, event) => {
+        //         BackEndInput::StoreConfirmedEvent((relay_url, event))
+        //     }
+        //     RelayPoolNotification::Message(relay_url, msg) => {
+        //         BackEndInput::StoreRelayMessage((relay_url, msg))
+        //     }
+        //     RelayPoolNotification::Shutdown => BackEndInput::Shutdown,
+        // };
+
+        let backend_input_opt = match notification {
+            NotificationEvent::RelayTerminated(url) => {
+                tracing::debug!("Relay terminated - {}", url);
+                None
             }
-            RelayPoolNotification::Message(relay_url, msg) => {
-                BackEndInput::StoreRelayMessage((relay_url, msg))
+            NotificationEvent::RelayMessage((relay_url, relay_msg)) => match relay_msg {
+                RelayMessage::Event {
+                    subscription_id,
+                    event,
+                } => Some(BackEndInput::StoreConfirmedEvent((relay_url, *event))),
+                other => Some(BackEndInput::StoreRelayMessage((relay_url, other))),
+            },
+            NotificationEvent::SentSubscription((url, sub_id)) => {
+                tracing::debug!("Sent subscription to {} - id: {}", url, sub_id);
+                None
             }
-            RelayPoolNotification::Shutdown => BackEndInput::Shutdown,
+            NotificationEvent::SentEvent((url, event_hash)) => {
+                tracing::debug!("Sent event to {} - hash: {}", url, event_hash);
+                None
+            }
         };
 
-        if let Err(e) = self.sender.send(backend_input).await {
-            tracing::error!("{}", e);
+        if let Some(input) = backend_input_opt {
+            if let Err(e) = self.sender.send(input).await {
+                tracing::error!("{}", e);
+            }
         }
 
         None
@@ -383,12 +405,6 @@ pub async fn process_message(
                 let output = nostr.process_in(input).await?;
                 process_nostr_output(output, backend).await
             }
-            ToBackend::ConnectToRelay(db_relay) => {
-                let last_event = DbEvent::fetch_last(pool).await?;
-                let input = NostrInput::ConnectToRelay((db_relay, last_event));
-                let output = nostr.process_in(input).await?;
-                process_nostr_output(output, backend).await
-            }
             ToBackend::AddRelay(db_relay) => {
                 let input = NostrInput::AddRelay(db_relay);
                 let output = nostr.process_in(input).await?;
@@ -502,7 +518,7 @@ fn spawn_download_image(
 pub struct NostrState {
     keys: Keys,
     client: NostrSdkWrapper,
-    notifications: broadcast::Receiver<RelayPoolNotification>,
+    notifications: broadcast::Receiver<NotificationEvent>,
 }
 impl NostrState {
     pub async fn new(keys: &Keys) -> Self {

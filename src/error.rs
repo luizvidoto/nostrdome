@@ -140,8 +140,10 @@ pub enum Error {
     Io(#[from] std::io::Error),
 
     // Nostr Sdk errors
-    #[error("Nostr SDK Client Error: {0}")]
-    NostrClientError(#[from] nostr_sdk::client::Error),
+    // #[error("Nostr SDK Client Error: {0}")]
+    // NostrClientError(#[from] nostr_sdk::client::Error),
+    #[error("Custom Nostr Client Error: {0}")]
+    NostrClientError(#[from] ns_client::Error),
     #[error("Nostr Nip 19 Error: {0}")]
     NostrNip19Error(#[from] nostr::nips::nip19::Error),
 
