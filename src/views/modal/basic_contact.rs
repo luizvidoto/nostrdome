@@ -5,8 +5,7 @@ use crate::components::text_input_group::TextInputGroup;
 use crate::consts::{MEDIUM_PROFILE_PIC_HEIGHT, MEDIUM_PROFILE_PIC_WIDTH, YMD_FORMAT};
 use crate::db::{DbContact, DbContactError};
 use crate::icon::{copy_icon, edit_icon};
-use crate::net::events::Event;
-use crate::net::{self, BackEndConnection, ImageSize};
+use crate::net::{self, BackEndConnection, BackendEvent, ImageSize};
 use crate::utils::from_naive_utc_to_local;
 use iced::widget::{button, column, container, image, row, text, tooltip, Space};
 use iced::{alignment, clipboard};
@@ -293,7 +292,7 @@ impl ContactDetails {
         .into()
     }
 
-    pub fn backend_event(&mut self, event: Event, _conn: &mut BackEndConnection) {
+    pub fn backend_event(&mut self, event: BackendEvent, _conn: &mut BackEndConnection) {
         match event {
             _ => (),
         }

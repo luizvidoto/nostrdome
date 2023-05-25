@@ -7,8 +7,7 @@ use crate::components::text::title;
 use crate::components::text_input_group::TextInputGroup;
 use crate::db::{DbRelay, DbRelayResponse};
 use crate::icon::satellite_icon;
-use crate::net::BackEndConnection;
-use crate::net::{self, events::Event};
+use crate::net::{BackEndConnection, BackendEvent, ToBackend};
 use crate::style;
 use crate::widget::Element;
 
@@ -24,7 +23,7 @@ pub enum Message {
     LNChange(String),
     NIP05Change(String),
     SavePress,
-    BackEndEvent(Event),
+    BackEndEvent(BackendEvent),
     RelaysConfirmationPress(Option<AccountRelaysResponse>),
 }
 
@@ -63,8 +62,8 @@ pub struct State {
 }
 impl State {
     pub fn new(conn: &mut BackEndConnection) -> Self {
-        conn.send(net::ToBackend::GetUserProfileMeta);
-        conn.send(net::ToBackend::FetchRelayResponsesUserProfile);
+        conn.send(ToBackend::GetUserProfileMeta);
+        conn.send(ToBackend::FetchRelayResponsesUserProfile);
         Self {
             name: "".into(),
             user_name: "".into(),
@@ -86,18 +85,18 @@ impl State {
         match message {
             Message::RelaysConfirmationPress(_) => (),
             Message::BackEndEvent(back_ev) => match back_ev {
-                Event::ConfirmedMetadata { is_user, .. } => {
+                BackendEvent::ConfirmedMetadata { is_user, .. } => {
                     if is_user {
-                        conn.send(net::ToBackend::FetchRelayResponsesUserProfile);
+                        conn.send(ToBackend::FetchRelayResponsesUserProfile);
                     }
                 }
-                Event::GotRelayResponsesUserProfile {
+                BackendEvent::GotRelayResponsesUserProfile {
                     responses,
                     all_relays,
                 } => {
                     self.relays_response = Some(AccountRelaysResponse::new(responses, all_relays));
                 }
-                Event::GotUserProfileCache(cache) => {
+                BackendEvent::GotUserProfileCache(cache) => {
                     if let Some(profile_cache) = cache {
                         let meta = profile_cache.metadata;
                         self.name = meta.name.unwrap_or("".into());
@@ -134,7 +133,7 @@ impl State {
             Message::SavePress => {
                 let meta = self.make_meta();
                 if self.all_valid() {
-                    conn.send(net::ToBackend::UpdateUserProfileMeta(meta))
+                    conn.send(ToBackend::UpdateUserProfileMeta(meta))
                 }
             }
         }

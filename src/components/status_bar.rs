@@ -6,8 +6,7 @@ use nostr_sdk::{Relay, RelayStatus};
 
 use crate::consts::NOSTRTALK_VERSION;
 use crate::icon::signal_icon;
-use crate::net::events::Event;
-use crate::net::{self, BackEndConnection};
+use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
 use crate::widget::Element;
 
@@ -61,15 +60,15 @@ impl StatusBar {
     }
     pub fn backend_event(
         &mut self,
-        event: Event,
+        event: BackendEvent,
         conn: &mut BackEndConnection,
     ) -> Command<Message> {
         match event {
-            Event::GotRelayServers(relays) => {
+            BackendEvent::GotRelayServers(relays) => {
                 self.client_relays = Some(relays);
                 self.send_action_to_channel(conn);
             }
-            Event::RelayConnected(_) => {
+            BackendEvent::RelayConnected(_) => {
                 conn.send(net::ToBackend::FetchRelayServers);
             }
             _ => (),
@@ -81,14 +80,14 @@ impl StatusBar {
             Message::GoToAbout => (),
             Message::GoToNetwork => (),
             Message::Performing => {
-                tracing::debug!("NetState Message:: Performing");
+                tracing::trace!("NetState Message:: Performing");
             }
             Message::Waited => {
-                tracing::debug!("NetState Message:: Waited");
+                tracing::trace!("NetState Message:: Waited");
                 self.send_action_to_channel(conn);
             }
             Message::Ready(channel) => {
-                tracing::debug!("NetState Message:: Ready(channel)");
+                tracing::trace!("NetState Message:: Ready(channel)");
                 self.sub_channel = Some(channel);
                 self.send_action_to_channel(conn);
             }

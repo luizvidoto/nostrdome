@@ -1,6 +1,6 @@
 use crate::{
     components::text::title,
-    net::{events::Event, BackEndConnection},
+    net::{BackEndConnection, BackendEvent},
     style,
     widget::Element,
 };
@@ -24,10 +24,10 @@ impl State {
 
     pub fn backend_event(
         &mut self,
-        event: Event,
+        event: BackendEvent,
         _conn: &mut BackEndConnection,
     ) -> Command<Message> {
-        if let Event::ChannelCreated(event_id) = event {
+        if let BackendEvent::ChannelCreated(event_id) = event {
             println!("*** CHANNEL CREATED ***");
             println!("{event_id}");
         }

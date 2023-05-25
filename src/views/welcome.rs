@@ -8,9 +8,8 @@ use crate::components::{common_scrollable, inform_card, relay_row, RelayRow};
 use crate::consts::{NOSTR_RESOURCES_LINK, RELAYS_IMAGE, RELAY_SUGGESTIONS, WELCOME_IMAGE};
 use crate::db::DbRelay;
 use crate::icon::{regular_circle_icon, solid_circle_icon};
-use crate::net::{self, BackEndConnection};
+use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
-use crate::utils::add_ellipsis_trunc;
 use crate::{components::text::title, widget::Element};
 
 use rand::{thread_rng, Rng};
@@ -118,10 +117,6 @@ pub enum StepView {
         relays_added: Vec<RelayRow>,
         add_relay_modal: ModalState,
     },
-    // DownloadEvents {
-    //     relays: HashMap<nostr::Url, EventData>,
-    // },
-    // Contacts,
     LoadingClient,
 }
 impl StepView {
@@ -139,12 +134,6 @@ impl StepView {
             add_relay_modal: ModalState::Off,
         }
     }
-    // fn download_events_view(conn: &mut BackEndConnection) -> Self {
-    //     conn.send(net::Message::FetchRelays);
-    //     Self::DownloadEvents {
-    //         relays: HashMap::new(),
-    //     }
-    // }
     fn loading_client(conn: &mut BackEndConnection) -> StepView {
         conn.send(net::ToBackend::PrepareClient);
         Self::LoadingClient
@@ -187,13 +176,6 @@ impl StepView {
             ]
             .spacing(10)
             .into(),
-            // StepView::DownloadEvents { .. } => button("Start").on_press(Message::ToApp).into(),
-            // StepView::Contacts => row![
-            //     button("Back").on_press(Message::ToPreviousStep),
-            //     button("Start").on_press(Message::ToNextStep)
-            // ]
-            // .spacing(10)
-            // .into(),
             Self::LoadingClient => text("").into(),
         }
     }
@@ -381,42 +363,7 @@ impl StepView {
 
                 add_relay_modal.view(underlay).into()
             }
-            // StepView::DownloadEvents { relays } => {
-            //     let title_1 = "Downloading events";
 
-            //     let relays = relays
-            //         .iter()
-            //         .fold(column![].spacing(5), |col, (_url, ev_data)| {
-            //             col.push(ev_data.view())
-            //         });
-
-            //     let relays_ct =
-            //         container(column![EventData::header(), common_scrollable(relays)].spacing(5))
-            //             .padding(10);
-
-            //     let content = column![
-            //         title(title_1)
-            //             .height(Length::FillPortion(1))
-            //             .width(Length::Fill)
-            //             .center_x()
-            //             .center_y(),
-            //         container(relays_ct)
-            //             .width(Length::Fill)
-            //             .height(Length::FillPortion(4))
-            //             .center_y()
-            //             .center_x(),
-            //         container(self.make_step_buttons()).height(Length::FillPortion(1))
-            //     ]
-            //     .spacing(10);
-
-            //     container(content)
-            //         .width(Length::Fill)
-            //         .height(Length::Fill)
-            //         .center_x()
-            //         .center_y()
-            //         .style(style::Container::WelcomeBg3)
-            //         .into()
-            // }
             StepView::LoadingClient => inform_card("Loading", "Please wait...").into(),
         }
     }
@@ -447,14 +394,7 @@ impl State {
             StepView::Welcome => {
                 self.step_view = StepView::relays_view(conn);
             }
-            StepView::Relays { relays_added, .. } => {
-                self.step_view = StepView::loading_client(conn)
-                // if relays_added.is_empty() {
-                // } else {
-                //     self.step_view = StepView::download_events_view(conn)
-                // }
-            }
-            // StepView::DownloadEvents { .. } => {}
+            StepView::Relays { .. } => self.step_view = StepView::loading_client(conn),
             StepView::LoadingClient => {}
         }
     }
@@ -549,42 +489,14 @@ impl State {
             }
         }
     }
-    pub fn backend_event(&mut self, event: net::events::Event, conn: &mut BackEndConnection) {
+    pub fn backend_event(&mut self, event: BackendEvent, conn: &mut BackEndConnection) {
         match &mut self.step_view {
-            // StepView::DownloadEvents { relays } => {
-            //     let event_str = event.to_string();
-            //     match event {
-            //         net::events::Event::GotRelays(db_relays) => {
-            //             for db_r in &db_relays {
-            //                 conn.send(net::Message::RequestEventsOf(db_r.clone()));
-            //             }
-            //         }
-            //         net::events::Event::RequestedEventsOf(db_relay) => {
-            //             relays.insert(db_relay.url.clone(), EventData::new(&db_relay.url));
-            //         }
-            //         net::events::Event::EndOfStoredEvents((relay_url, _sub_id)) => {
-            //             if let Some(ev_data) = relays.get_mut(&relay_url) {
-            //                 ev_data.done();
-            //             }
-            //         }
-            //         net::events::Event::ReceivedDM { relay_url, .. }
-            //         | net::events::Event::ReceivedContactList { relay_url, .. }
-            //         | net::events::Event::UpdatedContactMetadata { relay_url, .. }
-            //         | net::events::Event::UpdatedUserProfileMeta { relay_url, .. } => {
-            //             if let Some(ev_data) = relays.get_mut(&relay_url) {
-            //                 let event_str = format!("{}", event_str);
-            //                 ev_data.add_event(&event_str);
-            //             }
-            //         }
-            //         _ => (),
-            //     }
-            // }
             StepView::Relays {
                 relays_added,
                 relays_suggestion,
                 ..
             } => match event {
-                net::events::Event::GotRelays(mut db_relays) => {
+                BackendEvent::GotRelays(mut db_relays) => {
                     for db_relay in db_relays.iter() {
                         relays_suggestion.retain(|url| url != &db_relay.url);
                     }
@@ -595,14 +507,14 @@ impl State {
                         .map(|(idx, db_relay)| RelayRow::new(idx as i32, db_relay, conn))
                         .collect();
                 }
-                net::events::Event::RelayCreated(db_relay) => {
+                BackendEvent::RelayCreated(db_relay) => {
                     relays_suggestion.sort_by(|a, b| a.cmp(&b));
                     relays_added.sort_by(|a, b| a.db_relay.url.cmp(&b.db_relay.url));
 
                     relays_suggestion.retain(|url| url != &db_relay.url);
                     relays_added.push(RelayRow::new(relays_added.len() as i32, db_relay, conn));
                 }
-                net::events::Event::RelayDeleted(db_relay) => {
+                BackendEvent::RelayDeleted(db_relay) => {
                     relays_suggestion.sort_by(|a, b| a.cmp(&b));
                     relays_added.sort_by(|a, b| a.db_relay.url.cmp(&b.db_relay.url));
 
@@ -620,69 +532,6 @@ impl State {
     }
     pub fn view(&self) -> Element<Message> {
         self.step_view.view()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct EventData {
-    pub relay_url: nostr::Url,
-    pub count: usize,
-    pub last_event: String,
-    pub is_done: bool,
-}
-impl EventData {
-    pub fn get_description(&self) -> String {
-        if self.is_done {
-            format!("Got {} events", self.count)
-        } else {
-            format!("{}", self.last_event)
-        }
-    }
-    pub fn new(relay_url: &nostr::Url) -> EventData {
-        Self {
-            relay_url: relay_url.to_owned(),
-            count: 0,
-            last_event: "".into(),
-            is_done: false,
-        }
-    }
-    pub fn add_event(&mut self, last_event: &str) {
-        if !self.is_done {
-            self.count += 1;
-            self.last_event = last_event.into();
-        }
-    }
-    pub fn done(&mut self) {
-        self.is_done = true;
-        self.last_event = "End of events".into();
-    }
-    pub fn header<Message: 'static>() -> Element<'static, Message> {
-        container(
-            row![
-                text("Relay Url").size(24).width(Length::Fill),
-                text("Last Event").size(24).width(Length::Fill),
-                text("Events Added").size(24).width(Length::Fill),
-            ]
-            .align_items(Alignment::Center)
-            .spacing(10),
-        )
-        .center_y()
-        .into()
-    }
-    pub fn view<'a, Message: 'a>(&'a self) -> Element<'a, Message> {
-        container(
-            row![
-                text(&self.relay_url).size(20).width(Length::Fill),
-                text(&add_ellipsis_trunc(&self.last_event, 20))
-                    .size(16)
-                    .width(Length::Fill),
-                text(self.count).size(20).width(Length::Fill),
-            ]
-            .align_items(Alignment::Center)
-            .spacing(10),
-        )
-        .center_y()
-        .into()
     }
 }
 

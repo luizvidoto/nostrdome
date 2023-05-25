@@ -258,7 +258,7 @@ impl DbMessage {
             FROM message
             WHERE contact_pubkey=?
             ORDER BY confirmed_at DESC
-            LIMIT 10
+            LIMIT 100
         "#;
 
         let messages = sqlx::query_as::<_, DbMessage>(sql)
@@ -278,7 +278,7 @@ impl DbMessage {
             SELECT *
             FROM message
             WHERE contact_pubkey=? and confirmed_at < ? ORDER BY confirmed_at DESC
-            LIMIT 10
+            LIMIT 100
         "#;
         let messages = sqlx::query_as::<_, DbMessage>(&sql)
             .bind(&contact_pubkey.to_string())
@@ -399,14 +399,6 @@ impl MessageStatus {
         match self {
             MessageStatus::Offline => false,
             MessageStatus::Delivered => true,
-            MessageStatus::Seen => false,
-        }
-    }
-
-    pub(crate) fn is_offline(&self) -> bool {
-        match self {
-            MessageStatus::Offline => true,
-            MessageStatus::Delivered => false,
             MessageStatus::Seen => false,
         }
     }

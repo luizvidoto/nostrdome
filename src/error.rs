@@ -1,9 +1,12 @@
 use std::path::PathBuf;
 
-use nostr::{prelude::TagKind, EventId};
+use nostr::{prelude::TagKind, secp256k1::XOnlyPublicKey, EventId};
 use thiserror::Error;
 
-use crate::{db::DbContactError, net::ImageSize};
+use crate::{
+    db::DbContactError,
+    net::{ImageKind, ImageSize},
+};
 
 // pub type Result<T> = std::result::Result<T, Error>;
 
@@ -46,6 +49,8 @@ pub enum Error {
 
     #[error("Failed to send to nostr input channel: {0}")]
     FailedToSendNostrInput(String),
+    #[error("Failed to send to backend input channel: {0}")]
+    FailedToSendBackendInput(String),
 
     // #[error("NTP Error: {0}")]
     // NtpError(#[from] ntp::errors::Error),
@@ -69,6 +74,8 @@ pub enum Error {
     OutDatedContactInsert,
     #[error("Can't update message without id")]
     MessageNotInDatabase,
+    #[error("Trying to find message with event_id: {0}")]
+    EventWithoutMessage(i64),
     #[error("Can't update channel without id")]
     ChannelNotInDatabase,
     #[error("Event not in database: {0}")]
@@ -188,6 +195,15 @@ pub enum Error {
 
     #[error("Relay not found: {0}")]
     RelayNotFound(String),
+
+    #[error("Contact not found - pubkey: {0:?}")]
+    ContactNotFound(XOnlyPublicKey),
+
+    #[error("App didn't ask for kind: {0:?}")]
+    NotSubscribedToKind(nostr::Kind),
+
+    #[error("Not found path for kind: {0:?}")]
+    NoPathForKind(ImageKind),
 }
 
 #[derive(Debug, Error)]

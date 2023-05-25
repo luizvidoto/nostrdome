@@ -2793,7 +2793,6 @@ dependencies = [
  "log",
  "nostr",
  "nostr-sdk",
- "ns-client",
  "num-format",
  "once_cell",
  "ouroboros",
@@ -2821,20 +2820,6 @@ dependencies = [
  "url",
  "uuid",
  "webbrowser",
-]
-
-[[package]]
-name = "ns-client"
-version = "0.1.0"
-dependencies = [
- "futures-util",
- "log",
- "nostr",
- "thiserror",
- "tokio",
- "tokio-tungstenite",
- "tungstenite",
- "url",
 ]
 
 [[package]]

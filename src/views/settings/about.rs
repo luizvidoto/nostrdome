@@ -2,7 +2,7 @@ use crate::{
     components::{common_scrollable, text::title},
     consts::{BITCOIN_ADDRESS, GITHUB_REPO, LIGHTNING_ADDRESS, NOSTRTALK_VERSION, TT_LINK},
     icon::copy_icon,
-    net::events::Event,
+    net::BackendEvent,
     style,
     utils::{format_btc_address, qr_code_handle},
     widget::Element,
@@ -13,7 +13,7 @@ use iced::{Alignment, Command, Length};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    BackEndEvent(Event),
+    BackEndEvent(BackendEvent),
     OpenTTLink,
     OpenGHLink,
     CopyQrCode(String),

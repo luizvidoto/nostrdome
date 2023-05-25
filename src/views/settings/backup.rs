@@ -1,6 +1,6 @@
 use crate::components::text::title;
 use crate::db::DbEvent;
-use crate::net::{self, events::Event, BackEndConnection};
+use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::{db::DbContact, widget::Element};
 use iced::widget::{button, column, row, text};
 use rfd::FileDialog;
@@ -36,18 +36,18 @@ impl State {
         }
     }
 
-    pub fn backend_event(&mut self, event: Event, _conn: &mut BackEndConnection) {
+    pub fn backend_event(&mut self, event: BackendEvent, _conn: &mut BackEndConnection) {
         match event {
-            Event::GotContacts(contact_list) => {
+            BackendEvent::GotContacts(contact_list) => {
                 self.contacts = contact_list;
             }
-            Event::GotAllMessages(all_messages) => {
+            BackendEvent::GotAllMessages(all_messages) => {
                 self.messages = all_messages;
             }
-            Event::ExportedContactsSucessfully => {
+            BackendEvent::ExportedContactsSucessfully => {
                 self.contacts_state = LoadingState::Success;
             }
-            Event::ExportedMessagesSucessfully => {
+            BackendEvent::ExportedMessagesSucessfully => {
                 self.messages_state = LoadingState::Success;
             }
             _ => (),

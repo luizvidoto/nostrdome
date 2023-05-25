@@ -2,8 +2,7 @@ use iced::widget::{button, column, container, row, Space};
 use iced::{Command, Length, Subscription};
 
 use crate::db::DbContact;
-use crate::net::events::Event;
-use crate::net::{self, BackEndConnection};
+use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
 
 use crate::widget::{Button, Element};
@@ -166,7 +165,7 @@ impl Settings {
 
     pub fn backend_event(
         &mut self,
-        event: Event,
+        event: BackendEvent,
         conn: &mut BackEndConnection,
     ) -> Command<Message> {
         match &mut self.menu_state {

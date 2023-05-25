@@ -168,7 +168,8 @@ impl DbEvent {
 
     // maybe create insert confirmed and insert pending?
     pub async fn insert(pool: &SqlitePool, db_event: &DbEvent) -> Result<(i64, u8), Error> {
-        tracing::debug!("inserting event {:?}", db_event);
+        tracing::debug!("inserting event id: {}", db_event.event_hash);
+        tracing::trace!("inserting event {:?}", db_event);
         let sql = r#"
             INSERT INTO 
                 event (event_hash, pubkey, kind, content, sig, tags, 

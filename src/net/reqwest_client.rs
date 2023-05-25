@@ -1,11 +1,10 @@
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use directories::ProjectDirs;
 use futures::TryStreamExt;
 use futures_util::StreamExt;
 use image::ImageFormat;
 use nostr::{secp256k1::XOnlyPublicKey, Url};
 use serde::Deserialize;
-use sqlx::SqlitePool;
 use std::env;
 use std::path::{Path, PathBuf};
 use tokio::fs::File;
@@ -15,7 +14,6 @@ use crate::consts::{
     APP_PROJECT_DIRS, MEDIUM_PROFILE_PIC_HEIGHT, MEDIUM_PROFILE_PIC_WIDTH,
     SMALL_PROFILE_PIC_HEIGHT, SMALL_PROFILE_PIC_WIDTH,
 };
-use crate::db::ProfileCache;
 use crate::error::Error;
 
 #[derive(Debug, Clone, Copy)]
@@ -54,15 +52,8 @@ impl ImageKind {
     }
 }
 
-fn image_filename(kind: ImageKind, size: ImageSize, image_type: &str) -> String {
+pub fn image_filename(kind: ImageKind, size: ImageSize, image_type: &str) -> String {
     format!("{}_{}.{}", kind.to_str(), size.to_str(), image_type)
-}
-
-pub fn get_png_image_path(base_path: &Path, kind: ImageKind, size: ImageSize) -> PathBuf {
-    // Always use PNG as the image format for the resized images
-    let image_type = "png";
-    let file_name = image_filename(kind, size, image_type);
-    base_path.with_file_name(file_name)
 }
 
 pub fn sized_image(filename: &Path, kind: ImageKind, size: ImageSize) -> PathBuf {

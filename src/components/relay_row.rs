@@ -1,7 +1,6 @@
 use crate::db::DbRelay;
 use crate::icon::{delete_icon, exclamation_icon, solid_circle_icon};
-use crate::net::events::Event;
-use crate::net::{self, BackEndConnection};
+use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
 use crate::utils::ns_event_to_naive;
 use crate::widget::{Element, Text};
@@ -27,7 +26,6 @@ pub enum RelayRowState {
     Idle,
     Loading,
     Success,
-    Error(String),
 }
 
 #[derive(Debug, Clone)]
@@ -44,11 +42,6 @@ impl Mode {
     pub fn loading(&mut self) {
         if let Mode::ModalView { state } = self {
             *state = RelayRowState::Loading;
-        }
-    }
-    pub fn error(&mut self, error: String) {
-        if let Mode::ModalView { state } = self {
-            *state = RelayRowState::Error(error);
         }
     }
 }
@@ -130,7 +123,7 @@ impl RelayRow {
             |state| async move {
                 match state {
                     State::Start { id } => {
-                        let (sender, receiver) = mpsc::channel(1024);
+                        let (sender, receiver) = mpsc::channel(5);
                         (
                             MessageWrapper::new(id, Message::Ready(RelayRowConnection(sender))),
                             State::Idle { receiver, id },
@@ -186,23 +179,23 @@ impl RelayRow {
         )
     }
 
-    pub fn backend_event(&mut self, event: Event, _conn: &mut BackEndConnection) {
+    pub fn backend_event(&mut self, event: BackendEvent, _conn: &mut BackEndConnection) {
         match event {
-            Event::RelayUpdated(db_relay) => {
+            BackendEvent::RelayUpdated(db_relay) => {
                 if self.db_relay.url == db_relay.url {
                     tracing::debug!("Relay updated");
                     tracing::debug!("{:?}", db_relay);
                     self.db_relay = db_relay;
                 }
             }
-            Event::GotRelayServer(relay) => {
+            BackendEvent::GotRelayServer(relay) => {
                 if let Some(relay) = relay {
                     if self.db_relay.url == relay.url() {
                         self.client_relay = Some(relay);
                     }
                 }
             }
-            Event::ConfirmedContactList(db_event) => {
+            BackendEvent::ConfirmedContactList(db_event) => {
                 if let Some(relay_url) = db_event.relay_url {
                     if relay_url == self.db_relay.url {
                         self.mode.success()
@@ -259,14 +252,14 @@ impl RelayRow {
                 }
             }
             Message::Performing => {
-                tracing::debug!("Relay Row performing");
+                tracing::trace!("Relay Row performing");
             }
             Message::Waited => {
-                tracing::debug!("Message::Waited");
+                tracing::trace!("Message::Waited");
                 self.send_action_to_channel(conn);
             }
             Message::Ready(channel) => {
-                tracing::debug!("Message::Ready(channel)");
+                tracing::trace!("Message::Ready(channel)");
                 self.sub_channel = Some(channel);
                 self.send_action_to_channel(conn);
             }
@@ -443,7 +436,6 @@ impl RelayRow {
 
                 RelayRowState::Loading => button("...").style(style::Button::Primary).into(),
                 RelayRowState::Success => text("Sent!").into(),
-                RelayRowState::Error(_) => text("Error").into(),
             };
 
             let (status_icon, status_text) = self.relay_status_icon();

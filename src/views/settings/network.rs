@@ -9,8 +9,7 @@ use crate::components::text_input_group::TextInputGroup;
 use crate::components::{common_scrollable, relay_row, RelayRow};
 use crate::db::DbRelay;
 use crate::icon::plus_icon;
-use crate::net::events::Event;
-use crate::net::{self, BackEndConnection};
+use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
 use crate::utils::url_matches_search;
 use crate::widget::Element;
@@ -18,7 +17,7 @@ use crate::widget::Element;
 #[derive(Debug, Clone)]
 pub enum Message {
     RelayMessage(relay_row::MessageWrapper),
-    BackEndEvent(Event),
+    BackEndEvent(BackendEvent),
     OpenAddRelayModal,
     CancelButtonPressed,
     OkButtonPressed,
@@ -90,15 +89,15 @@ impl State {
             }
 
             Message::BackEndEvent(ev) => match ev {
-                Event::RelayCreated(db_relay) => {
+                BackendEvent::RelayCreated(db_relay) => {
                     conn.send(net::ToBackend::RequestEventsOf(db_relay.clone()));
                     self.relays
                         .push(RelayRow::new(self.relays.len() as i32, db_relay, conn))
                 }
-                Event::RelayDeleted(db_relay) => {
+                BackendEvent::RelayDeleted(db_relay) => {
                     self.relays.retain(|r| r.db_relay.url != db_relay.url);
                 }
-                Event::GotRelays(mut db_relays) => {
+                BackendEvent::GotRelays(mut db_relays) => {
                     db_relays.sort_by(|a, b| a.url.cmp(&b.url));
                     self.relays = db_relays
                         .into_iter()

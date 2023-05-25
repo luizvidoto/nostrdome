@@ -5,5 +5,3 @@ pub(crate) mod direct_message;
 pub(crate) mod event;
 pub(crate) mod metadata;
 pub(crate) mod other;
-pub(crate) mod relay;
-pub(crate) mod subscribe;

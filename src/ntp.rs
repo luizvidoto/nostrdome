@@ -1,5 +1,6 @@
 use chrono::NaiveDateTime;
 use futures::channel::mpsc;
+use futures_util::SinkExt;
 use sntpc::{
     Error as SntpcError, NtpContext, NtpTimestampGenerator, NtpUdpSocket, Result as SntpcR,
 };
@@ -9,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{error::Error, net::events::backend::BackEndInput};
+use crate::{error::Error, net::BackEndInput};
 
 #[derive(Copy, Clone, Default)]
 struct StdTimestampGen {
@@ -64,9 +65,7 @@ fn port_binder(desired_port: u16) -> Result<UdpSocket, io::Error> {
     }
 }
 
-pub fn ntp_request(back_sender: &mut mpsc::Sender<BackEndInput>) {
-    let mut sender_1 = back_sender.clone();
-
+pub fn spawn_ntp_request(mut back_sender: mpsc::UnboundedSender<BackEndInput>) {
     tokio::spawn(async move {
         loop {
             tracing::debug!("Starting NTP request");
@@ -81,8 +80,9 @@ pub fn ntp_request(back_sender: &mut mpsc::Sender<BackEndInput>) {
                 let socket = match port_binder(random_port) {
                     Ok(socket) => socket,
                     Err(_e) => {
-                        if let Err(e) = sender_1
-                            .try_send(BackEndInput::Error(Error::NtpUnableToBindPort.to_string()))
+                        if let Err(e) = back_sender
+                            .send(BackEndInput::Error(Error::NtpUnableToBindPort))
+                            .await
                         {
                             tracing::error!("Failed to send time to backend: {}", e);
                         }
@@ -91,9 +91,10 @@ pub fn ntp_request(back_sender: &mut mpsc::Sender<BackEndInput>) {
                 };
 
                 if let Err(_e) = socket.set_read_timeout(Some(Duration::from_secs(10))) {
-                    if let Err(e) = sender_1.try_send(BackEndInput::Error(
-                        Error::NtpUnableToSetReadTimeout.to_string(),
-                    )) {
+                    if let Err(e) = back_sender
+                        .send(BackEndInput::Error(Error::NtpUnableToSetReadTimeout))
+                        .await
+                    {
                         tracing::error!("Failed to send time to backend: {}", e);
                     }
                 }
@@ -101,8 +102,9 @@ pub fn ntp_request(back_sender: &mut mpsc::Sender<BackEndInput>) {
                 let ntp_context = NtpContext::new(StdTimestampGen::default());
                 match sntpc::get_time(addr.1, sock_wrapper, ntp_context) {
                     Ok(time) => {
-                        if let Err(e) =
-                            sender_1.try_send(BackEndInput::NtpTime(ntp_total_microseconds(time)))
+                        if let Err(e) = back_sender
+                            .send(BackEndInput::NtpTime(ntp_total_microseconds(time)))
+                            .await
                         {
                             tracing::error!("Failed to send time to backend: {}", e);
                         }

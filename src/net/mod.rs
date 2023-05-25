@@ -3,40 +3,44 @@ use crate::db::{
     Database, DbContact, DbEvent, DbMessage, DbRelay, DbRelayResponse, ProfileCache, UserConfig,
 };
 use crate::error::Error;
-use crate::net::events::backend::{self, backend_processing};
-use crate::net::events::frontend::Event;
-use crate::net::events::nostr::NostrSdkWrapper;
+use crate::net::operations::contact_list::handle_contact_list;
+use crate::net::operations::direct_message::handle_dm;
+use crate::net::operations::event::{confirm_event, confirmed_event, insert_other_kind};
+use crate::net::operations::metadata::handle_metadata_event;
 use crate::net::reqwest_client::fetch_latest_version;
-use crate::ntp::ntp_request;
+use crate::ntp::spawn_ntp_request;
 use crate::types::ChatMessage;
 use crate::views::login::BasicProfile;
 use futures::channel::mpsc;
-use futures::{Future, StreamExt};
-use iced::futures::stream::Fuse;
+use futures::StreamExt;
+use futures_util::SinkExt;
 use iced::subscription;
 use iced::Subscription;
 use nostr::secp256k1::XOnlyPublicKey;
-use nostr::Keys;
+use nostr::{Keys, RelayMessage};
 use nostr_sdk::RelayPoolNotification;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
-use std::pin::Pin;
+use tokio::sync::broadcast;
 
 mod back_channel;
-pub(crate) mod events;
+mod backend_event;
+mod nostr_events;
 mod operations;
 mod reqwest_client;
+pub(crate) use backend_event::BackendEvent;
 
-pub(crate) use reqwest_client::{sized_image, ImageKind, ImageSize};
+pub(crate) use reqwest_client::{image_filename, sized_image, ImageKind, ImageSize};
 
 pub(crate) use self::back_channel::BackEndConnection;
-use self::events::backend::BackEndInput;
-use self::events::nostr::{prepare_client, NostrInput, NostrOutput};
-use self::operations::builder::{build_contact_list_event, build_dm};
+use self::nostr_events::{prepare_client, NostrInput, NostrOutput, NostrSdkWrapper};
+use self::operations::builder::{build_contact_list_event, build_dm, build_profile_event};
 use self::operations::contact::{
-    add_new_contact, delete_contact, fetch_and_decrypt_chat, import_contacts, update_contact,
+    add_new_contact, delete_contact, fetch_and_decrypt_chat, update_contact,
 };
-use self::operations::metadata::update_user_metadata;
+use self::operations::event::{
+    insert_pending_contact_list, insert_pending_dm, insert_pending_metadata,
+};
 use self::reqwest_client::download_image;
 
 #[derive(Debug, Clone)]
@@ -86,25 +90,23 @@ pub enum ToBackend {
         public_key: XOnlyPublicKey,
     },
     FetchMoreMessages((DbContact, ChatMessage)),
+    RemoveFileFromCache((ProfileCache, ImageKind)),
 }
 
 pub struct BackendState {
-    keys: Keys,
     db_client: Option<Database>,
-    sender: mpsc::Sender<BackEndInput>,
-    receiver: mpsc::Receiver<BackEndInput>,
     req_client: Option<reqwest::Client>,
+    sender: mpsc::UnboundedSender<BackEndInput>,
+    receiver: mpsc::UnboundedReceiver<BackEndInput>,
 }
 impl BackendState {
-    pub fn new(keys: &Keys) -> Self {
-        let (sender, receiver) = mpsc::channel(1024);
-
+    pub fn new() -> Self {
+        let (sender, receiver) = mpsc::unbounded();
         Self {
-            sender,
-            receiver,
-            keys: keys.to_owned(),
             db_client: None,
             req_client: None,
+            sender,
+            receiver,
         }
     }
 
@@ -117,364 +119,406 @@ impl BackendState {
         self
     }
 
-    pub async fn process_in(
-        &mut self,
-        backend_input: BackEndInput,
-        nostr_sender: &mut mpsc::Sender<NostrInput>,
-    ) -> Event {
-        if let Some(db_client) = &mut self.db_client {
-            backend_processing(
-                &db_client.pool,
-                &db_client.cache_pool,
-                &self.keys,
-                backend_input,
-                &mut self.sender,
-                nostr_sender,
-            )
-            .await
-        } else {
-            Event::None
-        }
-    }
     pub async fn logout(self) -> Result<(), Error> {
         tracing::info!("Database Logging out");
         Ok(())
     }
-    pub async fn process_message(
+
+    pub async fn process_notification(
         &mut self,
-        nostr_sender: &mut mpsc::Sender<NostrInput>,
-        chat_msg: ToBackend,
-    ) -> Event {
-        if let (Some(db_client), Some(req_client)) = (&mut self.db_client, &mut self.req_client) {
-            let pool = &db_client.pool;
-            let cache_pool = &db_client.cache_pool;
-            match chat_msg {
-                // ---- REQWEST ----
-                ToBackend::FetchLatestVersion => {
-                    handle_fetch_last_version(req_client, &mut self.sender)
-                }
-                ToBackend::DownloadImage {
-                    image_url,
-                    public_key,
-                    kind,
-                } => handle_download_image(&mut self.sender, public_key, kind, image_url),
-                // ---- CONFIG ----
-                ToBackend::Logout => {
-                    panic!("Logout should be processed outside here")
-                }
-                ToBackend::CreateAccount(profile) => {
-                    let profile_meta: nostr::Metadata = profile.into();
-                    update_user_metadata(pool, &self.keys, &mut self.sender, profile_meta).await
-                }
-                ToBackend::UpdateUserProfileMeta(profile_meta) => {
-                    update_user_metadata(pool, &self.keys, &mut self.sender, profile_meta).await
-                }
-                ToBackend::QueryFirstLogin => {
-                    match handle_first_login(pool, cache_pool, nostr_sender).await {
-                        Ok(event) => event,
-                        Err(e) => Event::Error(e.to_string()),
-                    }
-                }
-                ToBackend::PrepareClient => match prepare_client(pool, cache_pool).await {
-                    Ok(input) => to_nostr_channel(nostr_sender, input),
-                    Err(e) => Event::Error(e.to_string()),
-                },
-                // -------- DATABASE MESSAGES -------
-                ToBackend::FetchMoreMessages((db_contact, first_message)) => {
-                    process_async_with_event(handle_get_more_messages(
-                        pool,
-                        &self.keys,
-                        db_contact,
-                        first_message,
-                    ))
-                    .await
-                }
-                ToBackend::FetchSingleContact(pubkey) => {
-                    match DbContact::fetch_one(pool, cache_pool, &pubkey).await {
-                        Ok(req) => Event::GotSingleContact((pubkey, req)),
-                        Err(e) => Event::Error(e.to_string()),
-                    }
-                }
-                ToBackend::FetchRelayResponsesUserProfile => {
-                    process_async_with_event(fetch_relay_responses_user_profile(pool, &self.keys))
-                        .await
-                }
-                ToBackend::FetchRelayResponsesContactList => {
-                    process_async_with_event(fetch_relay_responses_contact_list(pool, &self.keys))
-                        .await
-                }
-                ToBackend::FetchChatInfo(db_contact) => {
-                    process_async_with_event(handle_fetch_chat_info(pool, &self.keys, db_contact))
-                        .await
-                }
-                ToBackend::ExportMessages((messages, path)) => {
-                    match messages_to_json_file(path, &messages).await {
-                        Ok(_) => Event::ExportedMessagesSucessfully,
-                        Err(e) => Event::Error(e.to_string()),
-                    }
-                }
-                ToBackend::ExportContacts(path) => {
-                    process_async_with_event(fetch_and_export_contacts(
-                        pool, cache_pool, &self.keys, path,
-                    ))
-                    .await
-                }
-                ToBackend::FetchAllMessageEvents => {
-                    match DbEvent::fetch_kind(pool, nostr::Kind::EncryptedDirectMessage).await {
-                        Ok(messages) => Event::GotAllMessages(messages),
-                        Err(e) => Event::Error(e.to_string()),
-                    }
-                }
-                ToBackend::GetUserProfileMeta => {
-                    tracing::info!("Fetching user profile meta");
-                    match ProfileCache::fetch_by_public_key(cache_pool, &self.keys.public_key())
-                        .await
-                    {
-                        Ok(cache) => Event::GotUserProfileCache(cache),
-                        Err(e) => Event::Error(e.to_string()),
-                    }
-                }
-
-                ToBackend::FetchRelayResponses(chat_message) => {
-                    process_async_with_event(fetch_relay_responses(pool, chat_message)).await
-                }
-                ToBackend::ImportContacts((db_contacts, is_replace)) => {
-                    process_async_with_event(import_contacts(
-                        &self.keys,
-                        pool,
-                        db_contacts,
-                        is_replace,
-                    ))
-                    .await
-                }
-                ToBackend::AddContact(db_contact) => {
-                    process_async_with_event(add_new_contact(&self.keys, pool, &db_contact)).await
-                }
-                ToBackend::UpdateContact(db_contact) => {
-                    process_async_with_event(update_contact(&self.keys, pool, &db_contact)).await
-                }
-                ToBackend::DeleteContact(contact) => {
-                    process_async_with_event(delete_contact(pool, &contact)).await
-                }
-                ToBackend::FetchContacts => match DbContact::fetch(pool, cache_pool).await {
-                    Ok(contacts) => Event::GotContacts(contacts),
-                    Err(e) => Event::Error(e.to_string()),
-                },
-                ToBackend::FetchRelays => match DbRelay::fetch(pool).await {
-                    Ok(relays) => Event::GotRelays(relays),
-                    Err(e) => Event::Error(e.to_string()),
-                },
-                ToBackend::FetchMessages(contact) => {
-                    process_async_with_event(fetch_and_decrypt_chat(&self.keys, pool, contact))
-                        .await
-                }
-                ToBackend::GetDbEventWithHash(event_hash) => {
-                    match DbEvent::fetch_one(pool, &event_hash).await {
-                        Ok(Some(db_event)) => Event::GotDbEvent(db_event),
-                        Ok(None) => Event::None,
-                        Err(e) => Event::Error(e.to_string()),
-                    }
-                }
-                // --------- NOSTR MESSAGES ------------
-                ToBackend::RequestEventsOf(db_relay) => {
-                    match DbContact::fetch(pool, cache_pool).await {
-                        Ok(contact_list) => to_nostr_channel(
-                            nostr_sender,
-                            NostrInput::RequestEventsOf((db_relay, contact_list)),
-                        ),
-                        Err(e) => Event::Error(e.to_string()),
-                    }
-                }
-
-                ToBackend::RefreshContactsProfile => match DbContact::fetch(pool, cache_pool).await
-                {
-                    Ok(db_contacts) => {
-                        to_nostr_channel(
-                            nostr_sender,
-                            NostrInput::GetContactListProfiles(db_contacts),
-                        );
-                        Event::None
-                    }
-                    Err(e) => Event::Error(e.to_string()),
-                },
-                ToBackend::FetchRelayServer(url) => {
-                    to_nostr_channel(nostr_sender, NostrInput::FetchRelayServer(url))
-                }
-                ToBackend::FetchRelayServers => {
-                    to_nostr_channel(nostr_sender, NostrInput::FetchRelayServers)
-                }
-                ToBackend::CreateChannel => {
-                    to_nostr_channel(nostr_sender, NostrInput::CreateChannel)
-                }
-                ToBackend::ConnectToRelay(db_relay) => match DbEvent::fetch_last(pool).await {
-                    Ok(last_event) => to_nostr_channel(
-                        nostr_sender,
-                        NostrInput::ConnectToRelay((db_relay, last_event)),
-                    ),
-                    Err(e) => Event::Error(e.to_string()),
-                },
-                ToBackend::AddRelay(db_relay) => {
-                    to_nostr_channel(nostr_sender, NostrInput::AddRelay(db_relay))
-                }
-                ToBackend::DeleteRelay(db_relay) => {
-                    to_nostr_channel(nostr_sender, NostrInput::DeleteRelay(db_relay))
-                }
-                ToBackend::ToggleRelayRead((db_relay, read)) => {
-                    to_nostr_channel(nostr_sender, NostrInput::ToggleRelayRead((db_relay, read)))
-                }
-                ToBackend::ToggleRelayWrite((db_relay, write)) => to_nostr_channel(
-                    nostr_sender,
-                    NostrInput::ToggleRelayWrite((db_relay, write)),
-                ),
-
-                // -- TO BACKEND CHANNEL --
-                ToBackend::SendDM((db_contact, content)) => {
-                    // to backend channel, create a pending event and await confirmation of relays
-                    match build_dm(pool, &self.keys, &db_contact, &content).await {
-                        Ok(ns_event) => to_backend_channel(
-                            &mut self.sender,
-                            BackEndInput::StorePendingMessage {
-                                ns_event,
-                                content,
-                                db_contact,
-                            },
-                        ),
-                        Err(e) => Event::Error(e.to_string()),
-                    }
-                }
-                ToBackend::SendContactListToRelays => {
-                    match DbContact::fetch(pool, cache_pool).await {
-                        Ok(list) => match build_contact_list_event(pool, &self.keys, &list).await {
-                            Ok(ns_event) => to_backend_channel(
-                                &mut self.sender,
-                                BackEndInput::StorePendingContactList((ns_event, list.to_owned())),
-                            ),
-                            Err(e) => Event::Error(e.to_string()),
-                        },
-                        Err(e) => Event::Error(e.to_string()),
-                    }
-                }
-            }
-        } else {
-            Event::None
-        }
-    }
-
-    pub async fn process_notification(&mut self, notification: RelayPoolNotification) -> Event {
+        notification: RelayPoolNotification,
+    ) -> Option<BackendEvent> {
         // Cria uma tarefa separada para processar a notificação
         let backend_input = match notification {
             RelayPoolNotification::Event(relay_url, event) => {
-                backend::BackEndInput::StoreConfirmedEvent((relay_url, event))
+                BackEndInput::StoreConfirmedEvent((relay_url, event))
             }
             RelayPoolNotification::Message(relay_url, msg) => {
-                backend::BackEndInput::StoreRelayMessage((relay_url, msg))
+                BackEndInput::StoreRelayMessage((relay_url, msg))
             }
-            RelayPoolNotification::Shutdown => backend::BackEndInput::Shutdown,
+            RelayPoolNotification::Shutdown => BackEndInput::Shutdown,
         };
 
-        if let Err(e) = self.sender.try_send(backend_input) {
+        if let Err(e) = self.sender.send(backend_input).await {
             tracing::error!("{}", e);
         }
 
-        Event::None
+        None
     }
 }
 
-async fn handle_fetch_chat_info(
-    pool: &SqlitePool,
+pub async fn process_message(
     keys: &Keys,
-    db_contact: DbContact,
-) -> Result<Event, Error> {
-    let chat_info =
-        if let Some(last_msg) = DbMessage::fetch_chat_last(pool, &db_contact.pubkey()).await? {
-            let unseen_messages = 0;
-            let last_chat_msg = ChatMessage::from_db_message(keys, &last_msg, &db_contact)?;
-            Some(ChatInfo {
-                unseen_messages,
-                last_message: last_chat_msg.content,
-                last_message_time: last_msg.display_time(),
-            })
-        } else {
-            None
-        };
+    nostr: &mut NostrState,
+    backend: &mut BackendState,
+    message: ToBackend,
+) -> Result<Option<BackendEvent>, Error> {
+    if let (Some(db_client), Some(req_client)) = (&mut backend.db_client, &mut backend.req_client) {
+        let pool = &db_client.pool;
+        let cache_pool = &db_client.cache_pool;
+        let event_opt = match message {
+            // ---- REQWEST ----
+            ToBackend::FetchLatestVersion => {
+                handle_fetch_last_version(req_client.clone(), backend.sender.clone())
+            }
+            ToBackend::DownloadImage {
+                image_url,
+                public_key,
+                kind,
+            } => spawn_download_image(backend.sender.clone(), public_key, kind, image_url),
+            // ---- CONFIG ----
+            ToBackend::Logout => {
+                panic!("Logout should be processed outside here")
+            }
+            ToBackend::CreateAccount(profile) => {
+                let profile_meta: nostr::Metadata = profile.into();
+                let ns_event = build_profile_event(pool, keys, &profile_meta).await?;
+                Some(
+                    to_backend_channel(
+                        &mut backend.sender,
+                        BackEndInput::StorePendingMetadata((ns_event, profile_meta)),
+                    )
+                    .await?,
+                )
+            }
+            ToBackend::UpdateUserProfileMeta(profile_meta) => {
+                let ns_event = build_profile_event(pool, keys, &profile_meta).await?;
+                Some(
+                    to_backend_channel(
+                        &mut backend.sender,
+                        BackEndInput::StorePendingMetadata((ns_event, profile_meta)),
+                    )
+                    .await?,
+                )
+            }
+            ToBackend::QueryFirstLogin => {
+                if UserConfig::query_has_logged_in(pool).await? {
+                    let input = prepare_client(pool, cache_pool).await?;
+                    let output = nostr.process_in(input).await?;
+                    process_nostr_output(output, backend).await
+                } else {
+                    Some(BackendEvent::FirstLogin)
+                }
+            }
+            ToBackend::PrepareClient => {
+                let input = prepare_client(pool, cache_pool).await?;
+                let output = nostr.process_in(input).await?;
+                process_nostr_output(output, backend).await
+            }
+            // -------- DATABASE MESSAGES -------
+            ToBackend::RemoveFileFromCache((cache, kind)) => {
+                ProfileCache::remove_file(cache_pool, &cache, kind).await?;
+                Some(BackendEvent::CacheFileRemoved((cache, kind)))
+            }
+            ToBackend::FetchMoreMessages((db_contact, first_message)) => {
+                let msgs = DbMessage::fetch_more(pool, db_contact.pubkey(), first_message).await?;
+                match msgs.is_empty() {
+                    false => {
+                        let mut chat_messages = vec![];
+                        tracing::debug!("Decrypting messages");
+                        for db_message in &msgs {
+                            let chat_message =
+                                ChatMessage::from_db_message(&keys, &db_message, &db_contact)?;
+                            chat_messages.push(chat_message);
+                        }
 
-    Ok(Event::GotChatInfo((db_contact, chat_info)))
+                        Some(BackendEvent::GotChatMessages((db_contact, chat_messages)))
+                    }
+                    // update nostr subscriber
+                    true => None,
+                }
+            }
+            ToBackend::FetchSingleContact(pubkey) => {
+                let req = DbContact::fetch_one(pool, cache_pool, &pubkey).await?;
+                Some(BackendEvent::GotSingleContact((pubkey, req)))
+            }
+            ToBackend::FetchRelayResponsesUserProfile => {
+                if let Some(profile_event) =
+                    DbEvent::fetch_last_kind_pubkey(pool, nostr::Kind::Metadata, &keys.public_key())
+                        .await?
+                {
+                    let all_relays = DbRelay::fetch(pool).await?;
+                    let responses =
+                        DbRelayResponse::fetch_by_event(pool, profile_event.event_id()?).await?;
+                    Some(BackendEvent::GotRelayResponsesUserProfile {
+                        responses,
+                        all_relays,
+                    })
+                } else {
+                    None
+                }
+            }
+            ToBackend::FetchRelayResponsesContactList => {
+                if let Some(profile_event) = DbEvent::fetch_last_kind_pubkey(
+                    pool,
+                    nostr::Kind::ContactList,
+                    &keys.public_key(),
+                )
+                .await?
+                {
+                    let all_relays = DbRelay::fetch(pool).await?;
+                    let responses =
+                        DbRelayResponse::fetch_by_event(pool, profile_event.event_id()?).await?;
+                    Some(BackendEvent::GotRelayResponsesContactList {
+                        responses,
+                        all_relays,
+                    })
+                } else {
+                    None
+                }
+            }
+            ToBackend::FetchChatInfo(db_contact) => {
+                let chat_info = if let Some(last_msg) =
+                    DbMessage::fetch_chat_last(pool, &db_contact.pubkey()).await?
+                {
+                    let unseen_messages = 0;
+                    let last_chat_msg = ChatMessage::from_db_message(keys, &last_msg, &db_contact)?;
+                    Some(ChatInfo {
+                        unseen_messages,
+                        last_message: last_chat_msg.content,
+                        last_message_time: last_msg.display_time(),
+                    })
+                } else {
+                    None
+                };
+
+                Some(BackendEvent::GotChatInfo((db_contact, chat_info)))
+            }
+            ToBackend::ExportMessages((messages, path)) => {
+                messages_to_json_file(path, &messages).await?;
+                Some(BackendEvent::ExportedMessagesSucessfully)
+            }
+            ToBackend::ExportContacts(mut path) => {
+                path.set_extension("json");
+                let list = DbContact::fetch(pool, cache_pool).await?;
+                let event = build_contact_list_event(pool, keys, &list).await?;
+                let json = event.as_json();
+                tokio::fs::write(path, json).await?;
+                Some(BackendEvent::ExportedContactsSucessfully)
+            }
+            ToBackend::FetchAllMessageEvents => {
+                let messages =
+                    DbEvent::fetch_kind(pool, nostr::Kind::EncryptedDirectMessage).await?;
+                Some(BackendEvent::GotAllMessages(messages))
+            }
+            ToBackend::GetUserProfileMeta => {
+                tracing::info!("Fetching user profile meta");
+                let cache =
+                    ProfileCache::fetch_by_public_key(cache_pool, &keys.public_key()).await?;
+                Some(BackendEvent::GotUserProfileCache(cache))
+            }
+
+            ToBackend::FetchRelayResponses(chat_message) => {
+                if let Some(db_message) = DbMessage::fetch_one(pool, chat_message.msg_id).await? {
+                    let all_relays = DbRelay::fetch(pool).await?;
+                    let responses =
+                        DbRelayResponse::fetch_by_event(pool, db_message.event_id()?).await?;
+                    Some(BackendEvent::GotRelayResponses {
+                        responses,
+                        all_relays,
+                        chat_message,
+                    })
+                } else {
+                    None
+                }
+            }
+            ToBackend::ImportContacts((db_contacts, is_replace)) => {
+                for db_contact in &db_contacts {
+                    if is_replace {
+                        DbContact::delete(pool, db_contact).await?;
+                        // todo: send event to front?
+                        let _ = add_new_contact(keys, pool, db_contact).await;
+                    } else {
+                        let _ = update_contact(keys, pool, db_contact).await;
+                    }
+                }
+                Some(BackendEvent::FileContactsImported(db_contacts))
+            }
+            ToBackend::AddContact(db_contact) => add_new_contact(keys, pool, &db_contact).await?,
+            ToBackend::UpdateContact(db_contact) => {
+                update_contact(&keys, pool, &db_contact).await?
+            }
+            ToBackend::DeleteContact(contact) => delete_contact(pool, &contact).await?,
+            ToBackend::FetchContacts => {
+                let contacts = DbContact::fetch(pool, cache_pool).await?;
+                Some(BackendEvent::GotContacts(contacts))
+            }
+            ToBackend::FetchRelays => {
+                let relays = DbRelay::fetch(pool).await?;
+                Some(BackendEvent::GotRelays(relays))
+            }
+            ToBackend::FetchMessages(contact) => {
+                Some(fetch_and_decrypt_chat(&keys, pool, contact).await?)
+            }
+            ToBackend::GetDbEventWithHash(event_hash) => {
+                let db_event_opt = DbEvent::fetch_one(pool, &event_hash).await?;
+                Some(BackendEvent::GotDbEvent(db_event_opt))
+            }
+            // --------- NOSTR MESSAGES ------------
+            ToBackend::RequestEventsOf(db_relay) => {
+                let contact_list = DbContact::fetch(pool, cache_pool).await?;
+                let input = NostrInput::RequestEventsOf((db_relay, contact_list));
+                let output = nostr.process_in(input).await?;
+                process_nostr_output(output, backend).await
+            }
+
+            ToBackend::RefreshContactsProfile => {
+                let db_contacts = DbContact::fetch(pool, cache_pool).await?;
+                let input = NostrInput::GetContactListProfiles(db_contacts);
+                let output = nostr.process_in(input).await?;
+                process_nostr_output(output, backend).await
+            }
+            ToBackend::FetchRelayServer(url) => {
+                let input = NostrInput::FetchRelayServer(url);
+                let output = nostr.process_in(input).await?;
+                process_nostr_output(output, backend).await
+            }
+            ToBackend::FetchRelayServers => {
+                let input = NostrInput::FetchRelayServers;
+                let output = nostr.process_in(input).await?;
+                process_nostr_output(output, backend).await
+            }
+            ToBackend::CreateChannel => {
+                let input = NostrInput::CreateChannel;
+                let output = nostr.process_in(input).await?;
+                process_nostr_output(output, backend).await
+            }
+            ToBackend::ConnectToRelay(db_relay) => {
+                let last_event = DbEvent::fetch_last(pool).await?;
+                let input = NostrInput::ConnectToRelay((db_relay, last_event));
+                let output = nostr.process_in(input).await?;
+                process_nostr_output(output, backend).await
+            }
+            ToBackend::AddRelay(db_relay) => {
+                let input = NostrInput::AddRelay(db_relay);
+                let output = nostr.process_in(input).await?;
+                process_nostr_output(output, backend).await
+            }
+            ToBackend::DeleteRelay(db_relay) => {
+                let input = NostrInput::DeleteRelay(db_relay);
+                let output = nostr.process_in(input).await?;
+                process_nostr_output(output, backend).await
+            }
+            ToBackend::ToggleRelayRead((db_relay, read)) => {
+                let input = NostrInput::ToggleRelayRead((db_relay, read));
+                let output = nostr.process_in(input).await?;
+                process_nostr_output(output, backend).await
+            }
+            ToBackend::ToggleRelayWrite((db_relay, write)) => {
+                let input = NostrInput::ToggleRelayWrite((db_relay, write));
+                let output = nostr.process_in(input).await?;
+                process_nostr_output(output, backend).await
+            }
+            // -- TO BACKEND CHANNEL --
+            ToBackend::SendDM((db_contact, content)) => {
+                // to backend channel, create a pending event and await confirmation of relays
+                let ns_event = build_dm(pool, keys, &db_contact, &content).await?;
+                Some(
+                    to_backend_channel(
+                        &mut backend.sender,
+                        BackEndInput::StorePendingMessage {
+                            ns_event,
+                            content,
+                            db_contact,
+                        },
+                    )
+                    .await?,
+                )
+            }
+            ToBackend::SendContactListToRelays => {
+                let list = DbContact::fetch(pool, cache_pool).await?;
+                let ns_event = build_contact_list_event(pool, &keys, &list).await?;
+                Some(
+                    to_backend_channel(
+                        &mut backend.sender,
+                        BackEndInput::StorePendingContactList((ns_event, list.to_owned())),
+                    )
+                    .await?,
+                )
+            }
+        };
+        Ok(event_opt)
+    } else {
+        Ok(None)
+    }
 }
 
-fn handle_download_image(
-    back_sender: &mut mpsc::Sender<BackEndInput>,
+async fn process_nostr_output(
+    output: Option<NostrOutput>,
+    backend: &mut BackendState,
+) -> Option<BackendEvent> {
+    if let Some(o) = output {
+        match o {
+            NostrOutput::ToFrontEnd(event) => return Some(event),
+            NostrOutput::ToBackend(back_event) => {
+                if let Err(e) = backend.sender.send(back_event).await {
+                    tracing::debug!("Failed to send event to backend channel: {}", e);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn spawn_download_image(
+    mut back_sender: mpsc::UnboundedSender<BackEndInput>,
     public_key: XOnlyPublicKey,
     kind: ImageKind,
     image_url: String,
-) -> Event {
-    let mut back_sender = back_sender.clone();
-    let kind_1 = kind.clone();
-    let image_url_1 = image_url.clone();
-    let public_key_1 = public_key.clone();
+) -> Option<BackendEvent> {
+    let event = BackendEvent::DownloadingImage {
+        kind: kind.clone(),
+        public_key: public_key.clone(),
+    };
+
     tokio::spawn(async move {
-        match download_image(&image_url_1, &public_key, kind).await {
+        match download_image(&image_url, &public_key, kind).await {
             Ok(path) => {
-                if let Err(e) = back_sender.try_send(BackEndInput::ImageDownloaded {
-                    kind: kind_1,
-                    public_key: public_key_1,
+                let msg = BackEndInput::ImageDownloaded {
+                    kind: kind,
+                    public_key: public_key,
                     path,
-                }) {
+                };
+                if let Err(e) = back_sender.send(msg).await {
                     tracing::error!("Error sending image downloaded event: {}", e);
                 }
             }
             Err(e) => {
-                if let Err(e) = back_sender.try_send(BackEndInput::Error(e.to_string())) {
+                if let Err(e) = back_sender
+                    .send(BackEndInput::Error(Error::FailedToSendBackendInput(
+                        e.to_string(),
+                    )))
+                    .await
+                {
                     tracing::error!("Error sending image download error event: {}", e);
                 }
             }
         }
     });
-    Event::DownloadingImage { kind, public_key }
+
+    Some(event)
 }
 
 pub struct NostrState {
     keys: Keys,
-    in_receiver: mpsc::Receiver<NostrInput>,
-    in_sender: mpsc::Sender<NostrInput>,
-    out_receiver: mpsc::Receiver<NostrOutput>,
-    out_sender: mpsc::Sender<NostrOutput>,
     client: NostrSdkWrapper,
-    notifications_stream: Fuse<Pin<Box<dyn futures::Stream<Item = RelayPoolNotification> + Send>>>,
+    notifications: broadcast::Receiver<RelayPoolNotification>,
 }
 impl NostrState {
     pub async fn new(keys: &Keys) -> Self {
-        let (in_sender, in_receiver) = mpsc::channel(1024);
-        let (out_sender, out_receiver) = mpsc::channel(1024);
-        let (client, notifications_stream) = NostrSdkWrapper::new(&keys).await;
+        let client = NostrSdkWrapper::new(&keys).await;
+        let notifications = client.notifications();
         Self {
             keys: keys.to_owned(),
-            in_receiver,
-            in_sender,
-            out_receiver,
-            out_sender,
             client,
-            notifications_stream,
+            notifications,
         }
     }
     pub async fn logout(self) -> Result<(), Error> {
         Ok(self.client.logout().await?)
     }
-    pub async fn process_out(
-        &mut self,
-        nostr_output: NostrOutput,
-        backend_channel: &mut mpsc::Sender<BackEndInput>,
-    ) -> Event {
-        match nostr_output {
-            NostrOutput::Ok(event) => event,
-            NostrOutput::Error(e) => Event::Error(e.to_string()),
-            NostrOutput::ToBackend(input) => to_backend_channel(backend_channel, input),
-        }
-    }
-    pub async fn process_in(&mut self, nostr_input: NostrInput) -> Event {
-        self.client
-            .process_in(&mut self.out_sender, &self.keys, nostr_input)
-            .await;
-        Event::None
+    pub async fn process_in(&self, input: NostrInput) -> Result<Option<NostrOutput>, Error> {
+        self.client.process_in(&self.keys, input).await
     }
 }
 
@@ -485,35 +529,43 @@ pub enum State {
         backend: BackendState,
     },
     Connected {
+        keys: Keys,
         receiver: mpsc::UnboundedReceiver<ToBackend>,
         backend: BackendState,
         nostr: NostrState,
     },
     OnlyNostr {
+        keys: Keys,
         receiver: mpsc::UnboundedReceiver<ToBackend>,
         nostr: NostrState,
     },
 }
 impl State {
     pub fn start(keys: Keys) -> Self {
-        let backend = BackendState::new(&keys);
+        let backend = BackendState::new();
         Self::Start { keys, backend }
     }
 }
 
-pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
+pub fn backend_connect(keys: &Keys) -> Vec<Subscription<BackendEvent>> {
     struct Backend;
     let id = std::any::TypeId::of::<Backend>();
 
-    let database_sub =
-        subscription::unfold(id, State::start(keys.to_owned()), |state| async move {
+    let database_sub = subscription::unfold(
+        id,
+        State::start(keys.to_owned()),
+        |state| async move {
             match state {
                 State::End => iced::futures::future::pending().await,
-                State::OnlyNostr { receiver: _, nostr } => {
+                State::OnlyNostr {
+                    receiver: _,
+                    nostr,
+                    keys: _,
+                } => {
                     if let Err(e) = nostr.logout().await {
                         tracing::error!("{}", e);
                     }
-                    (Event::LoggedOut, State::End)
+                    (BackendEvent::LoggedOut, State::End)
                 }
                 State::Start { keys, backend } => {
                     let (sender, receiver) = mpsc::unbounded();
@@ -526,22 +578,22 @@ pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
                             tracing::error!("{}", e);
                             tracing::warn!("Trying again in 2 secs");
                             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                            return (Event::Disconnected, State::Start { keys, backend });
+                            return (BackendEvent::Disconnected, State::Start { keys, backend });
                         }
                     };
 
-                    let backend = backend.with_db(db_client);
-                    let mut backend = backend.with_req(req_client);
+                    let backend = backend.with_db(db_client).with_req(req_client);
 
                     tracing::info!("Fetching NTP time to sync with system time");
-                    ntp_request(&mut backend.sender);
+                    spawn_ntp_request(backend.sender.clone());
 
                     (
-                        Event::Connected(BackEndConnection::new(sender)),
+                        BackendEvent::Connected(BackEndConnection::new(sender)),
                         State::Connected {
                             receiver,
                             backend,
                             nostr,
+                            keys,
                         },
                     )
                 }
@@ -549,140 +601,96 @@ pub fn backend_connect(keys: &Keys) -> Vec<Subscription<Event>> {
                     mut receiver,
                     mut backend,
                     mut nostr,
+                    keys,
                 } => {
-                    let event: Event = futures::select! {
+                    let event_opt = tokio::select! {
                         message = receiver.select_next_some() => {
                             if let ToBackend::Logout = message {
                                 if let Err(e) = backend.logout().await {
                                     tracing::error!("{}", e);
                                 }
-                                return (Event::BackendClosed, State::OnlyNostr { receiver, nostr });
+                                return (BackendEvent::BackendClosed, State::OnlyNostr { receiver, nostr, keys });
                             } else {
-                                backend.process_message(&mut nostr.in_sender, message).await
+                                match process_message(&keys, &mut nostr, &mut backend, message).await {
+                                    Ok(event_opt) => event_opt,
+                                    Err(e) => Some(BackendEvent::Error(e.to_string()))
+                                }
                             }
                         }
-                        nostr_input = nostr.in_receiver.select_next_some() => {
-                            nostr.process_in(nostr_input).await
-                        }
-                        nostr_output = nostr.out_receiver.select_next_some() => {
-                            nostr.process_out(nostr_output, &mut backend.sender).await
-                        }
                         backend_input = backend.receiver.select_next_some() => {
-                            backend.process_in(backend_input, &mut nostr.in_sender).await
+                            match backend_processing(&keys, &mut nostr, &mut backend, backend_input).await {
+                                Ok(event_opt) => event_opt,
+                                Err(e) => Some(BackendEvent::Error(e.to_string()))
+                            }
                         }
-                        notification = nostr.notifications_stream.select_next_some() => {
-                            backend.process_notification(notification).await
+                        notification = nostr.notifications.recv() => {
+                            if let Ok(notification) = notification{
+                                backend.process_notification(notification).await
+                            } else {
+                                None
+                            }
                         },
                     };
-
+                    let event = match event_opt {
+                        Some(event) => event,
+                        None => BackendEvent::Empty,
+                    };
                     (
                         event,
                         State::Connected {
                             receiver,
                             backend,
                             nostr,
+                            keys,
                         },
                     )
                 }
             }
-        });
+        },
+    );
 
     vec![database_sub]
 }
 
 fn handle_fetch_last_version(
-    req_client: &mut reqwest::Client,
-    sender: &mut mpsc::Sender<BackEndInput>,
-) -> Event {
+    req_client: reqwest::Client,
+    mut sender: mpsc::UnboundedSender<BackEndInput>,
+) -> Option<BackendEvent> {
     tracing::info!("Fetching latest version");
-    let req_client_clone = req_client.clone();
-    let mut sender_clone = sender.clone();
     tokio::spawn(async move {
-        match fetch_latest_version(req_client_clone).await {
+        match fetch_latest_version(req_client).await {
             Ok(version) => {
-                if let Err(e) = sender_clone.try_send(BackEndInput::LatestVersion(version)) {
-                    tracing::error!("Error sending latest version: {}", e);
+                if let Err(e) = sender.send(BackEndInput::LatestVersion(version)).await {
+                    tracing::error!("Error sending latest version to backend: {}", e);
                 }
             }
-            Err(e) => tracing::error!("{}", e),
+            Err(e) => {
+                if let Err(e) = sender
+                    .send(BackEndInput::Error(Error::FailedToSendBackendInput(
+                        e.to_string(),
+                    )))
+                    .await
+                {
+                    tracing::error!("Error sending error to backend: {}", e);
+                }
+            }
         }
     });
-    Event::FetchingLatestVersion
-}
-
-async fn handle_first_login(
-    pool: &SqlitePool,
-    cache_pool: &SqlitePool,
-    nostr_sender: &mut mpsc::Sender<NostrInput>,
-) -> Result<Event, Error> {
-    if UserConfig::query_has_logged_in(pool).await? {
-        let input = prepare_client(pool, cache_pool).await?;
-        to_nostr_channel(nostr_sender, input);
-        Ok(Event::None)
-    } else {
-        Ok(Event::FirstLogin)
-    }
+    Some(BackendEvent::FetchingLatestVersion)
 }
 
 // ---------------------------------
 // ---------------------------------
 // ---------------------------------
 
-async fn process_async_with_event<E>(op: impl Future<Output = Result<Event, E>>) -> Event
-where
-    E: std::error::Error,
-{
-    match op.await {
-        Ok(result) => result,
-        Err(e) => Event::Error(e.to_string()),
-    }
-}
-
-pub fn try_send_to_channel<T>(
-    channel: &mut mpsc::Sender<T>,
-    input: T,
-    ok_event: Event,
-    error_msg: &str,
-) -> Event {
-    match channel.try_send(input) {
-        Ok(_) => ok_event,
-        Err(e) => Event::Error(format!("{}: {}", error_msg, e.to_string())),
-    }
-}
-
-fn to_nostr_channel(nostr_sender: &mut mpsc::Sender<NostrInput>, input: NostrInput) -> Event {
-    try_send_to_channel(
-        nostr_sender,
-        input,
-        Event::NostrLoading,
-        "Error sending to Nostr channel",
-    )
-}
-
-pub fn to_backend_channel(
-    backend_channel: &mut mpsc::Sender<BackEndInput>,
+pub async fn to_backend_channel(
+    ch: &mut mpsc::UnboundedSender<BackEndInput>,
     input: BackEndInput,
-) -> Event {
-    try_send_to_channel(
-        backend_channel,
-        input,
-        Event::None,
-        "Error sending to Backend channel",
-    )
-}
-
-async fn fetch_and_export_contacts(
-    pool: &SqlitePool,
-    cache_pool: &SqlitePool,
-    keys: &Keys,
-    mut path: PathBuf,
-) -> Result<Event, Error> {
-    path.set_extension("json");
-    let list = DbContact::fetch(pool, cache_pool).await?;
-    let event = build_contact_list_event(pool, keys, &list).await?;
-    let json = event.as_json();
-    tokio::fs::write(path, json).await?;
-    Ok(Event::ExportedContactsSucessfully)
+) -> Result<BackendEvent, Error> {
+    ch.send(input)
+        .await
+        .map(|_| BackendEvent::BackendLoading)
+        .map_err(|e| Error::FailedToSendBackendInput(e.to_string()))
 }
 
 async fn messages_to_json_file(mut path: PathBuf, messages: &[DbEvent]) -> Result<(), Error> {
@@ -701,74 +709,283 @@ async fn messages_to_json_file(mut path: PathBuf, messages: &[DbEvent]) -> Resul
     Ok(())
 }
 
-async fn fetch_relay_responses(
-    pool: &SqlitePool,
-    chat_message: ChatMessage,
-) -> Result<Event, Error> {
-    if let Some(db_message) = DbMessage::fetch_one(pool, chat_message.msg_id).await? {
-        let all_relays = DbRelay::fetch(pool).await?;
-        let responses = DbRelayResponse::fetch_by_event(pool, db_message.event_id()?).await?;
-        return Ok(Event::GotRelayResponses {
-            responses,
-            all_relays,
-            chat_message,
-        });
-    }
-    Ok(Event::None)
+#[derive(Debug)]
+pub enum BackEndInput {
+    NtpTime(u64),
+    ToggleRelayRead((DbRelay, bool)),
+    ToggleRelayWrite((DbRelay, bool)),
+    AddRelayToDb(DbRelay),
+    DeleteRelayFromDb(DbRelay),
+    StorePendingContactList((nostr::Event, Vec<DbContact>)),
+    StorePendingMetadata((nostr::Event, nostr::Metadata)),
+    StorePendingMessage {
+        ns_event: nostr::Event,
+        db_contact: DbContact,
+        content: String,
+    },
+    StoreConfirmedEvent((nostr::Url, nostr::Event)),
+    StoreRelayMessage((nostr::Url, nostr::RelayMessage)),
+    LatestVersion(String),
+    ImageDownloaded {
+        kind: ImageKind,
+        public_key: XOnlyPublicKey,
+        path: PathBuf,
+    },
+    Shutdown,
+    FinishedPreparingNostr,
+    Error(Error),
+    Ok(Option<BackendEvent>),
 }
 
-async fn fetch_relay_responses_user_profile(
-    pool: &SqlitePool,
+pub async fn backend_processing(
     keys: &Keys,
-) -> Result<Event, Error> {
-    if let Some(profile_event) =
-        DbEvent::fetch_last_kind_pubkey(pool, nostr::Kind::Metadata, &keys.public_key()).await?
+    nostr: &mut NostrState,
+    backend: &mut BackendState,
+    input: BackEndInput,
+) -> Result<Option<BackendEvent>, Error> {
+    if let (Some(db_client), Some(_req_client)) = (&mut backend.db_client, &mut backend.req_client)
     {
-        let all_relays = DbRelay::fetch(pool).await?;
-        let responses = DbRelayResponse::fetch_by_event(pool, profile_event.event_id()?).await?;
-        return Ok(Event::GotRelayResponsesUserProfile {
-            responses,
-            all_relays,
-        });
-    }
-    Ok(Event::None)
-}
-
-async fn fetch_relay_responses_contact_list(
-    pool: &SqlitePool,
-    keys: &Keys,
-) -> Result<Event, Error> {
-    if let Some(profile_event) =
-        DbEvent::fetch_last_kind_pubkey(pool, nostr::Kind::ContactList, &keys.public_key()).await?
-    {
-        let all_relays = DbRelay::fetch(pool).await?;
-        let responses = DbRelayResponse::fetch_by_event(pool, profile_event.event_id()?).await?;
-        return Ok(Event::GotRelayResponsesContactList {
-            responses,
-            all_relays,
-        });
-    }
-    Ok(Event::None)
-}
-async fn handle_get_more_messages(
-    pool: &SqlitePool,
-    keys: &Keys,
-    db_contact: DbContact,
-    first_message: ChatMessage,
-) -> Result<Event, Error> {
-    let msgs = DbMessage::fetch_more(pool, db_contact.pubkey(), first_message).await?;
-    match msgs.is_empty() {
-        false => {
-            let mut chat_messages = vec![];
-            tracing::debug!("Decrypting messages");
-            for db_message in &msgs {
-                let chat_message = ChatMessage::from_db_message(keys, &db_message, &db_contact)?;
-                chat_messages.push(chat_message);
+        let pool = &db_client.pool;
+        let cache_pool = &db_client.cache_pool;
+        let event_opt = match input {
+            BackEndInput::Ok(event) => event,
+            BackEndInput::Error(e) => return Err(e),
+            // --- REQWEST ---
+            BackEndInput::LatestVersion(version) => Some(BackendEvent::LatestVersion(version)),
+            BackEndInput::Shutdown => None,
+            // --- TO DATABASE ---
+            BackEndInput::NtpTime(total_microseconds) => {
+                tracing::info!("NTP time: {}", total_microseconds);
+                UserConfig::update_ntp_offset(pool, total_microseconds).await?;
+                Some(BackendEvent::SyncedWithNtpServer)
             }
-
-            Ok(Event::GotChatMessages((db_contact, chat_messages)))
-        }
-        // update nostr subscriber
-        true => Ok(Event::None),
+            BackEndInput::FinishedPreparingNostr => Some(BackendEvent::FinishedPreparing),
+            BackEndInput::ImageDownloaded {
+                kind,
+                public_key,
+                path,
+            } => Some(update_profile_cache(pool, cache_pool, keys, public_key, kind, path).await?),
+            BackEndInput::DeleteRelayFromDb(db_relay) => {
+                DbRelay::delete(pool, &db_relay).await?;
+                Some(BackendEvent::RelayDeleted(db_relay))
+            }
+            BackEndInput::StorePendingMessage {
+                ns_event,
+                db_contact,
+                content,
+            } => Some(insert_pending_dm(pool, keys, ns_event, db_contact, content, nostr).await?),
+            BackEndInput::StorePendingContactList((ns_event, contact_list)) => {
+                Some(insert_pending_contact_list(pool, ns_event, contact_list, nostr).await?)
+            }
+            BackEndInput::StorePendingMetadata((ns_event, metadata)) => {
+                Some(insert_pending_metadata(pool, ns_event, metadata, nostr).await?)
+            }
+            BackEndInput::ToggleRelayRead((mut db_relay, read)) => {
+                db_relay.read = read;
+                DbRelay::update(&pool, &db_relay).await?;
+                Some(BackendEvent::RelayUpdated(db_relay.clone()))
+            }
+            BackEndInput::ToggleRelayWrite((mut db_relay, write)) => {
+                db_relay.write = write;
+                DbRelay::update(&pool, &db_relay).await?;
+                Some(BackendEvent::RelayUpdated(db_relay.clone()))
+            }
+            BackEndInput::AddRelayToDb(db_relay) => {
+                DbRelay::insert(pool, &db_relay).await?;
+                Some(BackendEvent::RelayCreated(db_relay))
+            }
+            BackEndInput::StoreConfirmedEvent((relay_url, ns_event)) => {
+                let result = match ns_event.kind {
+                    nostr::Kind::ContactList => {
+                        // contact_list is validating differently
+                        handle_contact_list(
+                            ns_event,
+                            keys,
+                            pool,
+                            backend.sender.clone(),
+                            nostr,
+                            &relay_url,
+                        )
+                        .await
+                    }
+                    other => {
+                        if let Some(db_event) = confirmed_event(ns_event, &relay_url, pool).await? {
+                            match other {
+                                nostr::Kind::Metadata => {
+                                    handle_metadata_event(cache_pool, db_event).await
+                                }
+                                nostr::Kind::EncryptedDirectMessage => {
+                                    handle_dm(pool, cache_pool, keys, &relay_url, db_event).await
+                                }
+                                nostr::Kind::RecommendRelay => {
+                                    handle_recommend_relay(db_event).await
+                                }
+                                // nostr::Kind::ChannelCreation => {}
+                                // nostr::Kind::ChannelMetadata => {
+                                // nostr::Kind::ChannelMessage => {}
+                                // nostr::Kind::ChannelHideMessage => {}
+                                // nostr::Kind::ChannelMuteUser => {}
+                                // Kind::EventDeletion => {},
+                                // Kind::PublicChatReserved45 => {},
+                                // Kind::PublicChatReserved46 => {},
+                                // Kind::PublicChatReserved47 => {},
+                                // Kind::PublicChatReserved48 => {},
+                                // Kind::PublicChatReserved49 => {},
+                                // Kind::ZapRequest => {},
+                                // Kind::Zap => {},
+                                // Kind::MuteList => {},
+                                // Kind::PinList => {},
+                                // Kind::RelayList => {},
+                                // Kind::Authentication => {},
+                                _other_kind => insert_other_kind(db_event).await,
+                            }
+                        } else {
+                            Ok(None)
+                        }
+                    }
+                };
+                return result;
+            }
+            BackEndInput::StoreRelayMessage((relay_url, relay_message)) => match relay_message {
+                RelayMessage::Ok {
+                    event_id: event_hash,
+                    status,
+                    message,
+                } => {
+                    if status == false {
+                        let db_relay =
+                            DbRelay::update_with_error(pool, &relay_url, &message).await?;
+                        return Ok(Some(BackendEvent::RelayUpdated(db_relay)));
+                    }
+                    tracing::debug!("Relay message: Ok");
+                    let db_event = confirm_event(pool, &event_hash, &relay_url).await?;
+                    Some(on_event_confirmation(pool, cache_pool, keys, &db_event).await?)
+                }
+                RelayMessage::EndOfStoredEvents(subscription_id) => {
+                    tracing::debug!("Relay message: EOSE. ID: {}", subscription_id);
+                    Some(BackendEvent::EndOfStoredEvents((
+                        relay_url.to_owned(),
+                        subscription_id.to_owned(),
+                    )))
+                }
+                RelayMessage::Event {
+                    subscription_id,
+                    event,
+                } => {
+                    tracing::debug!("Relay message: Event. ID: {}", subscription_id);
+                    tracing::debug!("{:?}", event);
+                    None
+                }
+                RelayMessage::Notice { message } => {
+                    tracing::info!("Relay message: Notice: {}", message);
+                    None
+                }
+                RelayMessage::Auth { challenge } => {
+                    tracing::warn!("Relay message: Auth Challenge: {}", challenge);
+                    None
+                }
+                RelayMessage::Count {
+                    subscription_id: _,
+                    count,
+                } => {
+                    tracing::info!("Relay message: Count: {}", count);
+                    None
+                }
+                RelayMessage::Empty => {
+                    tracing::info!("Relay message: Empty");
+                    None
+                }
+            },
+        };
+        Ok(event_opt)
+    } else {
+        Ok(None)
     }
+}
+
+pub async fn handle_recommend_relay(db_event: DbEvent) -> Result<Option<BackendEvent>, Error> {
+    tracing::debug!("handle_recommend_relay");
+    dbg!(&db_event);
+    Ok(None)
+}
+
+pub async fn on_event_confirmation(
+    pool: &SqlitePool,
+    cache_pool: &SqlitePool,
+    keys: &Keys,
+    db_event: &DbEvent,
+) -> Result<BackendEvent, Error> {
+    match db_event.kind {
+        nostr::Kind::ContactList => Ok(BackendEvent::ConfirmedContactList(db_event.to_owned())),
+        nostr::Kind::Metadata => {
+            let is_user = db_event.pubkey == keys.public_key();
+            Ok(BackendEvent::ConfirmedMetadata {
+                db_event: db_event.to_owned(),
+                is_user,
+            })
+        }
+        nostr::Kind::EncryptedDirectMessage => {
+            handle_dm_confirmation(pool, cache_pool, keys, db_event).await
+        }
+        _ => Err(Error::NotSubscribedToKind(db_event.kind.clone())),
+    }
+}
+
+async fn handle_dm_confirmation(
+    pool: &SqlitePool,
+    cache_pool: &SqlitePool,
+    keys: &Keys,
+    db_event: &DbEvent,
+) -> Result<BackendEvent, Error> {
+    let relay_url = db_event
+        .relay_url
+        .as_ref()
+        .ok_or(Error::NotConfirmedEvent(db_event.event_hash.to_owned()))?;
+
+    if let Some(db_message) = DbMessage::fetch_by_event(pool, db_event.event_id()?).await? {
+        let db_message = DbMessage::relay_confirmation(pool, relay_url, db_message).await?;
+        if let Some(db_contact) =
+            DbContact::fetch_one(pool, cache_pool, &db_message.contact_chat()).await?
+        {
+            let chat_message = ChatMessage::from_db_message(keys, &db_message, &db_contact)?;
+            return Ok(BackendEvent::ConfirmedDM((db_contact, chat_message)));
+        } else {
+            tracing::error!("No contact found for confirmed message");
+            return Err(Error::ContactNotFound(db_message.contact_chat().to_owned()));
+        }
+    }
+
+    tracing::error!("No message found for confirmation event");
+    Err(Error::EventWithoutMessage(db_event.event_id()?))
+}
+
+pub async fn update_profile_cache(
+    pool: &SqlitePool,
+    cache_pool: &SqlitePool,
+    keys: &Keys,
+    public_key: XOnlyPublicKey,
+    kind: ImageKind,
+    path: PathBuf,
+) -> Result<BackendEvent, Error> {
+    let _ = ProfileCache::update_local_path(cache_pool, &public_key, kind, &path).await?;
+
+    let event = match keys.public_key() == public_key {
+        true => match kind {
+            ImageKind::Profile => BackendEvent::UserProfilePictureUpdated(path),
+            ImageKind::Banner => BackendEvent::UserBannerPictureUpdated(path),
+        },
+        false => {
+            if let Some(db_contact) = DbContact::fetch_one(pool, cache_pool, &public_key).await? {
+                BackendEvent::ContactUpdated(db_contact)
+            } else {
+                tracing::warn!(
+                    "Image downloaded for contact not found in database: {}",
+                    public_key
+                );
+                return Err(Error::ContactNotFound(public_key.clone()));
+            }
+        }
+    };
+
+    Ok(event)
 }

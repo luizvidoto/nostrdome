@@ -3,10 +3,7 @@ use iced::{Command, Subscription};
 use crate::{
     components::status_bar,
     db::DbContact,
-    net::{
-        events::{self, Event},
-        BackEndConnection,
-    },
+    net::{BackEndConnection, BackendEvent},
     style,
     widget::Element,
 };
@@ -70,7 +67,7 @@ impl Router {
     }
     pub fn backend_event(
         &mut self,
-        event: events::Event,
+        event: BackendEvent,
         conn: &mut BackEndConnection,
     ) -> Command<Message> {
         self.state.backend_event(event, conn)
@@ -139,7 +136,7 @@ impl ViewState {
     }
     pub fn backend_event(
         &mut self,
-        event: Event,
+        event: BackendEvent,
         conn: &mut BackEndConnection,
     ) -> Command<Message> {
         match event {

@@ -42,25 +42,16 @@ impl UserConfig {
         Ok(has_logged_in != 0)
     }
 
-    pub async fn fetch(pool: &SqlitePool) -> Result<Self, Error> {
-        tracing::debug!("Fetch UserConfig");
-        let query = "SELECT * FROM user_config WHERE id = 1;";
-        let user = sqlx::query_as::<_, UserConfig>(query)
-            .fetch_one(pool)
-            .await?;
-        Ok(user)
-    }
-
     pub(crate) async fn update_ntp_offset(
         pool: &SqlitePool,
-        ntp_total_microseconds: u64,
+        total_microseconds: u64,
     ) -> Result<(), Error> {
         tracing::debug!("update_ntp_offset");
 
         let system_total_microseconds =
             system_now_total_microseconds().map_err(|_| Error::SystemTimeBeforeUnixEpoch)?;
 
-        let offset = ntp_total_microseconds as i64 - system_total_microseconds as i64;
+        let offset = total_microseconds as i64 - system_total_microseconds as i64;
 
         let query = "UPDATE user_config SET ntp_offset = ?1 WHERE id = 1;";
         sqlx::query(query).bind(offset).execute(pool).await?;

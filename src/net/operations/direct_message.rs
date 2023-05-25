@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 use crate::{
     db::{DbContact, DbEvent, DbMessage, TagInfo},
     error::Error,
-    net::{events::Event, operations::event::relay_response_ok},
+    net::BackendEvent,
     types::ChatMessage,
 };
 
@@ -14,7 +14,7 @@ pub async fn handle_dm(
     keys: &Keys,
     relay_url: &Url,
     db_event: DbEvent,
-) -> Result<Event, Error> {
+) -> Result<Option<BackendEvent>, Error> {
     tracing::debug!("handle_dm");
     let info = TagInfo::from_db_event(&db_event)?;
     let contact_pubkey = info.contact_pubkey(keys)?;
@@ -25,7 +25,7 @@ pub async fn handle_dm(
     // If the message is from the user to themselves, log the error and return None
     if db_message.from_pubkey() == db_message.to_pubkey() {
         tracing::error!("Message is from the user to himself");
-        return Ok(Event::None);
+        return Ok(None);
     }
 
     // Determine the contact's public key and whether the message is from the user
@@ -44,11 +44,11 @@ pub async fn handle_dm(
 
     let chat_message = ChatMessage::from_db_message(keys, &db_message, &db_contact)?;
 
-    Ok(Event::ReceivedDM {
+    Ok(Some(BackendEvent::ReceivedDM {
         chat_message,
         db_contact,
         relay_url: relay_url.to_owned(),
-    })
+    }))
 }
 
 async fn insert_message_from_event(

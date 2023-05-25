@@ -1,38 +1,29 @@
-use futures::channel::mpsc;
-use nostr::{Keys, Url};
 use sqlx::SqlitePool;
 
 use crate::{
     db::{DbEvent, ProfileCache},
     error::Error,
-    net::{
-        events::{backend::BackEndInput, Event},
-        to_backend_channel,
-    },
+    net::BackendEvent,
 };
-
-use super::builder::build_profile_event;
 
 // Handle metadata events and update user profile or contact metadata accordingly.
 pub async fn handle_metadata_event(
     cache_pool: &SqlitePool,
     db_event: DbEvent,
-) -> Result<Event, Error> {
-    tracing::debug!("handle_metadata_event");
-    tracing::info!(
+) -> Result<Option<BackendEvent>, Error> {
+    tracing::debug!(
         "Received metadata event for public key: {}",
         db_event.pubkey
     );
-    tracing::debug!("{:?}", db_event);
+    tracing::trace!("{:?}", db_event);
 
     let rows_changed = ProfileCache::insert_with_event(cache_pool, &db_event).await?;
 
     if rows_changed == 0 {
-        tracing::info!("Cache already up to date");
-        return Ok(Event::None);
+        tracing::debug!("Cache already up to date");
     }
 
-    Ok(Event::UpdatedMetadata(db_event.pubkey))
+    Ok(Some(BackendEvent::UpdatedMetadata(db_event.pubkey)))
 }
 
 // Handle user metadata events and update user profile metadata if needed.
@@ -111,17 +102,15 @@ pub async fn handle_metadata_event(
 //     }
 // }
 
-pub async fn update_user_metadata(
-    pool: &SqlitePool,
-    keys: &Keys,
-    back_sender: &mut mpsc::Sender<BackEndInput>,
-    profile_meta: nostr::Metadata,
-) -> Event {
-    match build_profile_event(pool, keys, &profile_meta).await {
-        Ok(ns_event) => to_backend_channel(
-            back_sender,
-            BackEndInput::StorePendingMetadata((ns_event, profile_meta)),
-        ),
-        Err(e) => Event::Error(e.to_string()),
-    }
-}
+// pub async fn update_user_metadata(
+//     pool: &SqlitePool,
+//     keys: &Keys,
+//     back_sender: &mut mpsc::UnboundedSender<BackEndInput>,
+//     profile_meta: nostr::Metadata,
+// ) -> Result<BackendEvent, Error> {
+//     let ns_event = build_profile_event(pool, keys, &profile_meta).await?;
+//     to_backend_channel(
+//         back_sender,
+//         BackEndInput::StorePendingMetadata((ns_event, profile_meta)),
+//     )
+// }

@@ -238,6 +238,7 @@ impl DbContact {
                     return Handle::from_path(path);
                 }
                 (None, Some(image_url)) => {
+                    tracing::info!("Download image. url: {}", image_url);
                     conn.send(net::ToBackend::DownloadImage {
                         image_url: image_url.to_owned(),
                         kind,
@@ -245,14 +246,15 @@ impl DbContact {
                     });
                 }
                 (Some(_filename), None) => {
-                    tracing::warn!("Contact with image and no url??");
+                    tracing::debug!("Contact with image and no url");
+                    conn.send(net::ToBackend::RemoveFileFromCache((cache.clone(), kind)))
                 }
                 (None, None) => {
                     tracing::debug!("Contact don't have profile image");
                 }
             }
         } else {
-            tracing::info!("no profile cache for contact: {}", self.pubkey.to_string());
+            tracing::debug!("no profile cache for contact: {}", self.pubkey.to_string());
         }
         Handle::from_memory(default_profile_image(size))
     }
@@ -306,7 +308,7 @@ impl DbContact {
         contact: &DbContact,
     ) -> Result<()> {
         tracing::info!("Inserting Contact");
-        tracing::debug!("{:?}", contact); //todo: replace with debug
+        tracing::debug!("{:?}", contact);
         let sql = r#"
             INSERT INTO contact 
                 (pubkey, relay_url, petname, status, created_at, updated_at) 
@@ -357,7 +359,7 @@ impl DbContact {
 
     pub async fn update_basic(pool: &SqlitePool, contact: &DbContact) -> Result<()> {
         tracing::info!("Updating Basic Contact {}", contact.pubkey().to_string());
-        tracing::debug!("{:?}", contact); //todo: replace with debug
+        tracing::debug!("{:?}", contact);
         let sql = r#"
             UPDATE contact 
             SET relay_url=?, petname=?
@@ -376,7 +378,7 @@ impl DbContact {
 
     pub async fn update(pool: &SqlitePool, contact: &DbContact) -> Result<()> {
         tracing::info!("Updating Contact {}", contact.pubkey().to_string());
-        tracing::debug!("{:?}", contact); //todo: replace with debug
+        tracing::debug!("{:?}", contact);
         let now_utc = UserConfig::get_corrected_time(pool)
             .await
             .unwrap_or(Utc::now().naive_utc());
