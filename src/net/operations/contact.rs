@@ -1,6 +1,4 @@
-use std::time::Duration;
-
-use nostr::{Filter, Keys, Kind};
+use nostr::Keys;
 use ns_client::RelayPool;
 use sqlx::SqlitePool;
 
@@ -35,8 +33,8 @@ pub async fn fetch_and_decrypt_chat(
 }
 
 pub async fn get_contact_list_profile(
-    client: &RelayPool,
-    db_contacts: Vec<DbContact>,
+    _client: &RelayPool,
+    _db_contacts: Vec<DbContact>,
 ) -> Result<BackendEvent, Error> {
     // tracing::debug!("get_contact_list_profile: {}", db_contacts.len());
     // let all_pubkeys = db_contacts

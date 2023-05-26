@@ -5,7 +5,6 @@ use tokio::sync::broadcast;
 
 use crate::db::{DbContact, DbEvent, DbRelay, UserConfig};
 use crate::error::Error;
-use crate::net::operations::contact::get_contact_list_profile;
 use crate::net::{BackEndInput, BackendEvent};
 use nostr::{Filter, Keys, Kind, Timestamp};
 
@@ -16,8 +15,6 @@ pub enum NostrInput {
         last_event: Option<DbEvent>,
         contact_list: Vec<DbContact>,
     },
-    FetchRelayServer(nostr::Url),
-    FetchRelayServers,
     AddRelay(DbRelay),
     DeleteRelay(DbRelay),
     ToggleRelayRead((DbRelay, bool)),
@@ -26,6 +23,7 @@ pub enum NostrInput {
     GetContactListProfiles(Vec<DbContact>),
     CreateChannel,
     RequestEventsOf((DbRelay, Vec<DbContact>)),
+    GetRelayStatusList,
 }
 
 pub enum NostrOutput {
@@ -68,12 +66,16 @@ impl NostrSdkWrapper {
         input: NostrInput,
     ) -> Result<Option<NostrOutput>, Error> {
         let event_opt = match input {
+            NostrInput::GetRelayStatusList => {
+                let list = self.client.relay_status_list().await?;
+                Some(BackendEvent::GotRelayStatusList(list).into())
+            }
             NostrInput::RequestEventsOf((db_relay, contact_list)) => Some(
                 request_events_of(&self.client, &keys, db_relay, contact_list)
                     .await?
                     .into(),
             ),
-            NostrInput::GetContactListProfiles(db_contacts) => {
+            NostrInput::GetContactListProfiles(_db_contacts) => {
                 //     Some(
                 //     get_contact_list_profile(&self.client, db_contacts)
                 //         .await?
@@ -94,14 +96,6 @@ impl NostrSdkWrapper {
                 add_relays_and_connect(&self.client, &keys, &relays, last_event, contact_list)?
                     .into(),
             ),
-            NostrInput::FetchRelayServer(url) => {
-                // Some(fetch_relay_server(&self.client, &url).await.into())
-                None
-            }
-            NostrInput::FetchRelayServers => {
-                // Some(fetch_relay_servers(&self.client).await.into())
-                None
-            }
             NostrInput::AddRelay(db_relay) => Some(add_relay(&self.client, db_relay)?.into()),
             NostrInput::DeleteRelay(db_relay) => Some(delete_relay(&self.client, db_relay)?.into()),
             NostrInput::ToggleRelayRead((db_relay, read)) => {
@@ -137,7 +131,7 @@ pub async fn prepare_client(
     })
 }
 
-pub async fn create_channel(client: &RelayPool) -> Result<BackendEvent, Error> {
+pub async fn create_channel(_client: &RelayPool) -> Result<BackendEvent, Error> {
     // tracing::debug!("create_channel");
     // let metadata = Metadata::new()
     //     .about("Channel about cars")
@@ -217,8 +211,8 @@ pub fn delete_relay(client: &RelayPool, db_relay: DbRelay) -> Result<BackEndInpu
 }
 
 pub async fn request_events_of(
-    client: &RelayPool,
-    keys: &Keys,
+    _client: &RelayPool,
+    _keys: &Keys,
     db_relay: DbRelay,
     contact_list: Vec<DbContact>,
 ) -> Result<BackendEvent, Error> {

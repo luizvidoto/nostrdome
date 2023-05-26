@@ -74,14 +74,14 @@ pub enum ToBackend {
     // -------- NOSTR CLIENT MESSAGES
     RequestEventsOf(DbRelay),
     RefreshContactsProfile,
-    FetchRelayServer(nostr::Url),
-    FetchRelayServers,
     AddRelay(DbRelay),
     DeleteRelay(DbRelay),
     ToggleRelayRead((DbRelay, bool)),
     ToggleRelayWrite((DbRelay, bool)),
     SendDM((DbContact, String)),
     SendContactListToRelays,
+    GetRelayStatusList,
+    GetRelayStatus(url::Url),
     CreateChannel,
     DownloadImage {
         image_url: String,
@@ -377,6 +377,14 @@ pub async fn process_message(
                 Some(BackendEvent::GotDbEvent(db_event_opt))
             }
             // --------- NOSTR MESSAGES ------------
+            ToBackend::GetRelayStatus(url) => {
+                todo!()
+            }
+            ToBackend::GetRelayStatusList => {
+                let input = NostrInput::GetRelayStatusList;
+                let output = nostr.process_in(input).await?;
+                process_nostr_output(output, backend).await
+            }
             ToBackend::RequestEventsOf(db_relay) => {
                 let contact_list = DbContact::fetch(pool, cache_pool).await?;
                 let input = NostrInput::RequestEventsOf((db_relay, contact_list));
@@ -387,16 +395,6 @@ pub async fn process_message(
             ToBackend::RefreshContactsProfile => {
                 let db_contacts = DbContact::fetch(pool, cache_pool).await?;
                 let input = NostrInput::GetContactListProfiles(db_contacts);
-                let output = nostr.process_in(input).await?;
-                process_nostr_output(output, backend).await
-            }
-            ToBackend::FetchRelayServer(url) => {
-                let input = NostrInput::FetchRelayServer(url);
-                let output = nostr.process_in(input).await?;
-                process_nostr_output(output, backend).await
-            }
-            ToBackend::FetchRelayServers => {
-                let input = NostrInput::FetchRelayServers;
                 let output = nostr.process_in(input).await?;
                 process_nostr_output(output, backend).await
             }
@@ -747,7 +745,6 @@ pub enum BackEndInput {
         public_key: XOnlyPublicKey,
         path: PathBuf,
     },
-    Shutdown,
     FinishedPreparingNostr,
     Error(Error),
     Ok(Option<BackendEvent>),
@@ -768,7 +765,6 @@ pub async fn backend_processing(
             BackEndInput::Error(e) => return Err(e),
             // --- REQWEST ---
             BackEndInput::LatestVersion(version) => Some(BackendEvent::LatestVersion(version)),
-            BackEndInput::Shutdown => None,
             // --- TO DATABASE ---
             BackEndInput::NtpTime(total_microseconds) => {
                 tracing::info!("NTP time: {}", total_microseconds);

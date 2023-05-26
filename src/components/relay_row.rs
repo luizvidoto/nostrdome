@@ -40,6 +40,7 @@ pub enum Message {
     ToggleRead(DbRelay),
     ToggleWrite(DbRelay),
     SendContactListToRelays,
+    UpdateRelayStatus(RelayStatus),
 }
 #[derive(Debug, Clone)]
 pub struct MessageWrapper {
@@ -63,7 +64,7 @@ pub struct RelayRow {
 
 impl RelayRow {
     pub fn new(id: i32, db_relay: DbRelay, conn: &mut BackEndConnection) -> Self {
-        conn.send(net::ToBackend::FetchRelayServer(db_relay.url.clone()));
+        // conn.send(net::ToBackend::GetRelayStatus(db_relay.url.clone()));
         Self {
             id,
             db_relay,
@@ -91,7 +92,11 @@ impl RelayRow {
                     self.db_relay = db_relay;
                 }
             }
-            BackendEvent::GotRelayStatus(relay_status) => self.relay_status = Some(relay_status),
+            // BackendEvent::GotRelayStatus((url, relay_status)) => {
+            //     if self.db_relay.url == url {
+            //         self.relay_status = Some(relay_status)
+            //     }
+            // }
             BackendEvent::ConfirmedContactList(db_event) => {
                 if let Some(relay_url) = db_event.relay_url {
                     if relay_url == self.db_relay.url {
@@ -105,11 +110,14 @@ impl RelayRow {
 
     pub fn update(
         &mut self,
-        wrapper: MessageWrapper,
+        message: Message,
         conn: &mut BackEndConnection,
     ) -> Command<MessageWrapper> {
-        match wrapper.message {
+        match message {
             Message::None => (),
+            Message::UpdateRelayStatus(status) => {
+                self.relay_status = Some(status);
+            }
             Message::SendContactListToRelays => {
                 if let Mode::ModalView { .. } = &mut self.mode {
                     conn.send(net::ToBackend::SendContactListToRelays);

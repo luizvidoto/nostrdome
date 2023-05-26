@@ -12,6 +12,7 @@ use crate::widget::Element;
 pub enum Message {
     GoToAbout,
     GoToNetwork,
+    Tick,
 }
 pub struct StatusBar {
     relays_connected: usize,
@@ -25,12 +26,14 @@ impl StatusBar {
     pub fn backend_event(
         &mut self,
         event: BackendEvent,
-        conn: &mut BackEndConnection,
+        _conn: &mut BackEndConnection,
     ) -> Command<Message> {
         match event {
-            BackendEvent::RelaysConnected(count) => self.relays_connected = count,
-            BackendEvent::RelayConnected(_) => {
-                conn.send(net::ToBackend::FetchRelayServers);
+            BackendEvent::GotRelayStatusList(list) => {
+                self.relays_connected = list
+                    .iter()
+                    .filter(|(_url, status)| status.is_connected())
+                    .count();
             }
             _ => (),
         }
@@ -40,12 +43,13 @@ impl StatusBar {
         match message {
             Message::GoToAbout => (),
             Message::GoToNetwork => (),
+            Message::Tick => conn.send(net::ToBackend::GetRelayStatusList),
         }
         Command::none()
     }
     pub fn subscription(&self) -> Subscription<Message> {
-        // TODO: fetch every second how many relays are connected
-        iced::Subscription::none()
+        iced::time::every(std::time::Duration::from_millis(TICK_INTERVAL_MILLIS))
+            .map(|_| Message::Tick)
     }
     pub fn view(&self) -> Element<'static, Message> {
         let about = button(text(format!("NostrTalk v{}", NOSTRTALK_VERSION)).size(18))
@@ -79,3 +83,4 @@ impl StatusBar {
 }
 
 pub const STATUS_BAR_HEIGHT: f32 = 20.0;
+const TICK_INTERVAL_MILLIS: u64 = 500;

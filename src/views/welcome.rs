@@ -417,7 +417,7 @@ impl State {
             Message::RelayMessage(msg) => {
                 if let StepView::Relays { relays_added, .. } = &mut self.step_view {
                     if let Some(row) = relays_added.iter_mut().find(|r| r.id == msg.from) {
-                        let _ = row.update(msg, conn);
+                        let _ = row.update(msg.message, conn);
                     }
                 }
             }

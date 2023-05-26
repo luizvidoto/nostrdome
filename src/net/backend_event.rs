@@ -72,7 +72,8 @@ pub enum BackendEvent {
     SentDirectMessage(nostr::EventId),
     ExportedMessagesSucessfully,
     ExportedContactsSucessfully,
-    GotRelayStatus(ns_client::RelayStatus),
+    GotRelayStatus((nostr::Url, ns_client::RelayStatus)),
+    GotRelayStatusList(ns_client::RelayStatusList),
     // --- Config ---
     SyncedWithNtpServer,
     FirstLogin,
@@ -117,13 +118,16 @@ pub enum BackendEvent {
     BackendLoading,
     Empty,
     CacheFileRemoved((ProfileCache, ImageKind)),
-    RelaysConnected(usize),
 }
 impl std::fmt::Display for BackendEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BackendEvent::GotRelayStatus(status) => write!(f, "Got relay status: {:?}", status),
-            BackendEvent::RelaysConnected(count) => write!(f, "Relays connected: {}", count),
+            BackendEvent::GotRelayStatus((url, status)) => {
+                write!(f, "Got relay status: {} - {}", &url, status)
+            }
+            BackendEvent::GotRelayStatusList(list) => {
+                write!(f, "Got relay status list: {}", list.len())
+            }
             BackendEvent::CacheFileRemoved((cache, kind)) => write!(
                 f,
                 "Cache file removed: {} - {}",
