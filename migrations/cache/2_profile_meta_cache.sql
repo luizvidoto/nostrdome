@@ -6,8 +6,6 @@ CREATE TABLE IF NOT EXISTS profile_meta_cache (
     from_relay TEXT NOT NULL,
     -- METADATA JSON CONTENT
     metadata TEXT NOT NULL,
-    profile_image_url TEXT,
     profile_image_path TEXT,
-    banner_image_url TEXT,
     banner_image_path TEXT
 );

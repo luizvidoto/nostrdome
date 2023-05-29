@@ -1,3 +1,4 @@
+use crate::Error;
 use chrono::NaiveDateTime;
 use futures::channel::mpsc;
 use futures_util::SinkExt;
@@ -5,12 +6,11 @@ use nostr::{Keys, Url};
 use sqlx::SqlitePool;
 
 use crate::{
-    db::{DbContact, DbEvent},
-    error::Error,
+    db::{DbContact, DbEvent, DbRelayResponse},
     net::{
-        nostr_events::NostrInput,
-        operations::{contact::insert_contact_from_event, event::relay_response_ok},
-        BackEndInput, BackendEvent, NostrState,
+        nostr_events::{NostrInput, NostrState},
+        operations::contact::insert_contact_from_event,
+        BackEndInput, BackendEvent,
     },
     utils::ns_event_to_millis,
 };
@@ -68,7 +68,8 @@ async fn handle_user_contact_list(
     // insert into database
     let (row_id, _rows_changed) = DbEvent::insert(pool, &db_event).await?;
     db_event = db_event.with_id(row_id);
-    relay_response_ok(pool, relay_url, &db_event).await?;
+
+    DbRelayResponse::insert_ok(pool, relay_url, &db_event).await?;
 
     // contact list from event tags
     let db_contacts: Vec<_> = db_event
@@ -96,9 +97,9 @@ async fn handle_user_contact_list(
             }
             Err(e) => {
                 if let Err(e) = back_sender
-                    .send(BackEndInput::Error(Error::FailedToSendBackendInput(
-                        e.to_string(),
-                    )))
+                    .send(BackEndInput::Error(
+                        Error::FailedToSendBackendInput(e.to_string()).into(),
+                    ))
                     .await
                 {
                     tracing::error!("Error sending message to backend: {:?}", e);

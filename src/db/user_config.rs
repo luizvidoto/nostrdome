@@ -1,10 +1,22 @@
-use crate::{
-    error::Error,
-    ntp::{correct_time_with_offset, system_now_total_microseconds, system_time_to_naive_utc},
+use crate::net::ntp::{
+    correct_time_with_offset, system_now_total_microseconds, system_time_to_naive_utc,
 };
 
 use chrono::NaiveDateTime;
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Sqlx error: {0}")]
+    SqlxError(#[from] sqlx::Error),
+
+    #[error("System time before unix epoch")]
+    SystemTimeBeforeUnixEpoch,
+
+    #[error("{0}")]
+    FromNtpError(#[from] crate::net::ntp::Error),
+}
 
 #[derive(Debug, Clone)]
 pub struct UserConfig {

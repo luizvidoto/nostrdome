@@ -1,10 +1,13 @@
+use crate::Error;
 use nostr::{Keys, Url};
 use sqlx::SqlitePool;
 
 use crate::{
     db::{DbContact, DbEvent, DbMessage, DbRelayResponse},
-    error::Error,
-    net::{nostr_events::NostrInput, BackendEvent, NostrState},
+    net::{
+        nostr_events::{NostrInput, NostrState},
+        BackendEvent,
+    },
     types::ChatMessage,
 };
 
@@ -16,11 +19,11 @@ pub async fn confirmed_event(
     let mut db_event = DbEvent::confirmed_event(ns_event, relay_url)?;
     let (row_id, rows_changed) = DbEvent::insert(pool, &db_event).await?;
     db_event = db_event.with_id(row_id);
-    relay_response_ok(pool, relay_url, &db_event).await?;
+    DbRelayResponse::insert_ok(pool, relay_url, &db_event).await?;
     if rows_changed == 0 {
         //maybe this never happens because the database checks
         // the event_hash uniqueness and sends an error
-        tracing::info!("Event already in database");
+        tracing::debug!("Event already in database");
         return Ok(None);
     }
     Ok(Some(db_event))
@@ -44,7 +47,7 @@ async fn insert_pending(
             "Received duplicate pending event: {:?}",
             pending_event.event_hash
         );
-        return Err(Error::DuplicateEvent);
+        return Err(Error::DuplicatedEvent);
     }
 
     let input = NostrInput::SendEventToRelays(ns_event);
@@ -91,17 +94,6 @@ pub async fn insert_pending_dm(
     Ok(BackendEvent::PendingDM((db_contact, chat_message)))
 }
 
-// pub async fn on_relay_message(
-//     pool: &SqlitePool,
-//     relay_url: &Url,
-//     relay_message: &RelayMessage,
-// ) -> Result<Option<BackEndInput>, Error> {
-//     tracing::debug!("New relay message: {}", relay_url);
-//     tracing::debug!("{:?}", relay_message);
-
-//     Ok(event)
-// }
-
 pub async fn confirm_event(
     pool: &SqlitePool,
     event_hash: &nostr::EventId,
@@ -113,16 +105,6 @@ pub async fn confirm_event(
     if db_event.relay_url.is_none() {
         db_event = DbEvent::confirm_event(pool, relay_url, db_event).await?;
     }
-    relay_response_ok(pool, relay_url, &db_event).await?;
+    DbRelayResponse::insert_ok(pool, relay_url, &db_event).await?;
     Ok(db_event)
-}
-
-pub async fn relay_response_ok(
-    pool: &SqlitePool,
-    relay_url: &nostr::Url,
-    db_event: &DbEvent,
-) -> Result<(), Error> {
-    let relay_response = DbRelayResponse::ok(db_event.event_id()?, &db_event.event_hash, relay_url);
-    DbRelayResponse::insert(pool, &relay_response).await?;
-    Ok(())
 }

@@ -1,18 +1,42 @@
-use std::str::FromStr;
-
 use chrono::{NaiveDateTime, Utc};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
+use std::str::FromStr;
+use thiserror::Error;
 
-use crate::{
-    error::{Error, FromDbEventError},
-    utils::{handle_decode_error, millis_to_naive_or_err, ns_event_to_naive, url_or_err},
-};
+use crate::utils::{handle_decode_error, millis_to_naive_or_err, ns_event_to_naive, url_or_err};
 use nostr::{
     secp256k1::{schnorr::Signature, XOnlyPublicKey},
     EventId, Kind, Tag, Timestamp,
 };
 
 use super::UserConfig;
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("No tags found in the event")]
+    NoTags,
+
+    #[error("Wrong tag type found")]
+    WrongTag,
+
+    #[error("Event not in database: {0}")]
+    EventNotInDatabase(EventId),
+
+    #[error("Event already in database: {0}")]
+    EventAlreadyInDatabase(EventId),
+
+    #[error("{0}")]
+    UtilsError(#[from] crate::utils::Error),
+
+    #[error("Sqlx error: {0}")]
+    SqlxError(#[from] sqlx::Error),
+
+    #[error("JSON (de)serialization error: {0}")]
+    SerdeJson(#[from] serde_json::Error),
+
+    #[error("Out-of-range number of seconds when parsing timestamp")]
+    TimestampError,
+}
 
 #[derive(Debug, Clone)]
 pub struct DbEvent {
@@ -90,10 +114,9 @@ impl DbEvent {
         self.remote_creation
     }
 
-    pub fn event_id(&self) -> Result<i64, FromDbEventError> {
-        self.event_id.ok_or(FromDbEventError::EventNotInDatabase(
-            self.event_hash.clone(),
-        ))
+    pub fn event_id(&self) -> Result<i64, Error> {
+        self.event_id
+            .ok_or(Error::EventNotInDatabase(self.event_hash.clone()))
     }
 
     pub fn with_id(mut self, id: i64) -> Self {
@@ -126,6 +149,10 @@ impl DbEvent {
             .bind(event_hash.to_string())
             .fetch_optional(pool)
             .await?)
+    }
+
+    pub async fn has_event(pool: &SqlitePool, event_hash: &EventId) -> Result<bool, Error> {
+        Ok(Self::fetch_one(pool, event_hash).await?.is_some())
     }
 
     //fetch last event from db
@@ -168,6 +195,12 @@ impl DbEvent {
 
     // maybe create insert confirmed and insert pending?
     pub async fn insert(pool: &SqlitePool, db_event: &DbEvent) -> Result<(i64, u8), Error> {
+        if let Some(db_event) = Self::fetch_one(pool, &db_event.event_hash).await? {
+            // ignore err
+            // return Err(Error::EventAlreadyInDatabase(db_event.event_hash.clone()));
+            return Ok((db_event.event_id()?, 0));
+        }
+
         tracing::debug!("inserting event id: {}", db_event.event_hash);
         tracing::trace!("inserting event {:?}", db_event);
         let sql = r#"
@@ -218,7 +251,11 @@ impl DbEvent {
             .await
             .unwrap_or(Utc::now().naive_utc());
 
-        let sql = "UPDATE event SET received_at=?, remote_creation=?, relay_url=? WHERE event_id=?";
+        let sql = r#"
+            UPDATE event 
+            SET received_at=?, remote_creation=?, relay_url=? 
+            WHERE event_id=?
+        "#;
 
         let event_id = db_event.event_id()?;
         db_event.received_at = Some(now_utc);
@@ -270,7 +307,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbEvent {
 
         let local_creation = row.try_get::<i64, &str>("local_creation")?;
         let local_creation = NaiveDateTime::from_timestamp_millis(local_creation).ok_or(
-            handle_decode_error(Box::new(Error::DbEventTimestampError), "local_creation"),
+            handle_decode_error(Box::new(Error::TimestampError), "local_creation"),
         )?;
 
         let sig = row.try_get::<String, &str>("sig")?;

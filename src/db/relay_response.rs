@@ -3,9 +3,20 @@ use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{FromRow, Row, SqlitePool};
 use std::result::Result as StdResult;
+use thiserror::Error;
 
-use crate::error::Error;
 use crate::utils::{event_hash_or_err, url_or_err};
+
+use super::DbEvent;
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Sqlx error: {0}")]
+    SqlxError(#[from] sqlx::Error),
+
+    #[error("{0}")]
+    FromDbEventError(#[from] crate::db::event::Error),
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DbRelayResponse {
@@ -75,6 +86,17 @@ impl DbRelayResponse {
             .await?;
 
         Ok(output.last_insert_rowid())
+    }
+
+    pub async fn insert_ok(
+        pool: &SqlitePool,
+        relay_url: &nostr::Url,
+        db_event: &DbEvent,
+    ) -> Result<(), Error> {
+        let event_id = db_event.event_id()?;
+        let relay_response = DbRelayResponse::ok(event_id, &db_event.event_hash, relay_url);
+        DbRelayResponse::insert(pool, &relay_response).await?;
+        Ok(())
     }
 
     // pub(crate) fn with_id(mut self, id: i64) -> Self {

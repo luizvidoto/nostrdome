@@ -5,12 +5,10 @@ use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use std::borrow::Borrow;
 use std::str::FromStr;
-use std::{path::PathBuf, result::Result as StdResult};
 use thiserror::Error;
 
 use crate::consts::default_profile_image;
 use crate::db::UserConfig;
-use crate::error::Error;
 use crate::net::{self, sized_image, BackEndConnection, ImageKind, ImageSize};
 use crate::{
     types::RelayUrl,
@@ -19,24 +17,25 @@ use crate::{
 
 use super::ProfileCache;
 
-type Result<T> = std::result::Result<T, DbContactError>;
-
 #[derive(Error, Debug)]
-pub enum DbContactError {
-    // General errors
+pub enum Error {
     #[error("Invalid Public Key")]
     InvalidPublicKey,
-    // General errors
+
     #[error("Invalid Relay Url: {0}")]
     InvalidRelayUrl(String),
+
     #[error("Not found contact with pubkey: {0}")]
     NotFoundContact(String),
+
     #[error("Other type of Tag")]
     TagToContactError,
+
     #[error("Sqlx error: {0}")]
     SqlxError(#[from] sqlx::Error),
-    #[error("Invalid path UTF-8 Error: {0}")]
-    InvalidPath(PathBuf),
+
+    #[error("{0}")]
+    FromProfileCacheError(#[from] crate::db::profile_cache::Error),
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -96,7 +95,7 @@ impl DbContact {
         }
     }
 
-    pub fn from_tag(tag: &Tag) -> Result<Self> {
+    pub fn from_tag(tag: &Tag) -> Result<Self, Error> {
         match tag {
             Tag::PubKey(pk, relay_url) => {
                 let mut contact = Self::new(pk);
@@ -121,19 +120,18 @@ impl DbContact {
 
                 Ok(contact)
             }
-            _ => Err(DbContactError::TagToContactError),
+            _ => Err(Error::TagToContactError),
         }
     }
 
     pub fn pubkey(&self) -> &XOnlyPublicKey {
         &self.pubkey
     }
-    pub fn from_str(pubkey: &str) -> Result<Self> {
-        let pubkey =
-            XOnlyPublicKey::from_str(pubkey).map_err(|_| DbContactError::InvalidPublicKey)?;
+    pub fn from_str(pubkey: &str) -> Result<Self, Error> {
+        let pubkey = XOnlyPublicKey::from_str(pubkey).map_err(|_| Error::InvalidPublicKey)?;
         Ok(Self::new(&pubkey))
     }
-    pub fn new_from_submit(pubkey: &str, petname: &str, relay_url: &str) -> Result<Self> {
+    pub fn new_from_submit(pubkey: &str, petname: &str, relay_url: &str) -> Result<Self, Error> {
         let db_contact = Self::from_str(pubkey)?;
         let db_contact = Self::edit_contact(db_contact, petname, relay_url)?;
         Ok(db_contact)
@@ -142,7 +140,7 @@ impl DbContact {
         mut db_contact: DbContact,
         petname: &str,
         relay_url: &str,
-    ) -> Result<DbContact> {
+    ) -> Result<DbContact, Error> {
         db_contact.petname = Some(petname.to_owned());
 
         if !relay_url.is_empty() {
@@ -187,7 +185,7 @@ impl DbContact {
         self.relay_url = Some(relay_url.to_owned());
         self
     }
-    pub fn with_relay_url(mut self, relay_url: &str) -> Result<Self> {
+    pub fn with_relay_url(mut self, relay_url: &str) -> Result<Self, Error> {
         let url = Self::parse_url(relay_url)?;
         self.relay_url = Some(url);
         Ok(self)
@@ -219,14 +217,13 @@ impl DbContact {
         self.pubkey().to_string()
     }
 
-    fn update_relay_url(&mut self, relay_url: &str) -> Result<()> {
+    fn update_relay_url(&mut self, relay_url: &str) -> Result<(), Error> {
         let url = Self::parse_url(relay_url)?;
         self.relay_url = Some(url);
         Ok(())
     }
-    fn parse_url(url: &str) -> Result<UncheckedUrl> {
-        RelayUrl::try_into_unchecked_url(url)
-            .map_err(|_e| DbContactError::InvalidRelayUrl(url.to_owned()))
+    fn parse_url(url: &str) -> Result<UncheckedUrl, Error> {
+        RelayUrl::try_into_unchecked_url(url).map_err(|_e| Error::InvalidRelayUrl(url.to_owned()))
     }
 
     pub fn profile_image(&self, size: ImageSize, conn: &mut BackEndConnection) -> Handle {
@@ -262,7 +259,7 @@ impl DbContact {
     pub async fn fetch(
         pool: &SqlitePool,
         cache_pool: &SqlitePool,
-    ) -> StdResult<Vec<DbContact>, Error> {
+    ) -> Result<Vec<DbContact>, Error> {
         let mut db_contacts: Vec<DbContact> = sqlx::query_as::<_, DbContact>(Self::FETCH_QUERY)
             .fetch_all(pool)
             .await?;
@@ -282,7 +279,7 @@ impl DbContact {
         pool: &SqlitePool,
         cache_pool: &SqlitePool,
         pubkey: &XOnlyPublicKey,
-    ) -> StdResult<Option<DbContact>, Error> {
+    ) -> Result<Option<DbContact>, Error> {
         let sql = format!("{} WHERE pubkey = ?", Self::FETCH_QUERY);
 
         let result = sqlx::query_as::<_, DbContact>(&sql)
@@ -306,7 +303,7 @@ impl DbContact {
     async fn insert_single_contact(
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         contact: &DbContact,
-    ) -> Result<()> {
+    ) -> Result<(), Error> {
         tracing::info!("Inserting Contact");
         tracing::debug!("{:?}", contact);
         let sql = r#"
@@ -328,7 +325,7 @@ impl DbContact {
         Ok(())
     }
 
-    pub async fn insert(pool: &SqlitePool, contact: &DbContact) -> Result<()> {
+    pub async fn insert(pool: &SqlitePool, contact: &DbContact) -> Result<(), Error> {
         let mut tx = pool.begin().await?;
 
         Self::insert_single_contact(&mut tx, contact).await?;
@@ -341,7 +338,7 @@ impl DbContact {
     pub async fn insert_batch<T: Borrow<DbContact>>(
         pool: &SqlitePool,
         contacts: &[T],
-    ) -> Result<()> {
+    ) -> Result<(), Error> {
         tracing::info!("Inserting Batch of contacts");
 
         let mut tx = pool.begin().await?;
@@ -357,7 +354,7 @@ impl DbContact {
         Ok(())
     }
 
-    pub async fn update_basic(pool: &SqlitePool, contact: &DbContact) -> Result<()> {
+    pub async fn update_basic(pool: &SqlitePool, contact: &DbContact) -> Result<(), Error> {
         tracing::info!("Updating Basic Contact {}", contact.pubkey().to_string());
         tracing::debug!("{:?}", contact);
         let sql = r#"
@@ -376,7 +373,7 @@ impl DbContact {
         Ok(())
     }
 
-    pub async fn update(pool: &SqlitePool, contact: &DbContact) -> Result<()> {
+    pub async fn update(pool: &SqlitePool, contact: &DbContact) -> Result<(), Error> {
         tracing::info!("Updating Contact {}", contact.pubkey().to_string());
         tracing::debug!("{:?}", contact);
         let now_utc = UserConfig::get_corrected_time(pool)
@@ -401,7 +398,7 @@ impl DbContact {
         Ok(())
     }
 
-    pub async fn delete(pool: &SqlitePool, contact: &DbContact) -> Result<()> {
+    pub async fn delete(pool: &SqlitePool, contact: &DbContact) -> Result<(), Error> {
         let sql = "DELETE FROM contact WHERE pubkey=?";
 
         sqlx::query(sql)
@@ -412,7 +409,10 @@ impl DbContact {
         Ok(())
     }
 
-    pub(crate) async fn have_contact(pool: &SqlitePool, pubkey: &XOnlyPublicKey) -> Result<bool> {
+    pub(crate) async fn have_contact(
+        pool: &SqlitePool,
+        pubkey: &XOnlyPublicKey,
+    ) -> Result<bool, Error> {
         let sql = "SELECT pubkey FROM contact WHERE pubkey=?";
         let result = sqlx::query(sql)
             .bind(&pubkey.to_string())
@@ -424,7 +424,7 @@ impl DbContact {
 }
 
 impl sqlx::FromRow<'_, SqliteRow> for DbContact {
-    fn from_row(row: &'_ SqliteRow) -> StdResult<Self, sqlx::Error> {
+    fn from_row(row: &'_ SqliteRow) -> Result<Self, sqlx::Error> {
         let pubkey = row.try_get::<String, &str>("pubkey")?;
         let pubkey = XOnlyPublicKey::from_str(&pubkey).map_err(|e| sqlx::Error::ColumnDecode {
             index: "pubkey".into(),

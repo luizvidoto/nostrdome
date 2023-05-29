@@ -1,20 +1,37 @@
 use std::path::PathBuf;
 
-use chrono::NaiveDateTime;
-use nostr::secp256k1::XOnlyPublicKey;
-use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
-
 use crate::{
-    error::Error,
     net::{image_filename, ImageKind, ImageSize},
     utils::{
         event_hash_or_err, millis_to_naive_or_err, profile_meta_or_err, public_key_or_err,
         url_or_err,
     },
 };
+use chrono::NaiveDateTime;
+use nostr::{secp256k1::XOnlyPublicKey, EventId};
+use serde::{Deserialize, Serialize};
+use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
+use thiserror::Error;
 
 use super::DbEvent;
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Error parsing JSON content into nostr::Metadata: {0}")]
+    JsonToMetadata(String),
+
+    #[error("Sqlx error: {0}")]
+    SqlxError(#[from] sqlx::Error),
+
+    #[error("Event need to be confirmed")]
+    NotConfirmedEvent(EventId),
+
+    #[error("Not found path for kind: {0:?}")]
+    NoPathForKind(ImageKind),
+
+    #[error("I/O Error: {0}")]
+    Io(#[from] std::io::Error),
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileCache {

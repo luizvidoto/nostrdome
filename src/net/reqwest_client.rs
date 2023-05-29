@@ -7,6 +7,7 @@ use nostr::{secp256k1::XOnlyPublicKey, Url};
 use serde::Deserialize;
 use std::env;
 use std::path::{Path, PathBuf};
+use thiserror::Error;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
@@ -14,7 +15,45 @@ use crate::consts::{
     APP_PROJECT_DIRS, MEDIUM_PROFILE_PIC_HEIGHT, MEDIUM_PROFILE_PIC_WIDTH,
     SMALL_PROFILE_PIC_HEIGHT, SMALL_PROFILE_PIC_WIDTH,
 };
-use crate::error::Error;
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Invalid URL: \"{0}\"")]
+    InvalidUrl(#[from] url::ParseError),
+
+    #[error("{0}")]
+    FromToStrError(#[from] reqwest::header::ToStrError),
+
+    #[error("Image error: {0}")]
+    FromImageError(#[from] image::error::ImageError),
+
+    #[error("Invalid image size: {0:?}")]
+    InvalidImageSize(ImageSize),
+
+    #[error("Request error: {0}")]
+    FromReqwestError(#[from] reqwest::Error),
+
+    #[error("Not found any releases")]
+    RequestReleaseNotFound,
+
+    #[error("GITHUB_TOKEN not found")]
+    GitHubTokenNotFound,
+
+    #[error("Missing content-type header")]
+    RequestMissingContentType,
+
+    #[error("Invalid content-type header: {0}")]
+    ImageInvalidContentType(String),
+
+    #[error("Not found project directory")]
+    NotFoundProjectDirectory,
+
+    #[error("Request error: {0}")]
+    ReqwestStreamError(reqwest::Error),
+
+    #[error("I/O Error: {0}")]
+    Io(#[from] std::io::Error),
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum ImageSize {
@@ -131,31 +170,6 @@ pub fn resize_and_save_image(
 
     Ok(())
 }
-
-// pub fn resize_and_save_image(
-//     input_path: &Path,
-//     output_path: &Path,
-//     desired_width: u32,
-//     desired_height: u32,
-// ) -> Result<(), Error> {
-//     let image = image::open(input_path)?;
-
-//     let resized_image = image.resize(
-//         desired_width,
-//         desired_height,
-//         image::imageops::FilterType::Lanczos3,
-//     );
-
-//     let extension = input_path.extension().ok_or(Error::ImageInvalidExtension(
-//         input_path.to_string_lossy().into_owned(),
-//     ))?;
-//     let format = ImageFormat::from_extension(extension)
-//         .ok_or_else(|| Error::ImageInvalidFormat(extension.to_string_lossy().into_owned()))?;
-
-//     resized_image.save_with_format(output_path, format)?;
-
-//     Ok(())
-// }
 
 #[derive(Deserialize, Debug)]
 pub struct GitHubRelease {

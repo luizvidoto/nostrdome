@@ -1,12 +1,38 @@
+use crate::Error;
+
 use nostr::secp256k1::XOnlyPublicKey;
 use ns_client::{NotificationEvent, RelayPool};
 use sqlx::SqlitePool;
 use tokio::sync::broadcast;
 
 use crate::db::{DbContact, DbEvent, DbRelay, UserConfig};
-use crate::error::Error;
-use crate::net::{BackEndInput, BackendEvent};
+use crate::net::BackendEvent;
 use nostr::{Filter, Keys, Kind, Timestamp};
+
+use super::backend::BackEndInput;
+
+pub struct NostrState {
+    pub keys: Keys,
+    pub client: NostrSdkWrapper,
+    pub notifications: broadcast::Receiver<NotificationEvent>,
+}
+impl NostrState {
+    pub async fn new(keys: &Keys) -> Self {
+        let client = NostrSdkWrapper::new(&keys).await;
+        let notifications = client.notifications();
+        Self {
+            keys: keys.to_owned(),
+            client,
+            notifications,
+        }
+    }
+    pub async fn logout(self) -> Result<(), Error> {
+        Ok(self.client.logout().await?)
+    }
+    pub async fn process_in(&self, input: NostrInput) -> Result<Option<NostrOutput>, Error> {
+        self.client.process_in(&self.keys, input).await
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum NostrInput {
@@ -177,9 +203,9 @@ pub fn add_relays_and_connect(
     // tracing::debug!("Connecting to relays");
     // client.connect().await;
 
-    tracing::info!("Subscribing to events");
-    let filters = make_nostr_filters(keys.public_key(), last_event, &contact_list);
-    client.subscribe(filters)?;
+    // tracing::info!("Subscribing to events");
+    // let filters = make_nostr_filters(keys.public_key(), last_event, &contact_list);
+    // client.subscribe(filters)?;
     // Ok(BackendEvent::SubscribedToEvents)
 
     Ok(BackEndInput::FinishedPreparingNostr)
@@ -226,12 +252,22 @@ pub async fn request_events_of(
     Ok(BackendEvent::RequestedEventsOf(db_relay))
 }
 
+fn channel_search_filter() -> Vec<Filter> {
+    tracing::trace!("channel_search_filter");
+
+    let channel_filter = Filter::new()
+        .kinds(vec![Kind::ChannelCreation, Kind::ChannelMetadata])
+        .limit(CHANNEL_SEARCH_LIMIT);
+
+    vec![channel_filter]
+}
+
 fn make_nostr_filters(
     public_key: XOnlyPublicKey,
     last_event: Option<DbEvent>,
     contact_list: &[DbContact],
 ) -> Vec<Filter> {
-    tracing::debug!("make_nostr_filters");
+    tracing::trace!("make_nostr_filters");
     let last_timestamp_secs: u64 = last_event
         .map(|e| {
             // syncronization problems with different machines
@@ -245,20 +281,25 @@ fn make_nostr_filters(
         .iter()
         .map(|c| c.pubkey().to_string())
         .collect::<Vec<_>>();
-    let metadata_filter = Filter::new()
+
+    let contacts_metadata = Filter::new()
         .authors(all_pubkeys)
         .kind(Kind::Metadata)
         .since(Timestamp::from(last_timestamp_secs));
-    let sent_msgs_sub_past = Filter::new()
-        .kinds(nostr_kinds())
+    let user_contact_list = Filter::new()
+        .author(public_key.to_string())
+        .kind(Kind::ContactList)
+        .since(Timestamp::from(last_timestamp_secs));
+    let sent_msgs = Filter::new()
+        .kind(nostr::Kind::EncryptedDirectMessage)
         .author(public_key.to_string())
         .since(Timestamp::from(last_timestamp_secs));
-    let recv_msgs_sub_past = Filter::new()
-        .kinds(nostr_kinds())
+    let recv_msgs = Filter::new()
+        .kind(nostr::Kind::EncryptedDirectMessage)
         .pubkey(public_key)
         .since(Timestamp::from(last_timestamp_secs));
 
-    vec![sent_msgs_sub_past, recv_msgs_sub_past, metadata_filter]
+    vec![sent_msgs, recv_msgs, user_contact_list, contacts_metadata]
 }
 
 pub fn send_event_to_relays(
@@ -272,12 +313,14 @@ pub fn send_event_to_relays(
     Ok(BackendEvent::SentEventToRelays(ns_event_id))
 }
 
-pub fn nostr_kinds() -> Vec<Kind> {
-    [
-        Kind::Metadata,
-        Kind::EncryptedDirectMessage,
-        Kind::RecommendRelay,
-        Kind::ContactList,
-    ]
-    .to_vec()
+struct Subscription {
+    id: nostr::SubscriptionId,
+    name: String,
+    filters: Vec<nostr::Filter>,
 }
+
+// fn subscribe_to_contact_list() -> Subscription {
+
+// }
+
+const CHANNEL_SEARCH_LIMIT: usize = 100;

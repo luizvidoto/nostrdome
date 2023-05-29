@@ -1,15 +1,23 @@
-// use crate::error::Error;
-
 use chrono::{NaiveDateTime, Utc};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
+use thiserror::Error;
 use url::Url;
 
-use crate::{
-    error::Error,
-    utils::{millis_to_naive_or_err, url_or_err},
-};
+use crate::utils::{millis_to_naive_or_err, url_or_err};
 
 use super::UserConfig;
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Invalid URL: \"{0}\"")]
+    InvalidUrl(#[from] url::ParseError),
+
+    #[error("Sqlx error: {0}")]
+    SqlxError(#[from] sqlx::Error),
+
+    #[error("Relay not found: {0}")]
+    RelayNotFound(String),
+}
 
 #[derive(Debug, Clone)]
 pub struct DbRelay {

@@ -1,10 +1,10 @@
+use crate::Error;
 use nostr::Keys;
 use ns_client::RelayPool;
 use sqlx::SqlitePool;
 
 use crate::{
     db::{DbContact, DbMessage},
-    error::Error,
     net::BackendEvent,
     types::ChatMessage,
 };

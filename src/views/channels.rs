@@ -27,9 +27,9 @@ impl State {
         event: BackendEvent,
         _conn: &mut BackEndConnection,
     ) -> Command<Message> {
-        if let BackendEvent::ChannelCreated(event_id) = event {
+        if let BackendEvent::ChannelCreated(cache) = event {
             println!("*** CHANNEL CREATED ***");
-            println!("{event_id}");
+            println!("{}", cache.channel_id);
         }
         Command::none()
     }

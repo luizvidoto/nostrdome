@@ -4,6 +4,7 @@ use iced::Point;
 use iced::{alignment, Length};
 use nostr::{secp256k1::XOnlyPublicKey, EventId};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::components::MouseArea;
 use crate::db::MessageStatus;
@@ -12,9 +13,14 @@ use crate::utils::from_naive_utc_to_local;
 use crate::widget::Element;
 use crate::{
     db::{DbContact, DbEvent, DbMessage},
-    error::Error,
     style,
 };
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("{0}")]
+    FromDbMessageError(#[from] crate::db::message::Error),
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {

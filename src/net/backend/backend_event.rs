@@ -4,7 +4,7 @@ use nostr::secp256k1::XOnlyPublicKey;
 
 use crate::{
     components::chat_contact::ChatInfo,
-    db::{DbContact, DbEvent, DbRelay, DbRelayResponse, ProfileCache},
+    db::{ChannelCache, DbContact, DbEvent, DbRelay, DbRelayResponse, ProfileCache},
     net::{BackEndConnection, ImageKind},
     types::ChatMessage,
 };
@@ -66,7 +66,7 @@ pub enum BackendEvent {
     RelayMessage(nostr::RelayMessage),
     Shutdown,
     RelayConnected(DbRelay),
-    ChannelCreated(nostr::EventId),
+    ChannelCreated(ChannelCache),
     NostrLoading,
     RequestedEvents,
     SentDirectMessage(nostr::EventId),
@@ -118,10 +118,14 @@ pub enum BackendEvent {
     BackendLoading,
     Empty,
     CacheFileRemoved((ProfileCache, ImageKind)),
+    ChannelUpdated(ChannelCache),
 }
 impl std::fmt::Display for BackendEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            BackendEvent::ChannelUpdated(cache) => {
+                write!(f, "Channel Updated: {}", cache.channel_id)
+            }
             BackendEvent::GotRelayStatus((url, status)) => {
                 write!(f, "Got relay status: {} - {}", &url, status)
             }
@@ -240,8 +244,12 @@ impl std::fmt::Display for BackendEvent {
             BackendEvent::RelayConnected(db_relay) => {
                 write!(f, "Relay Connected: {}", db_relay.url)
             }
-            BackendEvent::ChannelCreated(event_id) => {
-                write!(f, "Channel Created: Event ID: {}", event_id)
+            BackendEvent::ChannelCreated(channel_cache) => {
+                write!(
+                    f,
+                    "Channel Created: channel id: {}",
+                    channel_cache.channel_id
+                )
             }
             BackendEvent::NostrLoading => write!(f, "Nostr Loading"),
             BackendEvent::RequestedEvents => write!(f, "Requested Events"),

@@ -14,6 +14,7 @@ use crate::{components::text::title, widget::Element};
 
 use rand::{thread_rng, Rng};
 use std::net::Ipv4Addr;
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -31,6 +32,7 @@ pub enum Message {
     CloseAddRelayModal,
     OpenLink(&'static str),
     AddAllRelays,
+    Tick,
 }
 
 #[derive(Debug, Clone)]
@@ -375,11 +377,12 @@ impl State {
     pub fn subscription(&self) -> Subscription<Message> {
         match &self.step_view {
             StepView::Relays { relays_added, .. } => {
-                let relay_subs: Vec<_> = relays_added
-                    .iter()
-                    .map(|r| r.subscription().map(Message::RelayMessage))
-                    .collect();
-                Subscription::batch(relay_subs)
+                if relays_added.is_empty() {
+                    iced::Subscription::none()
+                } else {
+                    iced::time::every(Duration::from_millis(TICK_INTERVAL_MILLIS))
+                        .map(|_| Message::Tick)
+                }
             }
             _ => iced::Subscription::none(),
         }
@@ -409,6 +412,9 @@ impl State {
 
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
         match message {
+            Message::Tick => {
+                conn.send(net::ToBackend::GetRelayStatusList);
+            }
             Message::OpenLink(url) => {
                 if let Err(e) = webbrowser::open(url) {
                     tracing::error!("Failed to open link: {}", e);
@@ -496,6 +502,15 @@ impl State {
                 relays_suggestion,
                 ..
             } => match event {
+                BackendEvent::GotRelayStatusList(list) => {
+                    for (url, status) in list {
+                        if let Some(row) = relays_added.iter_mut().find(|r| r.db_relay.url == url) {
+                            let _ = row.update(relay_row::Message::UpdateRelayStatus(status), conn);
+                        } else {
+                            tracing::warn!("Got status for unknown relay: {}", url);
+                        }
+                    }
+                }
                 BackendEvent::GotRelays(mut db_relays) => {
                     for db_relay in db_relays.iter() {
                         relays_suggestion.retain(|url| url != &db_relay.url);
@@ -553,3 +568,4 @@ const TEXT_SIZE_MEDIUM: u16 = 20;
 const TEXT_SIZE_SMALL: u16 = 16;
 const TEXT_WIDTH: f32 = 400.0;
 const CARD_MAX_WIDTH: f32 = 300.0;
+const TICK_INTERVAL_MILLIS: u64 = 500;

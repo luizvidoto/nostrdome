@@ -1,11 +1,20 @@
 use nostr::{Contact, EventBuilder, EventId, Keys, Metadata};
 use sqlx::SqlitePool;
+use thiserror::Error;
 
 use crate::{
     db::{DbContact, UserConfig},
-    error::Error,
     utils::naive_to_event_tt,
 };
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Signing error: {0}")]
+    SigningEventError(String),
+
+    #[error("Nostr Sdk Event Builder Error: {0}")]
+    NostrSdkEventBuilderError(#[from] nostr::prelude::builder::Error),
+}
 
 pub async fn build_profile_event(
     pool: &SqlitePool,

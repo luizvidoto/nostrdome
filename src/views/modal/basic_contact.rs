@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use crate::components::common_scrollable;
 use crate::components::text_input_group::TextInputGroup;
 use crate::consts::{MEDIUM_PROFILE_PIC_HEIGHT, MEDIUM_PROFILE_PIC_WIDTH, YMD_FORMAT};
-use crate::db::{DbContact, DbContactError};
+use crate::db::DbContact;
 use crate::icon::{copy_icon, edit_icon};
 use crate::net::{self, BackEndConnection, BackendEvent, ImageSize};
 use crate::utils::from_naive_utc_to_local;
@@ -368,10 +368,10 @@ impl ContactDetails {
             Err(e) => {
                 tracing::error!("Error: {:?}", e);
                 match e {
-                    DbContactError::InvalidPublicKey => {
+                    crate::db::contact::Error::InvalidPublicKey => {
                         self.is_pub_invalid = true;
                     }
-                    DbContactError::InvalidRelayUrl(_) => {
+                    crate::db::contact::Error::InvalidRelayUrl(_) => {
                         self.is_relay_invalid = true;
                     }
                     _ => (),

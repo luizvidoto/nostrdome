@@ -1,9 +1,9 @@
+use crate::Error;
 use nostr::{secp256k1::XOnlyPublicKey, Keys, Url};
 use sqlx::SqlitePool;
 
 use crate::{
     db::{DbContact, DbEvent, DbMessage, TagInfo},
-    error::Error,
     net::BackendEvent,
     types::ChatMessage,
 };
@@ -13,14 +13,14 @@ pub async fn handle_dm(
     cache_pool: &SqlitePool,
     keys: &Keys,
     relay_url: &Url,
-    db_event: DbEvent,
+    db_event: &DbEvent,
 ) -> Result<Option<BackendEvent>, Error> {
     tracing::debug!("handle_dm");
-    let info = TagInfo::from_db_event(&db_event)?;
+    let info = TagInfo::from_db_event(db_event)?;
     let contact_pubkey = info.contact_pubkey(keys)?;
 
     // Parse the event and insert the message into the database
-    let db_message = insert_message_from_event(&db_event, pool, &contact_pubkey).await?;
+    let db_message = insert_message_from_event(db_event, pool, &contact_pubkey).await?;
 
     // If the message is from the user to themselves, log the error and return None
     if db_message.from_pubkey() == db_message.to_pubkey() {
@@ -74,4 +74,32 @@ fn determine_sender_receiver(
         tracing::debug!("Message is from contact");
         db_message.from_pubkey()
     }
+}
+
+pub async fn handle_dm_confirmation(
+    pool: &SqlitePool,
+    cache_pool: &SqlitePool,
+    keys: &Keys,
+    db_event: &DbEvent,
+) -> Result<BackendEvent, Error> {
+    let relay_url = db_event
+        .relay_url
+        .as_ref()
+        .ok_or(Error::NotConfirmedEvent(db_event.event_hash.to_owned()))?;
+
+    if let Some(db_message) = DbMessage::fetch_by_event(pool, db_event.event_id()?).await? {
+        let db_message = DbMessage::relay_confirmation(pool, relay_url, db_message).await?;
+        if let Some(db_contact) =
+            DbContact::fetch_one(pool, cache_pool, &db_message.contact_chat()).await?
+        {
+            let chat_message = ChatMessage::from_db_message(keys, &db_message, &db_contact)?;
+            return Ok(BackendEvent::ConfirmedDM((db_contact, chat_message)));
+        } else {
+            tracing::error!("No contact found for confirmed message");
+            return Err(Error::ContactNotFound(db_message.contact_chat().to_owned()));
+        }
+    }
+
+    tracing::error!("No message found for confirmation event");
+    Err(Error::EventWithoutMessage(db_event.event_id()?))
 }

@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use crate::{components::chat_contact::ChatContact, db::DbContact, error::Error};
+use crate::{components::chat_contact::ChatContact, db::DbContact};
 use chrono::{DateTime, Local, NaiveDateTime, Offset};
 use iced::widget::image::Handle;
 use image::{ImageBuffer, Luma, Rgba};
@@ -12,6 +12,29 @@ use std::{
     path::Path,
     str::FromStr,
 };
+
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("Nostr Nip 19 Error: {0}")]
+    ParseNip19Error(#[from] nostr::nips::nip19::Error),
+
+    #[error("JSON (de)serialization error: {0}")]
+    SerdeJson(#[from] serde_json::Error),
+
+    #[error("I/O Error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Invalid Unix timestamp: {0}")]
+    InvalidTimestamp(i64),
+
+    #[error("Invalid Unix timestamp: secs {0}, nanos {1}")]
+    InvalidTimestampNanos(i64, u32),
+
+    #[error("{0}")]
+    QrError(#[from] qrcode::types::QrError),
+}
 
 // Accepts both hex and bech32 keys and returns the hex encoded key
 pub fn parse_key(key: String) -> Result<String, Error> {

@@ -6,12 +6,12 @@ pub(crate) mod db;
 pub(crate) mod error;
 pub(crate) mod icon;
 pub(crate) mod net;
-mod ntp;
 pub(crate) mod style;
 pub(crate) mod types;
 pub(crate) mod utils;
 pub(crate) mod views;
 pub(crate) mod widget;
+pub(crate) use crate::error::Error;
 
 use components::inform_card;
 use dotenv::dotenv;
