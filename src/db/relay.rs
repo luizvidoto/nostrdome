@@ -1,49 +1,24 @@
-// use crate::error::Error;
-
 use chrono::{NaiveDateTime, Utc};
-use nostr_sdk::{RelayStatus, Url};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
+use thiserror::Error;
+use url::Url;
 
-use crate::{
-    error::Error,
-    utils::{millis_to_naive_or_err, url_or_err},
-};
+use crate::utils::{millis_to_naive_or_err, url_or_err};
 
 use super::UserConfig;
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct DbRelayStatus(pub RelayStatus);
-impl DbRelayStatus {
-    pub fn new(relay_status: RelayStatus) -> Self {
-        Self(relay_status)
-    }
-    pub fn as_u8(&self) -> u8 {
-        match self.0 {
-            RelayStatus::Initialized => 0,
-            RelayStatus::Connected => 1,
-            RelayStatus::Connecting => 2,
-            RelayStatus::Disconnected => 3,
-            RelayStatus::Terminated => 4,
-        }
-    }
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Invalid URL: \"{0}\"")]
+    InvalidUrl(#[from] url::ParseError),
+
+    #[error("Sqlx error: {0}")]
+    SqlxError(#[from] sqlx::Error),
+
+    #[error("Relay not found: {0}")]
+    RelayNotFound(String),
 }
-impl From<u8> for DbRelayStatus {
-    fn from(value: u8) -> Self {
-        let inside = match value {
-            0 => RelayStatus::Initialized,
-            1 => RelayStatus::Connected,
-            2 => RelayStatus::Connecting,
-            3 => RelayStatus::Disconnected,
-            4..=u8::MAX => RelayStatus::Terminated,
-        };
-        DbRelayStatus(inside)
-    }
-}
-impl std::fmt::Display for DbRelayStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
+
 #[derive(Debug, Clone)]
 pub struct DbRelay {
     pub url: Url,
@@ -52,23 +27,12 @@ pub struct DbRelay {
     pub read: bool,
     pub write: bool,
     pub advertise: bool,
-    pub last_connected_at: Option<NaiveDateTime>,
-    pub status: Option<DbRelayStatus>,
     pub have_error: Option<String>,
 }
 
 impl DbRelay {
     const FETCH_QUERY: &'static str =
         "SELECT url, read, write, advertise, created_at, updated_at, have_error FROM relay";
-
-    pub fn with_status(mut self, status: RelayStatus) -> Self {
-        self.status = Some(DbRelayStatus(status));
-        self
-    }
-    pub fn with_last_connected_at(mut self, last_connected_at: NaiveDateTime) -> Self {
-        self.last_connected_at = Some(last_connected_at);
-        self
-    }
 
     pub fn new(url: Url) -> DbRelay {
         DbRelay {
@@ -78,8 +42,6 @@ impl DbRelay {
             advertise: false,
             created_at: Utc::now().naive_utc(),
             updated_at: Utc::now().naive_utc(),
-            last_connected_at: None,
-            status: None,
             have_error: None,
         }
     }
@@ -192,8 +154,6 @@ impl sqlx::FromRow<'_, SqliteRow> for DbRelay {
             read: row.try_get::<bool, &str>("read")?,
             write: row.try_get::<bool, &str>("write")?,
             advertise: row.try_get::<bool, &str>("advertise")?,
-            last_connected_at: None,
-            status: None,
             have_error,
         })
     }

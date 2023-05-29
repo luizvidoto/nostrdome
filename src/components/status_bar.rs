@@ -1,76 +1,40 @@
-use futures::channel::mpsc;
 use iced::widget::{button, container, row, text, Space};
 use iced::Subscription;
 use iced::{alignment, Alignment, Command, Length};
-use nostr_sdk::{Relay, RelayStatus};
+use nostr_sdk::RelayStatus;
 
 use crate::consts::NOSTRTALK_VERSION;
 use crate::icon::signal_icon;
-use crate::net::events::Event;
-use crate::net::{self, BackEndConnection};
+use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
 use crate::widget::Element;
 
 #[derive(Debug, Clone)]
-pub struct NetConnection(mpsc::UnboundedSender<Input>);
-impl NetConnection {
-    pub fn send(&mut self, input: Input) {
-        if let Err(e) = self.0.unbounded_send(input).map_err(|e| e.to_string()) {
-            tracing::error!("{}", e);
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum Input {
-    Wait,
-    GetStatus(Vec<Relay>),
-}
-pub enum NetState {
-    Initial,
-    Idle {
-        receiver: mpsc::UnboundedReceiver<Input>,
-    },
-    Querying {
-        receiver: mpsc::UnboundedReceiver<Input>,
-        relays: Vec<Relay>,
-    },
-}
-
-#[derive(Debug, Clone)]
 pub enum Message {
-    Ready(NetConnection),
-    Performing,
-    Waited,
-    UpdateNetStatus(usize),
     GoToAbout,
     GoToNetwork,
+    Tick,
 }
 pub struct StatusBar {
-    pub connected_relays: usize,
-    pub sub_channel: Option<NetConnection>,
-    pub client_relays: Option<Vec<Relay>>,
+    relays_connected: usize,
 }
 impl StatusBar {
     pub fn new() -> Self {
         Self {
-            connected_relays: 0,
-            sub_channel: None,
-            client_relays: None,
+            relays_connected: 0,
         }
     }
     pub fn backend_event(
         &mut self,
-        event: Event,
-        conn: &mut BackEndConnection,
+        event: BackendEvent,
+        _conn: &mut BackEndConnection,
     ) -> Command<Message> {
         match event {
-            Event::GotRelayServers(relays) => {
-                self.client_relays = Some(relays);
-                self.send_action_to_channel(conn);
-            }
-            Event::RelayConnected(_) => {
-                conn.send(net::ToBackend::FetchRelayServers);
+            BackendEvent::GotRelayStatusList(list) => {
+                self.relays_connected = list
+                    .iter()
+                    .filter(|(_url, status)| status == &RelayStatus::Connected)
+                    .count();
             }
             _ => (),
         }
@@ -80,86 +44,13 @@ impl StatusBar {
         match message {
             Message::GoToAbout => (),
             Message::GoToNetwork => (),
-            Message::Performing => {
-                tracing::debug!("NetState Message:: Performing");
-            }
-            Message::Waited => {
-                tracing::debug!("NetState Message:: Waited");
-                self.send_action_to_channel(conn);
-            }
-            Message::Ready(channel) => {
-                tracing::debug!("NetState Message:: Ready(channel)");
-                self.sub_channel = Some(channel);
-                self.send_action_to_channel(conn);
-            }
-            Message::UpdateNetStatus(connected_relays) => {
-                self.connected_relays = connected_relays;
-                if let (Some(ch), Some(relays)) = (&mut self.sub_channel, &self.client_relays) {
-                    ch.send(Input::GetStatus(relays.clone()));
-                }
-            }
+            Message::Tick => conn.send(net::ToBackend::GetRelayStatusList),
         }
         Command::none()
     }
-    fn send_action_to_channel(&mut self, conn: &mut BackEndConnection) {
-        if let Some(ch) = &mut self.sub_channel {
-            let input_msg = match &self.client_relays {
-                Some(relays) => Input::GetStatus(relays.clone()),
-                None => {
-                    conn.send(net::ToBackend::FetchRelayServers);
-                    Input::Wait
-                }
-            };
-            ch.send(input_msg);
-        }
-    }
-
     pub fn subscription(&self) -> Subscription<Message> {
-        struct StatusBar;
-        iced::subscription::unfold(
-            std::any::TypeId::of::<StatusBar>(),
-            NetState::Initial,
-            |state| async move {
-                match state {
-                    NetState::Initial => {
-                        let (sender, receiver) = mpsc::unbounded();
-                        (
-                            Message::Ready(NetConnection(sender)),
-                            NetState::Idle { receiver },
-                        )
-                    }
-                    NetState::Idle { mut receiver } => {
-                        use iced::futures::StreamExt;
-
-                        tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-
-                        let input = receiver.select_next_some().await;
-
-                        match input {
-                            Input::GetStatus(relays) => {
-                                (Message::Performing, NetState::Querying { receiver, relays })
-                            }
-                            Input::Wait => {
-                                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-                                (Message::Waited, NetState::Idle { receiver })
-                            }
-                        }
-                    }
-                    NetState::Querying { relays, receiver } => {
-                        let relays_connected = relays
-                            .into_iter()
-                            .filter(|r| {
-                                futures::executor::block_on(r.status()) == RelayStatus::Connected
-                            })
-                            .count();
-                        (
-                            Message::UpdateNetStatus(relays_connected),
-                            NetState::Idle { receiver },
-                        )
-                    }
-                }
-            },
-        )
+        iced::time::every(std::time::Duration::from_millis(TICK_INTERVAL_MILLIS))
+            .map(|_| Message::Tick)
     }
     pub fn view(&self) -> Element<'static, Message> {
         let about = button(text(format!("NostrTalk v{}", NOSTRTALK_VERSION)).size(18))
@@ -169,7 +60,7 @@ impl StatusBar {
             .style(style::Button::StatusBarButton);
         let signal = button(
             row![
-                text(&self.connected_relays).size(18),
+                text(&self.relays_connected).size(18),
                 signal_icon().size(12),
             ]
             .align_items(Alignment::Center),
@@ -193,3 +84,4 @@ impl StatusBar {
 }
 
 pub const STATUS_BAR_HEIGHT: f32 = 20.0;
+const TICK_INTERVAL_MILLIS: u64 = 500;

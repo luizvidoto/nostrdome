@@ -2,7 +2,7 @@ use iced::widget::{button, container, row, text, tooltip};
 use iced::Length;
 
 use crate::db::DbContact;
-use crate::icon::{delete_icon, edit_icon, file_icon_regular, reply_icon};
+use crate::icon::{delete_icon, edit_icon, reply_icon};
 use crate::style;
 use crate::utils::format_pubkey;
 use crate::widget::Element;

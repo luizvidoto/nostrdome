@@ -6,12 +6,14 @@ use iced::widget::column;
 pub use relay_row::RelayRow;
 pub mod contact_row;
 pub use contact_row::ContactRow;
-pub mod file_importer;
-pub use file_importer::FileImporter;
+
+pub mod async_file_importer;
+pub use async_file_importer::AsyncFileImporter;
+
 mod common_scrollable;
 pub use common_scrollable::common_scrollable;
 mod custom_widgets;
-pub use custom_widgets::{floating_element, modal, FloatingElement, Modal, MouseArea, Responsive};
+pub use custom_widgets::{floating_element, FloatingElement, MouseArea, Responsive};
 
 pub mod status_bar;
 pub use status_bar::StatusBar;

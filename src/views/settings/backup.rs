@@ -1,9 +1,8 @@
 use crate::components::text::title;
 use crate::db::DbEvent;
-use crate::net::{self, events::Event, BackEndConnection};
+use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::{db::DbContact, widget::Element};
 use iced::widget::{button, column, row, text};
-use rfd::FileDialog;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -36,19 +35,25 @@ impl State {
         }
     }
 
-    pub fn backend_event(&mut self, event: Event, _conn: &mut BackEndConnection) {
+    pub fn backend_event(&mut self, event: BackendEvent, _conn: &mut BackEndConnection) {
         match event {
-            Event::GotContacts(contact_list) => {
+            BackendEvent::GotContacts(contact_list) => {
                 self.contacts = contact_list;
             }
-            Event::GotAllMessages(all_messages) => {
+            BackendEvent::GotAllMessages(all_messages) => {
                 self.messages = all_messages;
             }
-            Event::ExportedContactsSucessfully => {
+            BackendEvent::ExportedContactsSucessfully => {
                 self.contacts_state = LoadingState::Success;
             }
-            Event::ExportedMessagesSucessfully => {
+            BackendEvent::ExportedMessagesSucessfully => {
                 self.messages_state = LoadingState::Success;
+            }
+            BackendEvent::ExportedContactsToIdle => {
+                self.contacts_state = LoadingState::Idle;
+            }
+            BackendEvent::ExportedMessagesToIdle => {
+                self.messages_state = LoadingState::Idle;
             }
             _ => (),
         }
@@ -57,22 +62,11 @@ impl State {
         match message {
             Message::ExportContacts => {
                 self.contacts_state = LoadingState::Loading;
-                if let Some(path) = FileDialog::new().set_directory("/").save_file() {
-                    conn.send(net::ToBackend::ExportContacts(path))
-                } else {
-                    self.contacts_state = LoadingState::Idle;
-                }
+                conn.send(net::ToBackend::ExportContacts);
             }
             Message::ExportMessages => {
                 self.messages_state = LoadingState::Loading;
-                if let Some(path) = FileDialog::new().set_directory("/").save_file() {
-                    conn.send(net::ToBackend::ExportMessages((
-                        self.messages.clone(),
-                        path,
-                    )));
-                } else {
-                    self.messages_state = LoadingState::Idle;
-                }
+                conn.send(net::ToBackend::ExportMessages(self.messages.clone()));
             }
         }
     }

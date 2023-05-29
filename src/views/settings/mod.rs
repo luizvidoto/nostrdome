@@ -2,8 +2,7 @@ use iced::widget::{button, column, container, row, Space};
 use iced::{Command, Length, Subscription};
 
 use crate::db::DbContact;
-use crate::net::events::Event;
-use crate::net::{self, BackEndConnection};
+use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
 
 use crate::widget::{Button, Element};
@@ -166,9 +165,11 @@ impl Settings {
 
     pub fn backend_event(
         &mut self,
-        event: Event,
+        event: BackendEvent,
         conn: &mut BackEndConnection,
     ) -> Command<Message> {
+        self.modal_state.backend_event(event.clone(), conn);
+
         match &mut self.menu_state {
             MenuState::About { state } => {
                 return state
@@ -397,6 +398,18 @@ impl ModalState {
     pub fn subscription(&self) -> Subscription<Message> {
         match self {
             _ => Subscription::none(),
+        }
+    }
+    pub fn backend_event(&mut self, event: BackendEvent, conn: &mut BackEndConnection) {
+        match self {
+            ModalState::ContactDetails(state) => {
+                state.backend_event(event, conn);
+            }
+            ModalState::RelaysConfirmation(_state) => (),
+            ModalState::ImportList(state) => {
+                state.backend_event(event, conn);
+            }
+            ModalState::Off => (),
         }
     }
     pub fn import_contacts() -> Self {

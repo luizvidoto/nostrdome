@@ -6,12 +6,12 @@ pub(crate) mod db;
 pub(crate) mod error;
 pub(crate) mod icon;
 pub(crate) mod net;
-mod ntp;
 pub(crate) mod style;
 pub(crate) mod types;
 pub(crate) mod utils;
 pub(crate) mod views;
 pub(crate) mod widget;
+pub(crate) use crate::error::Error;
 
 use components::inform_card;
 use dotenv::dotenv;
@@ -20,7 +20,7 @@ use iced::{
     widget::{button, column, text},
     window, Application, Command, Settings,
 };
-use net::{backend_connect, events::Event, BackEndConnection};
+use net::{backend_connect, BackEndConnection, BackendEvent};
 use nostr::Keys;
 // use tracing_appender::{non_blocking, rolling};
 use tracing_subscriber::{
@@ -36,7 +36,7 @@ use widget::Element;
 #[derive(Debug, Clone)]
 pub enum Message {
     RouterMessage(views::Message),
-    BackEndEvent(Event),
+    BackEndEvent(BackendEvent),
     LoginMessage(login::Message),
     WelcomeMessage(welcome::Message),
     ToLogin,
@@ -239,27 +239,27 @@ impl Application for App {
                 }
             }
             Message::BackEndEvent(event) => match event {
-                Event::None => (),
-                Event::Disconnected => {
+                BackendEvent::Empty => (),
+                BackendEvent::Disconnected => {
                     tracing::info!("Disconnected from backend");
                 }
-                Event::BackendClosed => {
+                BackendEvent::BackendClosed => {
                     tracing::info!("Database closed");
                     if let State::App { keys, conn, .. } = &mut self.state {
                         self.state = State::logging_out(keys, conn);
                     }
                 }
-                Event::LoggedOut => {
+                BackendEvent::LoggedOut => {
                     tracing::info!("Logged out");
                     self.state = State::login();
                 }
-                Event::FirstLogin => {
+                BackendEvent::FirstLogin => {
                     tracing::info!("First login");
                     if let State::BackendLoaded { keys, conn } = &mut self.state {
                         self.state = State::welcome(keys, conn);
                     }
                 }
-                Event::Connected(mut ready_conn) => {
+                BackendEvent::Connected(mut ready_conn) => {
                     tracing::info!("Connected to backend");
                     if let State::LoadingBackend { keys, new_profile } = &mut self.state {
                         if let Some(profile) = new_profile {
@@ -270,13 +270,13 @@ impl Application for App {
                         self.state = State::backend_loaded(keys, &mut ready_conn);
                     }
                 }
-                Event::Error(e) => {
+                BackendEvent::Error(e) => {
                     tracing::error!("{}", e);
                 }
                 // Event::SentEventTo((url, event_hash)) => {
                 //     tracing::info!("Sent to: {}. ID: {}", url, event_hash);
                 // }
-                Event::FinishedPreparing => {
+                BackendEvent::FinishedPreparing => {
                     tracing::info!("Finished preparing client");
                     match &mut self.state {
                         State::Welcome { keys, conn, .. } | State::BackendLoaded { conn, keys } => {
@@ -293,7 +293,7 @@ impl Application for App {
                     }
                 }
                 other => {
-                    tracing::debug!("Backend event: {:?}", other);
+                    tracing::trace!("Backend event: {:?}", other);
                     match &mut self.state {
                         State::App { router, conn, .. } => {
                             return router
@@ -317,9 +317,9 @@ impl Application for App {
 async fn main() {
     dotenv().ok();
 
-    if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "warn");
-    }
+    // if std::env::var("RUST_LOG").is_err() {
+    //     std::env::set_var("RUST_LOG", "warn");
+    // }
 
     // CombinedLogger::init(vec![
     //     TermLogger::new(

@@ -202,7 +202,7 @@ impl ChatContact {
                 Message::ShowFullCard => self.mode = CardMode::Full,
                 Message::AddUnseenCount => {
                     if let Some(chat_info) = &mut self.chat_info {
-                        chat_info.unseen_messages += 1;
+                        chat_info.unseen_messages = (chat_info.unseen_messages + 1).min(100);
                     }
                 }
                 Message::NewMessage(chat_msg) => {
@@ -232,20 +232,21 @@ impl ChatContact {
 
     fn make_notifications<'a>(&self) -> Element<'a, MessageWrapper> {
         if let Some(chat_info) = &self.chat_info {
-            match chat_info.unseen_messages {
-                0 => text("").into(),
-                count => container(
-                    button(text(count).size(16))
-                        .padding([2, 5])
-                        .style(style::Button::Notification),
-                )
-                .width(NOTIFICATION_COUNT_WIDTH)
-                .align_x(alignment::Horizontal::Right)
-                .into(),
-            }
-        } else {
-            text("").into()
+            let count_txt = match chat_info.unseen_messages {
+                0 => return text("").into(),
+                1..=99 => chat_info.unseen_messages.to_string(),
+                _ => "99+".into(),
+            };
+            return container(
+                button(text(count_txt).size(16))
+                    .padding([2, 4])
+                    .style(style::Button::Notification),
+            )
+            .width(NOTIFICATION_COUNT_WIDTH)
+            .align_x(alignment::Horizontal::Right)
+            .into();
         }
+        text("").into()
     }
 
     pub(crate) fn height(&self) -> f32 {

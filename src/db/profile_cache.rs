@@ -1,20 +1,37 @@
 use std::path::PathBuf;
 
-use chrono::NaiveDateTime;
-use nostr::secp256k1::XOnlyPublicKey;
-use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
-
 use crate::{
-    error::Error,
-    net::ImageKind,
+    net::{image_filename, ImageKind, ImageSize},
     utils::{
         event_hash_or_err, millis_to_naive_or_err, profile_meta_or_err, public_key_or_err,
         url_or_err,
     },
 };
+use chrono::NaiveDateTime;
+use nostr::{secp256k1::XOnlyPublicKey, EventId};
+use serde::{Deserialize, Serialize};
+use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
+use thiserror::Error;
 
 use super::DbEvent;
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Error parsing JSON content into nostr::Metadata: {0}")]
+    JsonToMetadata(String),
+
+    #[error("Sqlx error: {0}")]
+    SqlxError(#[from] sqlx::Error),
+
+    #[error("Event need to be confirmed")]
+    NotConfirmedEvent(EventId),
+
+    #[error("Not found path for kind: {0:?}")]
+    NoPathForKind(ImageKind),
+
+    #[error("I/O Error: {0}")]
+    Io(#[from] std::io::Error),
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileCache {
@@ -69,6 +86,7 @@ impl ProfileCache {
             .relay_url
             .as_ref()
             .ok_or(Error::NotConfirmedEvent(event_hash.to_owned()))?;
+
         if let Some(last_cache) = Self::fetch_by_public_key(cache_pool, public_key).await? {
             if &last_cache.event_hash == event_hash {
                 tracing::info!(
@@ -153,6 +171,35 @@ impl ProfileCache {
         Ok(())
     }
 
+    pub(crate) async fn remove_file(
+        cache_pool: &SqlitePool,
+        cache: &ProfileCache,
+        kind: ImageKind,
+    ) -> Result<(), Error> {
+        let path = cache.get_path(kind).ok_or(Error::NoPathForKind(kind))?;
+        if path.exists() {
+            remove_all_images(&path, kind).await?;
+        }
+        let kind_str = match kind {
+            ImageKind::Profile => "profile_image_path",
+            ImageKind::Banner => "banner_image_path",
+        };
+        let update_query = format!(
+            r#"
+            UPDATE profile_meta_cache 
+            SET {}=?
+            WHERE public_key=?
+        "#,
+            kind_str
+        );
+        sqlx::query(&update_query)
+            .bind(&"".to_string())
+            .bind(&cache.public_key.to_string())
+            .execute(cache_pool)
+            .await?;
+        Ok(())
+    }
+
     pub(crate) fn get_path(&self, kind: ImageKind) -> Option<PathBuf> {
         match kind {
             ImageKind::Profile => self.profile_image_path.clone(),
@@ -194,4 +241,15 @@ impl sqlx::FromRow<'_, SqliteRow> for ProfileCache {
             banner_image_path,
         })
     }
+}
+
+async fn remove_all_images(path: &PathBuf, kind: ImageKind) -> Result<(), Error> {
+    tokio::fs::remove_file(path).await?;
+
+    let med_path = image_filename(kind, ImageSize::Medium, "png");
+    tokio::fs::remove_file(med_path).await?;
+
+    let sm_path = image_filename(kind, ImageSize::Small, "png");
+    tokio::fs::remove_file(sm_path).await?;
+    Ok(())
 }

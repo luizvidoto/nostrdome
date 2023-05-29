@@ -10,8 +10,8 @@ CREATE TABLE contact (
     last_message_date INTEGER
 );
 
-CREATE INDEX contact_created_at ON contact (created_at);
+CREATE INDEX IF NOT EXISTS contact_created_at ON contact (created_at);
 
-CREATE INDEX contact_updated_at ON contact (updated_at);
+CREATE INDEX IF NOT EXISTS contact_updated_at ON contact (updated_at);
 
-CREATE INDEX contact_status ON contact (status);
+CREATE INDEX IF NOT EXISTS contact_status ON contact (status);

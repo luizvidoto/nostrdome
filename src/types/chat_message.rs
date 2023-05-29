@@ -1,9 +1,10 @@
 use chrono::NaiveDateTime;
 use iced::widget::{column, container, row, text, Space};
+use iced::Point;
 use iced::{alignment, Length};
-use iced::{clipboard, Point};
 use nostr::{secp256k1::XOnlyPublicKey, EventId};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::components::MouseArea;
 use crate::db::MessageStatus;
@@ -12,9 +13,14 @@ use crate::utils::from_naive_utc_to_local;
 use crate::widget::Element;
 use crate::{
     db::{DbContact, DbEvent, DbMessage},
-    error::Error,
     style,
 };
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("{0}")]
+    FromDbMessageError(#[from] crate::db::message::Error),
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -111,14 +117,11 @@ impl ChatMessage {
         // TODO: to local timezone
         let local_time = from_naive_utc_to_local(self.display_time);
         let local_time = local_time.time().format("%H:%M").to_string();
-        let data_cp = column![
-            // container(text("")).height(10.0),
-            container(
-                text(&local_time)
-                    .style(style::Text::ChatMessageDate)
-                    .size(16)
-            )
-        ];
+        let data_cp = column![container(
+            text(&local_time)
+                .style(style::Text::ChatMessageDate)
+                .size(16)
+        )];
 
         let status = {
             let mut status = if self.is_from_user {

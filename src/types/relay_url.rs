@@ -1,8 +1,16 @@
-use crate::error::Error;
-
 use nostr::prelude::UncheckedUrl;
 use regex::Regex;
 use std::{fmt, str::FromStr};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Invalid URL regex: \"{0}\"")]
+    InvalidUrlRegex(String),
+
+    #[error("Invalid relay URL: \"{0}\"")]
+    InvalidRelayUrl(String),
+}
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
 pub struct RelayUrl(pub String);
@@ -39,7 +47,7 @@ impl RelayUrl {
         }
     }
 
-    /// As &str
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &str {
         &self.0
     }

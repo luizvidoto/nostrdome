@@ -1,10 +1,22 @@
-use crate::{
-    error::Error,
-    ntp::{correct_time_with_offset, system_now_total_microseconds, system_time_to_naive_utc},
+use crate::net::ntp::{
+    correct_time_with_offset, system_now_total_microseconds, system_time_to_naive_utc,
 };
 
 use chrono::NaiveDateTime;
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Sqlx error: {0}")]
+    SqlxError(#[from] sqlx::Error),
+
+    #[error("System time before unix epoch")]
+    SystemTimeBeforeUnixEpoch,
+
+    #[error("{0}")]
+    FromNtpError(#[from] crate::net::ntp::Error),
+}
 
 #[derive(Debug, Clone)]
 pub struct UserConfig {
@@ -42,25 +54,16 @@ impl UserConfig {
         Ok(has_logged_in != 0)
     }
 
-    pub async fn fetch(pool: &SqlitePool) -> Result<Self, Error> {
-        tracing::debug!("Fetch UserConfig");
-        let query = "SELECT * FROM user_config WHERE id = 1;";
-        let user = sqlx::query_as::<_, UserConfig>(query)
-            .fetch_one(pool)
-            .await?;
-        Ok(user)
-    }
-
     pub(crate) async fn update_ntp_offset(
         pool: &SqlitePool,
-        ntp_total_microseconds: u64,
+        total_microseconds: u64,
     ) -> Result<(), Error> {
         tracing::debug!("update_ntp_offset");
 
         let system_total_microseconds =
             system_now_total_microseconds().map_err(|_| Error::SystemTimeBeforeUnixEpoch)?;
 
-        let offset = ntp_total_microseconds as i64 - system_total_microseconds as i64;
+        let offset = total_microseconds as i64 - system_total_microseconds as i64;
 
         let query = "UPDATE user_config SET ntp_offset = ?1 WHERE id = 1;";
         sqlx::query(query).bind(offset).execute(pool).await?;

@@ -1,9 +1,9 @@
-use crate::{components::text::title, net::events::Event, style, widget::Element};
+use crate::{components::text::title, net::BackendEvent, style, widget::Element};
 use iced::widget::{column, radio};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    BackEndEvent(Event),
+    BackEndEvent(BackendEvent),
     ChangeTheme(style::Theme),
 }
 

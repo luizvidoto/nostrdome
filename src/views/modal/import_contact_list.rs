@@ -1,36 +1,34 @@
+use crate::components::{async_file_importer, AsyncFileImporter};
 use crate::db::DbContact;
-use crate::net::{self, BackEndConnection};
+use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::widget::Element;
-use crate::{
-    components::{file_importer, FileImporter},
-    types::UncheckedEvent,
-    utils::json_reader,
-};
+use crate::{types::UncheckedEvent, utils::json_reader};
 use iced::alignment;
 use iced::widget::{button, column, row, text};
 use iced::Length;
 use iced_aw::{Card, Modal};
 use nostr::Tag;
 use std::fmt::Debug;
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub enum CMessage<M: Clone + Debug> {
     CloseModal,
     UnderlayMessage(M),
-    FileImporterMessage(file_importer::Message),
+    FileImporterMessage(async_file_importer::Message),
     SaveImportedContacts(Vec<DbContact>),
 }
 
 #[derive(Debug, Clone)]
 pub struct ImportContactList {
     pub imported_contacts: Vec<DbContact>,
-    pub file_importer: FileImporter,
+    pub file_importer: AsyncFileImporter,
 }
 impl ImportContactList {
     pub fn new() -> Self {
         Self {
             imported_contacts: vec![],
-            file_importer: FileImporter::new("/path/to/contacts.json")
+            file_importer: AsyncFileImporter::new("/path/to/contacts.json")
                 .file_filter("JSON File", &["json"]),
         }
     }
@@ -52,24 +50,31 @@ impl ImportContactList {
                 // *self = ModalState::Off;
                 return true;
             }
-            CMessage::FileImporterMessage(msg) => {
-                if let Some(returned_msg) = self.file_importer.update(msg) {
-                    self.handle_file_importer_message(returned_msg);
-                }
-            }
+            CMessage::FileImporterMessage(msg) => self.file_importer.update(msg, conn),
         }
         false
     }
-    fn handle_file_importer_message(&mut self, returned_msg: file_importer::Message) {
-        if let file_importer::Message::OnChoose(path) = returned_msg {
-            match json_reader::<String, UncheckedEvent>(path) {
-                Ok(contact_event) => {
-                    if let nostr::event::Kind::ContactList = contact_event.kind {
-                        self.update_imported_contacts(&contact_event.tags);
-                    }
-                }
-                Err(e) => tracing::error!("{}", e),
+    pub fn backend_event(&mut self, event: BackendEvent, _conn: &mut BackEndConnection) {
+        match event {
+            BackendEvent::ChoosenFile(path) => {
+                self.handle_file_importer_message(&path);
+                self.file_importer
+                    .update(async_file_importer::Message::UpdateFilePath(path), _conn);
             }
+            _ => (),
+        }
+    }
+    fn handle_file_importer_message<P>(&mut self, path: P)
+    where
+        P: AsRef<Path>,
+    {
+        match json_reader::<P, UncheckedEvent>(path) {
+            Ok(contact_event) => {
+                if let nostr::event::Kind::ContactList = contact_event.kind {
+                    self.update_imported_contacts(&contact_event.tags);
+                }
+            }
+            Err(e) => tracing::error!("{}", e),
         }
     }
     fn update_imported_contacts(&mut self, tags: &[Tag]) {

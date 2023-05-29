@@ -1,33 +1,18 @@
 use crate::db::DbRelay;
 use crate::icon::{delete_icon, exclamation_icon, solid_circle_icon};
-use crate::net::events::Event;
-use crate::net::{self, BackEndConnection};
+use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
-use crate::utils::ns_event_to_naive;
 use crate::widget::{Element, Text};
-use chrono::Utc;
-use iced::futures::channel::mpsc;
+use chrono::{NaiveDateTime, Utc};
 use iced::widget::{button, checkbox, container, row, text, tooltip, Space};
 use iced::{alignment, Command, Length, Subscription};
-use nostr::Timestamp;
-use nostr_sdk::{Relay, RelayStatus};
-
-#[derive(Debug, Clone)]
-pub struct RelayRowConnection(mpsc::Sender<Input>);
-impl RelayRowConnection {
-    pub fn send(&mut self, input: Input) {
-        if let Err(e) = self.0.try_send(input).map_err(|e| e.to_string()) {
-            tracing::error!("{}", e);
-        }
-    }
-}
+use nostr_sdk::RelayStatus;
 
 #[derive(Debug, Clone)]
 pub enum RelayRowState {
     Idle,
     Loading,
     Success,
-    Error(String),
 }
 
 #[derive(Debug, Clone)]
@@ -46,25 +31,16 @@ impl Mode {
             *state = RelayRowState::Loading;
         }
     }
-    pub fn error(&mut self, error: String) {
-        if let Mode::ModalView { state } = self {
-            *state = RelayRowState::Error(error);
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
     None,
-    ConnectToRelay(DbRelay),
-    UpdateStatus((RelayStatus, Timestamp)),
     DeleteRelay(DbRelay),
     ToggleRead(DbRelay),
     ToggleWrite(DbRelay),
-    Ready(RelayRowConnection),
-    Performing,
-    Waited,
     SendContactListToRelays,
+    UpdateRelayStatus(RelayStatus),
 }
 #[derive(Debug, Clone)]
 pub struct MessageWrapper {
@@ -77,42 +53,22 @@ impl MessageWrapper {
     }
 }
 
-pub enum Input {
-    GetStatus(Relay),
-    Wait,
-}
-pub enum State {
-    Start {
-        id: i32,
-    },
-    Idle {
-        id: i32,
-        receiver: mpsc::Receiver<Input>,
-    },
-    Performing {
-        id: i32,
-        receiver: mpsc::Receiver<Input>,
-        channel_relay: Relay,
-    },
-}
-
 #[derive(Debug, Clone)]
 pub struct RelayRow {
     pub id: i32,
     pub db_relay: DbRelay,
-    client_relay: Option<Relay>,
-    sub_channel: Option<RelayRowConnection>,
+    relay_status: Option<RelayStatus>,
+    last_connected_at: Option<NaiveDateTime>,
     mode: Mode,
 }
 
 impl RelayRow {
-    pub fn new(id: i32, db_relay: DbRelay, conn: &mut BackEndConnection) -> Self {
-        conn.send(net::ToBackend::FetchRelayServer(db_relay.url.clone()));
+    pub fn new(id: i32, db_relay: DbRelay, _conn: &mut BackEndConnection) -> Self {
         Self {
             id,
             db_relay,
-            client_relay: None,
-            sub_channel: None,
+            relay_status: None,
+            last_connected_at: None,
             mode: Mode::Normal,
         }
     }
@@ -123,86 +79,19 @@ impl RelayRow {
         self
     }
     pub fn subscription(&self) -> Subscription<MessageWrapper> {
-        // let unique_id = uuid::Uuid::new_v4().to_string();
-        iced::subscription::unfold(
-            self.db_relay.url.clone(),
-            State::Start { id: self.id },
-            |state| async move {
-                match state {
-                    State::Start { id } => {
-                        let (sender, receiver) = mpsc::channel(1024);
-                        (
-                            MessageWrapper::new(id, Message::Ready(RelayRowConnection(sender))),
-                            State::Idle { receiver, id },
-                        )
-                    }
-                    State::Idle { mut receiver, id } => {
-                        use iced::futures::StreamExt;
-
-                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-                        let input = receiver.select_next_some().await;
-
-                        match input {
-                            Input::GetStatus(channel_relay) => (
-                                MessageWrapper::new(id, Message::Performing),
-                                State::Performing {
-                                    id,
-                                    receiver,
-                                    channel_relay,
-                                },
-                            ),
-                            Input::Wait => {
-                                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                                (
-                                    MessageWrapper::new(id, Message::Waited),
-                                    State::Idle { receiver, id },
-                                )
-                            }
-                        }
-                    }
-                    State::Performing {
-                        id,
-                        channel_relay,
-                        receiver,
-                    } => {
-                        let relay_status = channel_relay.status().await;
-                        if let RelayStatus::Initialized = &relay_status {
-                            channel_relay.connect(true).await
-                        }
-                        (
-                            MessageWrapper::new(
-                                id,
-                                Message::UpdateStatus((
-                                    relay_status,
-                                    channel_relay.stats().connected_at(),
-                                )),
-                            ),
-                            State::Idle { receiver, id },
-                        )
-                    }
-                }
-            },
-        )
+        Subscription::none()
     }
 
-    pub fn backend_event(&mut self, event: Event, _conn: &mut BackEndConnection) {
+    pub fn backend_event(&mut self, event: BackendEvent, _conn: &mut BackEndConnection) {
         match event {
-            Event::RelayUpdated(db_relay) => {
+            BackendEvent::RelayUpdated(db_relay) => {
                 if self.db_relay.url == db_relay.url {
                     tracing::debug!("Relay updated");
                     tracing::debug!("{:?}", db_relay);
                     self.db_relay = db_relay;
                 }
             }
-            Event::GotRelayServer(relay) => {
-                if let Some(relay) = relay {
-                    if self.db_relay.url == relay.url() {
-                        self.client_relay = Some(relay);
-                    }
-                }
-            }
-            Event::ConfirmedContactList(db_event) => {
+            BackendEvent::ConfirmedContactList(db_event) => {
                 if let Some(relay_url) = db_event.relay_url {
                     if relay_url == self.db_relay.url {
                         self.mode.success()
@@ -215,11 +104,14 @@ impl RelayRow {
 
     pub fn update(
         &mut self,
-        wrapper: MessageWrapper,
+        message: Message,
         conn: &mut BackEndConnection,
     ) -> Command<MessageWrapper> {
-        match wrapper.message {
+        match message {
             Message::None => (),
+            Message::UpdateRelayStatus(status) => {
+                self.relay_status = Some(status);
+            }
             Message::SendContactListToRelays => {
                 if let Mode::ModalView { .. } = &mut self.mode {
                     conn.send(net::ToBackend::SendContactListToRelays);
@@ -227,9 +119,6 @@ impl RelayRow {
                 }
             }
 
-            Message::ConnectToRelay(db_relay) => {
-                conn.send(net::ToBackend::ConnectToRelay(db_relay));
-            }
             Message::DeleteRelay(db_relay) => {
                 conn.send(net::ToBackend::DeleteRelay(db_relay));
             }
@@ -241,70 +130,17 @@ impl RelayRow {
                 let write = !db_relay.write;
                 conn.send(net::ToBackend::ToggleRelayWrite((db_relay, write)));
             }
-            Message::UpdateStatus((status, last_connected_at)) => {
-                self.db_relay = self.db_relay.clone().with_status(status);
-                if last_connected_at.as_i64() != 0 {
-                    if let Ok(last_connected_at) = ns_event_to_naive(last_connected_at) {
-                        self.db_relay = self
-                            .db_relay
-                            .clone()
-                            .with_last_connected_at(last_connected_at);
-                    }
-                } else {
-                    self.db_relay.last_connected_at = None;
-                }
-
-                if let (Some(ch), Some(relay)) = (&mut self.sub_channel, &self.client_relay) {
-                    ch.send(Input::GetStatus(relay.clone()));
-                }
-            }
-            Message::Performing => {
-                tracing::debug!("Relay Row performing");
-            }
-            Message::Waited => {
-                tracing::debug!("Message::Waited");
-                self.send_action_to_channel(conn);
-            }
-            Message::Ready(channel) => {
-                tracing::debug!("Message::Ready(channel)");
-                self.sub_channel = Some(channel);
-                self.send_action_to_channel(conn);
-            }
         }
         Command::none()
     }
 
-    fn send_action_to_channel(&mut self, conn: &mut BackEndConnection) {
-        if let Some(ch) = &mut self.sub_channel {
-            match &self.client_relay {
-                Some(relay) => {
-                    ch.send(Input::GetStatus(relay.clone()));
-                }
-                None => {
-                    // fetch relays again?
-                    conn.send(net::ToBackend::FetchRelayServer(self.db_relay.url.clone()));
-                    ch.send(Input::Wait);
-                }
-            }
-        }
-    }
-
     fn seconds_since_last_conn(&self) -> Element<'static, MessageWrapper> {
-        if let Some(last_connected_at) = self.db_relay.last_connected_at {
+        if let Some(last_connected_at) = self.last_connected_at {
             let now = Utc::now().naive_utc();
             let dif_secs = (now - last_connected_at).num_seconds();
             text(format!("{}s", &dif_secs)).into()
         } else {
             text("").into()
-        }
-    }
-    fn is_connected(&self) -> bool {
-        match &self.db_relay.status {
-            Some(last_active) => match last_active.0 {
-                RelayStatus::Connected => true,
-                _ => false,
-            },
-            None => false,
         }
     }
 
@@ -395,12 +231,9 @@ impl RelayRow {
     }
 
     fn relay_status_icon<'a>(&'a self) -> (Text<'a>, String) {
-        let (status_icon, status_text) = match &self.db_relay.status {
-            Some(last_active) => {
-                let status_icon = match last_active.0 {
-                    RelayStatus::Initialized => solid_circle_icon()
-                        .size(16)
-                        .style(style::Text::RelayStatusInitialized),
+        let (status_icon, status_text) = match &self.relay_status {
+            Some(status) => {
+                let status_icon = match status {
                     RelayStatus::Connected => solid_circle_icon()
                         .size(16)
                         .style(style::Text::RelayStatusConnected),
@@ -413,8 +246,11 @@ impl RelayRow {
                     RelayStatus::Terminated => solid_circle_icon()
                         .size(16)
                         .style(style::Text::RelayStatusTerminated),
+                    RelayStatus::Initialized => solid_circle_icon()
+                        .size(16)
+                        .style(style::Text::RelayStatusInitialized),
                 };
-                let status_text = last_active.0.to_string();
+                let status_text = status.to_string();
                 (status_icon, status_text)
             }
             None => (
@@ -427,47 +263,6 @@ impl RelayRow {
         (status_icon, status_text)
     }
 
-    pub fn modal_view(&self) -> Element<MessageWrapper> {
-        if let Mode::ModalView { state } = &self.mode {
-            let button_or_checkmark: Element<_> = match state {
-                RelayRowState::Idle => {
-                    let mut btn = button("Send").style(style::Button::Primary);
-                    if self.is_connected() {
-                        btn = btn.on_press(MessageWrapper::new(
-                            self.id,
-                            Message::SendContactListToRelays,
-                        ))
-                    }
-                    btn.into()
-                }
-
-                RelayRowState::Loading => button("...").style(style::Button::Primary).into(),
-                RelayRowState::Success => text("Sent!").into(),
-                RelayRowState::Error(_) => text("Error").into(),
-            };
-
-            let (status_icon, status_text) = self.relay_status_icon();
-
-            container(
-                row![
-                    tooltip(
-                        status_icon.width(Length::Fixed(RELAY_STATUS_ICON_WIDTH)),
-                        status_text,
-                        tooltip::Position::Top
-                    )
-                    .style(style::Container::TooltipBg),
-                    text(&self.db_relay.url),
-                    Space::with_width(Length::Fill),
-                    button_or_checkmark
-                ]
-                .align_items(alignment::Alignment::Center),
-            )
-            .center_y()
-            .into()
-        } else {
-            text("").into()
-        }
-    }
     pub fn relay_welcome(&self) -> Element<MessageWrapper> {
         let (status_icon, status_text) = self.relay_status_icon();
         container(

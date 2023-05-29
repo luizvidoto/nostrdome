@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use iced::alignment::{self, Horizontal};
 use iced::widget::{button, column, container, row, text, text_input, tooltip, Space};
 use iced::{Command, Length, Subscription};
@@ -9,8 +11,7 @@ use crate::components::text_input_group::TextInputGroup;
 use crate::components::{common_scrollable, relay_row, RelayRow};
 use crate::db::DbRelay;
 use crate::icon::plus_icon;
-use crate::net::events::Event;
-use crate::net::{self, BackEndConnection};
+use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
 use crate::utils::url_matches_search;
 use crate::widget::Element;
@@ -18,13 +19,14 @@ use crate::widget::Element;
 #[derive(Debug, Clone)]
 pub enum Message {
     RelayMessage(relay_row::MessageWrapper),
-    BackEndEvent(Event),
+    BackEndEvent(BackendEvent),
     OpenAddRelayModal,
     CancelButtonPressed,
     OkButtonPressed,
     CloseModal,
     AddRelayInputChange(String),
     SearchInputChange(String),
+    Tick,
 }
 
 #[derive(Debug, Clone)]
@@ -37,12 +39,13 @@ pub struct State {
 }
 impl State {
     pub fn subscription(&self) -> Subscription<Message> {
-        let relay_subs: Vec<_> = self
-            .relays
-            .iter()
-            .map(|r| r.subscription().map(Message::RelayMessage))
-            .collect();
-        iced::Subscription::batch(relay_subs)
+        // let relay_subs: Vec<_> = self
+        //     .relays
+        //     .iter()
+        //     .map(|r| r.subscription().map(Message::RelayMessage))
+        //     .collect();
+        // iced::Subscription::batch(relay_subs)
+        iced::time::every(Duration::from_millis(TICK_INTERVAL_MILLIS)).map(|_| Message::Tick)
     }
     pub fn new(conn: &mut BackEndConnection) -> Self {
         conn.send(net::ToBackend::FetchRelays);
@@ -57,6 +60,11 @@ impl State {
 
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Command<Message> {
         match message {
+            Message::Tick => {
+                if !self.relays.is_empty() {
+                    conn.send(net::ToBackend::GetRelayStatusList);
+                }
+            }
             Message::SearchInputChange(text) => {
                 self.search_input = text;
             }
@@ -85,20 +93,29 @@ impl State {
 
             Message::RelayMessage(msg) => {
                 if let Some(row) = self.relays.iter_mut().find(|r| r.id == msg.from) {
-                    let _ = row.update(msg, conn);
+                    let _ = row.update(msg.message, conn);
                 }
             }
 
             Message::BackEndEvent(ev) => match ev {
-                Event::RelayCreated(db_relay) => {
-                    conn.send(net::ToBackend::RequestEventsOf(db_relay.clone()));
+                BackendEvent::GotRelayStatusList(list) => {
+                    for (url, status) in list {
+                        if let Some(row) = self.relays.iter_mut().find(|r| r.db_relay.url == url) {
+                            let _ = row.update(relay_row::Message::UpdateRelayStatus(status), conn);
+                        } else {
+                            tracing::warn!("Got status for unknown relay: {}", url);
+                        }
+                    }
+                }
+                BackendEvent::RelayCreated(db_relay) => {
+                    // conn.send(net::ToBackend::RequestEventsOf(db_relay.clone()));
                     self.relays
                         .push(RelayRow::new(self.relays.len() as i32, db_relay, conn))
                 }
-                Event::RelayDeleted(db_relay) => {
+                BackendEvent::RelayDeleted(db_relay) => {
                     self.relays.retain(|r| r.db_relay.url != db_relay.url);
                 }
-                Event::GotRelays(mut db_relays) => {
+                BackendEvent::GotRelays(mut db_relays) => {
                     db_relays.sort_by(|a, b| a.url.cmp(&b.url));
                     self.relays = db_relays
                         .into_iter()
@@ -196,3 +213,4 @@ impl State {
 const CARD_MAX_WIDTH: f32 = 300.0;
 const HEADER_HEIGHT: f32 = 50.0;
 const SEARCH_WIDTH: f32 = 200.0;
+const TICK_INTERVAL_MILLIS: u64 = 500;

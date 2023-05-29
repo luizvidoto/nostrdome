@@ -1,13 +1,10 @@
-use std::time::Duration;
-
-use nostr::{Filter, Keys, Kind};
-use nostr_sdk::Client;
+use crate::Error;
+use nostr::Keys;
 use sqlx::SqlitePool;
 
 use crate::{
     db::{DbContact, DbMessage},
-    error::Error,
-    net::events::Event,
+    net::BackendEvent,
     types::ChatMessage,
 };
 
@@ -15,7 +12,7 @@ pub async fn fetch_and_decrypt_chat(
     keys: &Keys,
     pool: &SqlitePool,
     db_contact: DbContact,
-) -> Result<Event, Error> {
+) -> Result<BackendEvent, Error> {
     tracing::debug!("Fetching chat messages");
     let mut db_messages = DbMessage::fetch_chat(pool, db_contact.pubkey()).await?;
     let mut chat_messages = vec![];
@@ -31,109 +28,41 @@ pub async fn fetch_and_decrypt_chat(
         chat_messages.push(chat_message);
     }
 
-    Ok(Event::GotChatMessages((db_contact, chat_messages)))
-}
-
-pub async fn get_contact_list_profile(
-    client: &Client,
-    db_contacts: Vec<DbContact>,
-) -> Result<Event, Error> {
-    tracing::debug!("get_contact_list_profile: {}", db_contacts.len());
-    let all_pubkeys = db_contacts
-        .iter()
-        .map(|c| c.pubkey().to_string())
-        .collect::<Vec<_>>();
-    let filter = Filter::new().authors(all_pubkeys).kind(Kind::Metadata);
-    let timeout = Some(Duration::from_secs(10));
-    client.req_events_of(vec![filter], timeout).await;
-    Ok(Event::RequestedContactListProfiles)
-}
-
-pub async fn insert_contact_from_event(
-    keys: &Keys,
-    pool: &SqlitePool,
-    db_contact: &DbContact,
-) -> Result<Event, Error> {
-    tracing::debug!("Inserting contact from event");
-    // Check if the contact is the same as the user
-    if &keys.public_key() == db_contact.pubkey() {
-        tracing::warn!("{:?}", Error::SameContactInsert);
-        return Ok(Event::None);
-    }
-
-    // Check if the contact is already in the database
-    if DbContact::have_contact(pool, &db_contact.pubkey()).await? {
-        return update_contact_basic(keys, pool, db_contact).await;
-    }
-
-    // If the contact is not in the database, insert it
-    DbContact::insert(pool, &db_contact).await?;
-
-    Ok(Event::ContactCreated(db_contact.clone()))
-}
-
-pub async fn update_contact_basic(
-    keys: &Keys,
-    pool: &SqlitePool,
-    db_contact: &DbContact,
-) -> Result<Event, Error> {
-    tracing::debug!("update_contact_basic");
-    if &keys.public_key() == db_contact.pubkey() {
-        return Err(Error::SameContactUpdate);
-    }
-    DbContact::update_basic(pool, &db_contact).await?;
-    Ok(Event::ContactUpdated(db_contact.clone()))
+    Ok(BackendEvent::GotChatMessages((db_contact, chat_messages)))
 }
 
 pub async fn update_contact(
     keys: &Keys,
     pool: &SqlitePool,
     db_contact: &DbContact,
-) -> Result<Event, Error> {
+) -> Result<(), Error> {
     tracing::debug!("update_contact");
     if &keys.public_key() == db_contact.pubkey() {
         return Err(Error::SameContactUpdate);
     }
     DbContact::update(pool, &db_contact).await?;
-    Ok(Event::ContactUpdated(db_contact.clone()))
+    Ok(())
 }
 
 pub async fn add_new_contact(
     keys: &Keys,
     pool: &SqlitePool,
     db_contact: &DbContact,
-) -> Result<Event, Error> {
+) -> Result<(), Error> {
     tracing::debug!("add_new_contact");
     // Check if the contact is the same as the user
     if &keys.public_key() == db_contact.pubkey() {
         tracing::warn!("{:?}", Error::SameContactInsert);
-        return Ok(Event::None);
+        return Ok(());
     }
 
-    DbContact::insert(pool, &db_contact).await?;
+    DbContact::upsert_contact(pool, &db_contact).await?;
 
-    Ok(Event::ContactCreated(db_contact.clone()))
+    Ok(())
 }
 
-pub async fn delete_contact(pool: &SqlitePool, db_contact: &DbContact) -> Result<Event, Error> {
+pub async fn delete_contact(pool: &SqlitePool, db_contact: &DbContact) -> Result<(), Error> {
     tracing::debug!("delete_contact");
     DbContact::delete(pool, &db_contact).await?;
-    Ok(Event::ContactDeleted(db_contact.clone()))
-}
-
-pub async fn import_contacts(
-    keys: &Keys,
-    pool: &SqlitePool,
-    db_contacts: Vec<DbContact>,
-    is_replace: bool,
-) -> Result<Event, Error> {
-    for db_contact in &db_contacts {
-        if is_replace {
-            DbContact::delete(pool, db_contact).await?;
-            add_new_contact(keys, pool, db_contact).await?;
-        } else {
-            update_contact(keys, pool, db_contact).await?;
-        }
-    }
-    Ok(Event::FileContactsImported(db_contacts))
+    Ok(())
 }

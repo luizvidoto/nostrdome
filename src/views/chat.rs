@@ -15,8 +15,7 @@ use crate::db::{DbContact, DbRelay, DbRelayResponse};
 use crate::icon::{
     copy_icon, file_icon_regular, menu_bars_icon, reply_icon, satellite_icon, send_icon,
 };
-use crate::net::events::Event;
-use crate::net::{self, BackEndConnection};
+use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
 use crate::types::{chat_message, ChatMessage};
 use crate::utils::{chat_matches_search, from_naive_utc_to_local};
@@ -52,7 +51,7 @@ impl ModalState {
                 .map(|m| Message::BasicContactMessage(Box::new(m))),
         }
     }
-    fn backend_event(&mut self, event: Event, conn: &mut BackEndConnection) {
+    fn backend_event(&mut self, event: BackendEvent, conn: &mut BackEndConnection) {
         if let ModalState::BasicProfile(state) = self {
             state.backend_event(event, conn)
         }
@@ -225,6 +224,7 @@ impl State {
 
         let second: Element<_> = if let Some(active_contact) = self.active_chat() {
             // Todo: add/remove user button
+            // if user is unkown
             let add_or_remove_user = text("");
 
             container(column![
@@ -395,7 +395,7 @@ impl State {
 
     pub fn backend_event(
         &mut self,
-        event: Event,
+        event: BackendEvent,
         conn: &mut BackEndConnection,
     ) -> Command<Message> {
         let mut commands = vec![];
@@ -407,12 +407,15 @@ impl State {
         self.modal_state.backend_event(event.clone(), conn);
 
         match event {
-            Event::ContactCreated(db_contact) => {
+            BackendEvent::ContactCreated(db_contact) => {
                 let id = self.chats.len() as i32;
                 self.chats
                     .push(chat_contact::ChatContact::new(id, &db_contact, conn));
+                conn.send(net::ToBackend::FetchSingleContact(
+                    db_contact.pubkey().to_owned(),
+                ));
             }
-            Event::ContactUpdated(db_contact) => {
+            BackendEvent::ContactUpdated(db_contact) => {
                 self.find_and_update_contact(
                     &db_contact,
                     chat_contact::Message::ContactUpdated(db_contact.clone()),
@@ -420,17 +423,17 @@ impl State {
                     |c| c.contact.pubkey() == db_contact.pubkey(),
                 );
             }
-            Event::ContactDeleted(db_contact) => {
+            BackendEvent::ContactDeleted(db_contact) => {
                 self.chats
                     .retain(|c| c.contact.pubkey() != db_contact.pubkey());
                 self.active_idx = None;
             }
-            Event::UpdatedMetadata(pubkey) => {
+            BackendEvent::UpdatedMetadata(pubkey) => {
                 conn.send(net::ToBackend::FetchSingleContact(pubkey));
             }
-            Event::GotSingleContact((pubkey, db_contact)) => {
+            BackendEvent::GotSingleContact((pubkey, db_contact)) => {
                 if let Some(db_contact) = db_contact.as_ref() {
-                    tracing::info!("Got single contact: {:?}", db_contact);
+                    tracing::debug!("Got single contact: {:?}", db_contact);
                     self.find_and_update_contact(
                         db_contact,
                         chat_contact::Message::ContactUpdated(db_contact.to_owned()),
@@ -439,7 +442,7 @@ impl State {
                     )
                 }
             }
-            Event::GotContacts(db_contacts) => {
+            BackendEvent::GotContacts(db_contacts) => {
                 self.chats = db_contacts
                     .iter()
                     .enumerate()
@@ -450,7 +453,7 @@ impl State {
                     cmds.into_iter().for_each(|c| commands.push(c));
                 }
             }
-            Event::GotRelayResponses {
+            BackendEvent::GotRelayResponses {
                 chat_message,
                 responses,
                 all_relays,
@@ -458,7 +461,7 @@ impl State {
                 self.last_relays_response =
                     Some(RelaysResponse::new(chat_message, responses, all_relays));
             }
-            Event::GotChatMessages((db_contact, chat_msgs)) => {
+            BackendEvent::GotChatMessages((db_contact, chat_msgs)) => {
                 if self.active_matches(&db_contact) {
                     if self.messages.is_empty() {
                         self.messages = chat_msgs;
@@ -477,19 +480,20 @@ impl State {
                         .map(|c| c.update(chat_contact::Message::ResetUnseenCount, conn));
                 }
             }
-            Event::ConfirmedDM((_db_contact, chat_msg)) => {
+            BackendEvent::ConfirmedDM((_db_contact, chat_msg)) => {
                 self.messages
                     .iter_mut()
                     .find(|m| m.msg_id == chat_msg.msg_id)
                     .map(|m| m.confirm_msg(&chat_msg));
             }
-            Event::UpdatedContactMetadata { db_contact, .. } => self.find_and_update_contact(
-                &db_contact,
-                chat_contact::Message::UpdatedMetadata(db_contact.clone()),
-                conn,
-                |c| c.contact.pubkey() == db_contact.pubkey(),
-            ),
-            Event::PendingDM((db_contact, msg)) => {
+            BackendEvent::UpdatedContactMetadata { db_contact, .. } => self
+                .find_and_update_contact(
+                    &db_contact,
+                    chat_contact::Message::UpdatedMetadata(db_contact.clone()),
+                    conn,
+                    |c| c.contact.pubkey() == db_contact.pubkey(),
+                ),
+            BackendEvent::PendingDM((db_contact, msg)) => {
                 self.messages.push(msg.clone());
                 self.find_and_update_contact(
                     &db_contact,
@@ -503,7 +507,7 @@ impl State {
                     self.msgs_scroll_offset,
                 ));
             }
-            Event::ReceivedDM {
+            BackendEvent::ReceivedDM {
                 chat_message: msg,
                 db_contact,
                 ..
@@ -534,7 +538,7 @@ impl State {
                 );
             }
 
-            Event::GotChatInfo((db_contact, chat_info)) => {
+            BackendEvent::GotChatInfo((db_contact, chat_info)) => {
                 self.find_and_update_contact(
                     &db_contact,
                     chat_contact::Message::GotChatInfo(chat_info),

@@ -1,5 +1,5 @@
+use super::{DbEvent, UserConfig};
 use crate::{
-    error::{Error, FromDbEventError},
     types::ChatMessage,
     utils::{event_hash_or_err, millis_to_naive_or_err, public_key_or_err, url_or_err},
 };
@@ -7,8 +7,37 @@ use chrono::{NaiveDateTime, Utc};
 use nostr::{nips::nip04, secp256k1::XOnlyPublicKey, EventId, Keys};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
+use thiserror::Error;
 
-use super::{DbEvent, UserConfig};
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("No tags found in the event")]
+    NoTags,
+
+    #[error("Wrong tag type found")]
+    WrongTag,
+
+    #[error("Sqlx error: {0}")]
+    SqlxError(#[from] sqlx::Error),
+
+    #[error("Unkown chat message: from_pubkey:{0} - to_pubkey:{1}")]
+    UnknownChatMessage(String, String),
+
+    #[error("{0}")]
+    FromDbEventError(#[from] super::event::Error),
+
+    #[error("Can't update message without id")]
+    MessageNotInDatabase,
+
+    #[error("Event need to be confirmed")]
+    NotConfirmedEvent(EventId),
+
+    #[error("Decryption Error: {0}")]
+    DecryptionError(String),
+
+    #[error("{0}")]
+    FromKeysError(#[from] nostr::key::Error),
+}
 
 pub struct TagInfo {
     pub from_pubkey: XOnlyPublicKey,
@@ -18,8 +47,8 @@ pub struct TagInfo {
 }
 
 impl TagInfo {
-    pub fn from_db_event(db_event: &DbEvent) -> Result<Self, FromDbEventError> {
-        let tag = db_event.tags.get(0).ok_or(FromDbEventError::NoTags)?;
+    pub fn from_db_event(db_event: &DbEvent) -> Result<Self, Error> {
+        let tag = db_event.tags.get(0).ok_or(Error::NoTags)?;
         match tag {
             nostr::Tag::PubKey(to_pub, _url) => Ok(Self {
                 from_pubkey: db_event.pubkey,
@@ -27,7 +56,7 @@ impl TagInfo {
                 event_id: db_event.event_id()?,
                 event_hash: db_event.event_hash,
             }),
-            _ => Err(FromDbEventError::WrongTag),
+            _ => Err(Error::WrongTag),
         }
     }
     pub fn contact_pubkey(&self, keys: &Keys) -> Result<XOnlyPublicKey, Error> {
@@ -258,7 +287,7 @@ impl DbMessage {
             FROM message
             WHERE contact_pubkey=?
             ORDER BY confirmed_at DESC
-            LIMIT 10
+            LIMIT 100
         "#;
 
         let messages = sqlx::query_as::<_, DbMessage>(sql)
@@ -278,7 +307,7 @@ impl DbMessage {
             SELECT *
             FROM message
             WHERE contact_pubkey=? and confirmed_at < ? ORDER BY confirmed_at DESC
-            LIMIT 10
+            LIMIT 100
         "#;
         let messages = sqlx::query_as::<_, DbMessage>(&sql)
             .bind(&contact_pubkey.to_string())
@@ -399,14 +428,6 @@ impl MessageStatus {
         match self {
             MessageStatus::Offline => false,
             MessageStatus::Delivered => true,
-            MessageStatus::Seen => false,
-        }
-    }
-
-    pub(crate) fn is_offline(&self) -> bool {
-        match self {
-            MessageStatus::Offline => true,
-            MessageStatus::Delivered => false,
             MessageStatus::Seen => false,
         }
     }

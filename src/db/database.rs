@@ -1,8 +1,26 @@
-use crate::{consts::APP_PROJECT_DIRS, db::UserConfig, error::Error};
+use crate::{consts::APP_PROJECT_DIRS, db::UserConfig};
+use thiserror::Error;
 
 use directories::ProjectDirs;
 use sqlx::SqlitePool;
 use std::cmp::Ordering;
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Not found project directory")]
+    NotFoundProjectDirectory,
+
+    #[error("I/O Error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Sqlx error: {0}")]
+    SqlxError(#[from] sqlx::Error),
+
+    #[error(
+        "Database version is newer than supported by this executable (v{current} > v{db_ver})"
+    )]
+    NewerDbVersion { current: usize, db_ver: usize },
+}
 
 #[derive(Debug, Clone)]
 pub struct Database {
@@ -171,9 +189,10 @@ const INITIAL_SETUP: [&str; 8] = [
     include_str!("../../migrations/8_relay_response.sql"),
 ];
 
-const CACHE_SETUP: [&str; 2] = [
+const CACHE_SETUP: [&str; 3] = [
     include_str!("../../migrations/cache/1_setup.sql"),
     include_str!("../../migrations/cache/2_profile_meta_cache.sql"),
+    include_str!("../../migrations/cache/3_channel_cache.sql"),
 ];
 
 const IN_MEMORY: bool = false;
