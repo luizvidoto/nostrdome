@@ -1,3 +1,4 @@
+use crate::components::async_file_importer::FileFilter;
 use crate::components::chat_contact::ChatInfo;
 use crate::db::{
     DbContact, DbEvent, DbMessage, DbRelay, DbRelayResponse, ProfileCache, UserConfig,
@@ -16,6 +17,8 @@ use futures::channel::mpsc;
 use futures_util::SinkExt;
 use nostr::secp256k1::XOnlyPublicKey;
 use nostr::Keys;
+use rfd::AsyncFileDialog;
+use sqlx::SqlitePool;
 use std::path::PathBuf;
 
 use super::{BackEndInput, BackendEvent, BackendState};
@@ -32,18 +35,20 @@ pub enum ToBackend {
     FetchRelayResponsesUserProfile,
     FetchRelayResponsesContactList,
     FetchMessages(DbContact),
+
     FetchContacts,
     AddContact(DbContact),
     UpdateContact(DbContact),
     DeleteContact(DbContact),
     ImportContacts((Vec<DbContact>, bool)),
+
     FetchRelays,
     CreateAccount(BasicProfile),
     GetUserProfileMeta,
     UpdateUserProfileMeta(nostr::Metadata),
     FetchAllMessageEvents,
-    ExportMessages((Vec<DbEvent>, PathBuf)),
-    ExportContacts(std::path::PathBuf),
+    ExportMessages(Vec<DbEvent>),
+    ExportContacts,
     FetchChatInfo(DbContact),
     GetDbEventWithHash(nostr::EventId),
     FetchSingleContact(XOnlyPublicKey),
@@ -65,6 +70,7 @@ pub enum ToBackend {
     },
     FetchMoreMessages((DbContact, ChatMessage)),
     RemoveFileFromCache((ProfileCache, ImageKind)),
+    ChooseFile(Option<FileFilter>),
 }
 
 pub async fn process_message(
@@ -77,6 +83,27 @@ pub async fn process_message(
         let pool = &db_client.pool;
         let cache_pool = &db_client.cache_pool;
         let event_opt = match message {
+            // --- RFD ---
+            ToBackend::ChooseFile(file_filter_opt) => {
+                let mut rfd_instance = AsyncFileDialog::new().set_directory("/");
+
+                if let Some(filter) = &file_filter_opt {
+                    rfd_instance = rfd_instance.add_filter(
+                        &filter.name,
+                        &filter
+                            .extensions
+                            .iter()
+                            .map(AsRef::as_ref)
+                            .collect::<Vec<_>>(),
+                    );
+                }
+
+                if let Some(file_handle) = rfd_instance.pick_file().await {
+                    Some(BackendEvent::ChoosenFile(file_handle.path().to_owned()))
+                } else {
+                    None
+                }
+            }
             // ---- REQWEST ----
             ToBackend::FetchLatestVersion => {
                 handle_fetch_last_version(req_client.clone(), backend.sender.clone())
@@ -218,17 +245,28 @@ pub async fn process_message(
 
                 Some(BackendEvent::GotChatInfo((db_contact, chat_info)))
             }
-            ToBackend::ExportMessages((messages, path)) => {
-                messages_to_json_file(path, &messages).await?;
-                Some(BackendEvent::ExportedMessagesSucessfully)
+            ToBackend::ExportMessages(messages) => {
+                let rfd_instance = AsyncFileDialog::new().set_directory("/");
+                if let Some(file_handle) = rfd_instance.save_file().await {
+                    messages_to_json_file(file_handle.path().to_path_buf(), &messages).await?;
+                    Some(BackendEvent::ExportedMessagesSucessfully)
+                } else {
+                    Some(BackendEvent::ExportedMessagesToIdle)
+                }
             }
-            ToBackend::ExportContacts(mut path) => {
-                path.set_extension("json");
-                let list = DbContact::fetch(pool, cache_pool).await?;
-                let event = build_contact_list_event(pool, keys, &list).await?;
-                let json = event.as_json();
-                tokio::fs::write(path, json).await?;
-                Some(BackendEvent::ExportedContactsSucessfully)
+            ToBackend::ExportContacts => {
+                let rfd_instance = AsyncFileDialog::new().set_directory("/");
+                if let Some(file_handle) = rfd_instance.save_file().await {
+                    let mut path = file_handle.path().to_path_buf();
+                    path.set_extension("json");
+                    let list = DbContact::fetch(pool, cache_pool).await?;
+                    let event = build_contact_list_event(pool, keys, &list).await?;
+                    let json = event.as_json();
+                    tokio::fs::write(path, json).await?;
+                    Some(BackendEvent::ExportedContactsSucessfully)
+                } else {
+                    Some(BackendEvent::ExportedContactsToIdle)
+                }
             }
             ToBackend::FetchAllMessageEvents => {
                 let messages =
@@ -266,13 +304,26 @@ pub async fn process_message(
                         let _ = update_contact(keys, pool, db_contact).await;
                     }
                 }
+
+                send_contact_list(pool, cache_pool, keys, &mut backend.sender).await?;
+
                 Some(BackendEvent::FileContactsImported(db_contacts))
             }
-            ToBackend::AddContact(db_contact) => add_new_contact(keys, pool, &db_contact).await?,
-            ToBackend::UpdateContact(db_contact) => {
-                update_contact(&keys, pool, &db_contact).await?
+            ToBackend::AddContact(db_contact) => {
+                add_new_contact(keys, pool, &db_contact).await?;
+                send_contact_list(pool, cache_pool, keys, &mut backend.sender).await?;
+                Some(BackendEvent::ContactCreated(db_contact))
             }
-            ToBackend::DeleteContact(contact) => delete_contact(pool, &contact).await?,
+            ToBackend::UpdateContact(db_contact) => {
+                update_contact(&keys, pool, &db_contact).await?;
+                send_contact_list(pool, cache_pool, keys, &mut backend.sender).await?;
+                Some(BackendEvent::ContactUpdated(db_contact))
+            }
+            ToBackend::DeleteContact(db_contact) => {
+                delete_contact(pool, &db_contact).await?;
+                send_contact_list(pool, cache_pool, keys, &mut backend.sender).await?;
+                Some(BackendEvent::ContactDeleted(db_contact))
+            }
             ToBackend::FetchContacts => {
                 let contacts = DbContact::fetch(pool, cache_pool).await?;
                 Some(BackendEvent::GotContacts(contacts))
@@ -374,6 +425,22 @@ pub async fn process_message(
     } else {
         Ok(None)
     }
+}
+
+async fn send_contact_list(
+    pool: &SqlitePool,
+    cache_pool: &SqlitePool,
+    keys: &Keys,
+    back_sender: &mut mpsc::UnboundedSender<BackEndInput>,
+) -> Result<(), Error> {
+    let list = DbContact::fetch(pool, cache_pool).await?;
+    let ns_event = build_contact_list_event(pool, keys, &list).await?;
+    to_backend_channel(
+        back_sender,
+        BackEndInput::StorePendingContactList((ns_event, list.to_owned())),
+    )
+    .await?;
+    Ok(())
 }
 
 pub async fn to_backend_channel(

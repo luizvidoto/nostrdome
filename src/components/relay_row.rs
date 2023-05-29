@@ -63,8 +63,7 @@ pub struct RelayRow {
 }
 
 impl RelayRow {
-    pub fn new(id: i32, db_relay: DbRelay, conn: &mut BackEndConnection) -> Self {
-        // conn.send(net::ToBackend::GetRelayStatus(db_relay.url.clone()));
+    pub fn new(id: i32, db_relay: DbRelay, _conn: &mut BackEndConnection) -> Self {
         Self {
             id,
             db_relay,
@@ -148,12 +147,6 @@ impl RelayRow {
         } else {
             text("").into()
         }
-    }
-    fn is_connected(&self) -> bool {
-        self.relay_status
-            .as_ref()
-            .map(|s| s.is_connected())
-            .unwrap_or(false)
     }
 
     pub fn view_header() -> Element<'static, MessageWrapper> {
@@ -272,46 +265,6 @@ impl RelayRow {
         (status_icon, status_text)
     }
 
-    pub fn modal_view(&self) -> Element<MessageWrapper> {
-        if let Mode::ModalView { state } = &self.mode {
-            let button_or_checkmark: Element<_> = match state {
-                RelayRowState::Idle => {
-                    let mut btn = button("Send").style(style::Button::Primary);
-                    if self.is_connected() {
-                        btn = btn.on_press(MessageWrapper::new(
-                            self.id,
-                            Message::SendContactListToRelays,
-                        ))
-                    }
-                    btn.into()
-                }
-
-                RelayRowState::Loading => button("...").style(style::Button::Primary).into(),
-                RelayRowState::Success => text("Sent!").into(),
-            };
-
-            let (status_icon, status_text) = self.relay_status_icon();
-
-            container(
-                row![
-                    tooltip(
-                        status_icon.width(Length::Fixed(RELAY_STATUS_ICON_WIDTH)),
-                        status_text,
-                        tooltip::Position::Top
-                    )
-                    .style(style::Container::TooltipBg),
-                    text(&self.db_relay.url),
-                    Space::with_width(Length::Fill),
-                    button_or_checkmark
-                ]
-                .align_items(alignment::Alignment::Center),
-            )
-            .center_y()
-            .into()
-        } else {
-            text("").into()
-        }
-    }
     pub fn relay_welcome(&self) -> Element<MessageWrapper> {
         let (status_icon, status_text) = self.relay_status_icon();
         container(

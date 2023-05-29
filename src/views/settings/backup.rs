@@ -3,7 +3,6 @@ use crate::db::DbEvent;
 use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::{db::DbContact, widget::Element};
 use iced::widget::{button, column, row, text};
-use rfd::FileDialog;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -50,6 +49,12 @@ impl State {
             BackendEvent::ExportedMessagesSucessfully => {
                 self.messages_state = LoadingState::Success;
             }
+            BackendEvent::ExportedContactsToIdle => {
+                self.contacts_state = LoadingState::Idle;
+            }
+            BackendEvent::ExportedMessagesToIdle => {
+                self.messages_state = LoadingState::Idle;
+            }
             _ => (),
         }
     }
@@ -57,22 +62,11 @@ impl State {
         match message {
             Message::ExportContacts => {
                 self.contacts_state = LoadingState::Loading;
-                if let Some(path) = FileDialog::new().set_directory("/").save_file() {
-                    conn.send(net::ToBackend::ExportContacts(path))
-                } else {
-                    self.contacts_state = LoadingState::Idle;
-                }
+                conn.send(net::ToBackend::ExportContacts);
             }
             Message::ExportMessages => {
                 self.messages_state = LoadingState::Loading;
-                if let Some(path) = FileDialog::new().set_directory("/").save_file() {
-                    conn.send(net::ToBackend::ExportMessages((
-                        self.messages.clone(),
-                        path,
-                    )));
-                } else {
-                    self.messages_state = LoadingState::Idle;
-                }
+                conn.send(net::ToBackend::ExportMessages(self.messages.clone()));
             }
         }
     }

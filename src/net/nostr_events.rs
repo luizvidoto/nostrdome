@@ -46,13 +46,6 @@ pub async fn create_channel(_client: &RelayPool) -> Result<BackendEvent, Error> 
     todo!()
 }
 
-pub fn add_relay(client: &RelayPool, db_relay: DbRelay) -> Result<BackEndInput, Error> {
-    tracing::debug!("Adding relay to client: {}", db_relay.url);
-    let opts = ns_client::RelayOptions::new(db_relay.read, db_relay.write);
-    client.add_relay_with_opts(db_relay.url.as_str(), opts)?;
-    Ok(BackEndInput::AddRelayToDb(db_relay))
-}
-
 pub fn add_relays_and_connect(
     client: &RelayPool,
     keys: &Keys,

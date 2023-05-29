@@ -50,7 +50,6 @@ pub struct State {
     contacts: Vec<DbContact>,
     search_contact_input: String,
     relays_response: Option<ContactsRelaysResponse>,
-    contact_list_changed: bool,
 }
 impl State {
     pub fn new(conn: &mut BackEndConnection) -> Self {
@@ -60,7 +59,6 @@ impl State {
             contacts: vec![],
             search_contact_input: "".into(),
             relays_response: None,
-            contact_list_changed: false,
         }
     }
 
@@ -108,7 +106,6 @@ impl State {
             Message::BackEndEvent(event) => match event {
                 BackendEvent::ConfirmedContactList(_) => {
                     conn.send(net::ToBackend::FetchRelayResponsesContactList);
-                    self.contact_list_changed = false;
                 }
                 BackendEvent::GotRelayResponsesContactList {
                     responses,
@@ -128,15 +125,12 @@ impl State {
                         *contact = db_contact;
                     }
                 }
-                BackendEvent::ReceivedContactList { .. } => {
-                    conn.send(net::ToBackend::FetchContacts);
-                }
-                BackendEvent::FileContactsImported(_)
+                BackendEvent::ReceivedContactList { .. }
+                | BackendEvent::FileContactsImported(_)
                 | BackendEvent::ContactCreated(_)
                 | BackendEvent::ContactUpdated(_)
                 | BackendEvent::ContactDeleted(_) => {
                     conn.send(net::ToBackend::FetchContacts);
-                    self.contact_list_changed = true;
                 }
                 _ => (),
             },
@@ -218,14 +212,6 @@ impl State {
             tooltip::Position::Top,
         )
         .style(style::Container::TooltipBg);
-        let send_btn = tooltip(
-            button(to_cloud_icon().size(18))
-                .padding(5)
-                .on_press(Message::SendContactList),
-            "Send to relays",
-            tooltip::Position::Top,
-        )
-        .style(style::Container::TooltipBg);
 
         let utils_row = row![
             search_contact,
@@ -233,7 +219,6 @@ impl State {
             add_contact_btn,
             refresh_btn,
             import_btn,
-            send_btn
         ]
         .spacing(5)
         .width(Length::Fill);

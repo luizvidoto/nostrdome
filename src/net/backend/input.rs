@@ -41,8 +41,7 @@ pub enum BackEndInput {
         path: PathBuf,
     },
     Error(Error),
-    Ok(Option<BackendEvent>),
-    FinishedNostr,
+    Ok(BackendEvent),
 }
 
 pub async fn backend_processing(
@@ -56,9 +55,8 @@ pub async fn backend_processing(
         let pool = &db_client.pool;
         let cache_pool = &db_client.cache_pool;
         let event_opt = match input {
-            BackEndInput::Ok(event) => event,
+            BackEndInput::Ok(event) => Some(event),
             BackEndInput::Error(e) => return Err(e),
-            BackEndInput::FinishedNostr => Some(BackendEvent::FinishedPreparing),
             // --- REQWEST ---
             BackEndInput::LatestVersion(version) => Some(BackendEvent::LatestVersion(version)),
             // --- TO DATABASE ---
@@ -120,16 +118,14 @@ pub async fn backend_processing(
                     if let Some(sub_type) = backend.subscriptions.get(&subscription_id) {
                         match sub_type {
                             SubscriptionType::ContactList => {
-                                // let list = DbContact::fetch(pool, cache_pool).await?;
-                                // let id = SubscriptionId::new(
-                                //     SubscriptionType::ContactListMetadata.to_string(),
-                                // );
-                                // let filters = vec![contact_list_metadata(&list)];
-                                // //TODO: change this
-                                // nostr
-                                //     .client
-                                //     .client
-                                //     .relay_subscribe_eose(&relay_url, &id, filters)?;
+                                let list = DbContact::fetch(pool, cache_pool).await?;
+                                let id = SubscriptionId::new(
+                                    SubscriptionType::ContactListMetadata.to_string(),
+                                );
+                                let filters = vec![contact_list_metadata(&list)];
+                                nostr
+                                    .client
+                                    .relay_subscribe_eose(&relay_url, &id, filters)?;
                             }
                             // SubscriptionType::Messages => todo!(),
                             // SubscriptionType::ContactListMetadata => todo!(),

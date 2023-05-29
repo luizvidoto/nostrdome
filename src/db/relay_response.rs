@@ -93,9 +93,6 @@ impl DbRelayResponse {
         relay_url: &nostr::Url,
         db_event: &DbEvent,
     ) -> Result<(), Error> {
-        if let Kind::Metadata = db_event.kind {
-            tracing::info!("Inserting ok for: {} - {}", relay_url, db_event.event_hash);
-        }
         let event_id = db_event.event_id()?;
         let relay_response = DbRelayResponse::ok(event_id, &db_event.event_hash, relay_url);
         DbRelayResponse::insert(pool, &relay_response).await?;

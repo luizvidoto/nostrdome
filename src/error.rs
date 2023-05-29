@@ -1,4 +1,5 @@
-use nostr::secp256k1::XOnlyPublicKey;
+use futures::channel::mpsc;
+use nostr::{secp256k1::XOnlyPublicKey, EventId};
 use thiserror::Error;
 
 // pub type Result<T> = std::result::Result<T, Error>;
@@ -7,6 +8,9 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("SendError: {0}")]
+    FromSendError(#[from] mpsc::SendError),
+
     // I/O Error
     #[error("I/O Error: {0}")]
     FromIo(#[from] std::io::Error),
@@ -82,4 +86,7 @@ pub enum Error {
 
     #[error("Event not in database: {0}")]
     EventNotInDatabase(nostr::EventId),
+
+    #[error("Failed to insert event")]
+    FailedToInsert,
 }

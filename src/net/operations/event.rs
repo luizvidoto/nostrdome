@@ -50,7 +50,6 @@ async fn insert_pending(
         return Err(Error::DuplicatedEvent);
     }
 
-    let ns_event_id = ns_event.id;
     nostr.client.send_event(ns_event)?;
 
     Ok(pending_event)

@@ -307,75 +307,56 @@ impl DbContact {
         }
     }
 
-    async fn insert_single_contact(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-        contact: &DbContact,
-    ) -> Result<(), Error> {
-        tracing::info!("Inserting Contact");
+    pub async fn upsert_contact(pool: &SqlitePool, contact: &DbContact) -> Result<(), Error> {
+        tracing::info!("Upserting Contact {}", contact.pubkey().to_string());
         tracing::debug!("{:?}", contact);
-        let sql = r#"
+
+        let now_utc = UserConfig::get_corrected_time(pool)
+            .await
+            .unwrap_or(Utc::now().naive_utc());
+
+        // SQL queries as static strings
+        const UPDATE_SQL: &str = r#"
+            UPDATE contact 
+            SET relay_url=?, petname=?, updated_at=?
+            WHERE pubkey=?
+        "#;
+        const INSERT_SQL: &str = r#"
             INSERT INTO contact 
                 (pubkey, relay_url, petname, status, created_at, updated_at) 
             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
         "#;
 
-        sqlx::query(sql)
-            .bind(&contact.pubkey.to_string())
+        let mut tx = pool.begin().await?;
+
+        // Try to update first
+        let updated_rows = sqlx::query(UPDATE_SQL)
             .bind(&contact.relay_url.as_ref().map(|url| url.to_string()))
             .bind(&contact.petname)
-            .bind(contact.status as u8)
-            .bind(contact.created_at.timestamp_millis())
-            .bind(contact.updated_at.timestamp_millis())
-            .execute(tx)
-            .await?;
+            .bind(now_utc.timestamp_millis())
+            .bind(&contact.pubkey.to_string())
+            .execute(&mut tx)
+            .await?
+            .rows_affected();
 
-        Ok(())
-    }
-
-    pub async fn insert(pool: &SqlitePool, contact: &DbContact) -> Result<(), Error> {
-        let mut tx = pool.begin().await?;
-
-        Self::insert_single_contact(&mut tx, contact).await?;
-
-        tx.commit().await?;
-
-        Ok(())
-    }
-
-    pub async fn insert_batch<T: Borrow<DbContact>>(
-        pool: &SqlitePool,
-        contacts: &[T],
-    ) -> Result<(), Error> {
-        tracing::info!("Inserting Batch of contacts");
-
-        let mut tx = pool.begin().await?;
-
-        for contact in contacts {
-            let contact: &DbContact = contact.borrow();
-            if let Err(e) = Self::insert_single_contact(&mut tx, contact).await {
-                tracing::error!("Error inserting contact: {:?}", e);
-            }
+        // If no rows were updated, insert the contact
+        if updated_rows == 0 {
+            sqlx::query(INSERT_SQL)
+                .bind(&contact.pubkey.to_string())
+                .bind(&contact.relay_url.as_ref().map(|url| url.to_string()))
+                .bind(&contact.petname)
+                .bind(contact.status as u8)
+                .bind(contact.created_at.timestamp_millis())
+                .bind(contact.updated_at.timestamp_millis())
+                .execute(&mut tx)
+                .await
+                .map_err(|err| {
+                    tracing::error!("Error upserting contact: {:?}", err);
+                    err
+                })?;
         }
+
         tx.commit().await?;
-
-        Ok(())
-    }
-
-    pub async fn update_basic(pool: &SqlitePool, contact: &DbContact) -> Result<(), Error> {
-        tracing::info!("Updating Basic Contact {}", contact.pubkey().to_string());
-        tracing::debug!("{:?}", contact);
-        let sql = r#"
-            UPDATE contact 
-            SET relay_url=?, petname=?
-            WHERE pubkey=?
-        "#;
-
-        sqlx::query(sql)
-            .bind(&contact.relay_url.as_ref().map(|url| url.to_string()))
-            .bind(&contact.petname)
-            .bind(&contact.pubkey.to_string())
-            .execute(pool)
-            .await?;
 
         Ok(())
     }

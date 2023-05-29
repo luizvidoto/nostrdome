@@ -37,7 +37,7 @@ pub async fn handle_dm(
         None => {
             tracing::debug!("Creating new contact with pubkey: {}", &contact_pubkey);
             let db_contact = DbContact::new(&contact_pubkey);
-            DbContact::insert(pool, &db_contact).await?;
+            DbContact::upsert_contact(pool, &db_contact).await?;
             db_contact
         }
     };

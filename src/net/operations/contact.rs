@@ -31,77 +31,38 @@ pub async fn fetch_and_decrypt_chat(
     Ok(BackendEvent::GotChatMessages((db_contact, chat_messages)))
 }
 
-pub async fn insert_contact_from_event(
-    keys: &Keys,
-    pool: &SqlitePool,
-    db_contact: &DbContact,
-) -> Result<Option<BackendEvent>, Error> {
-    tracing::debug!("Inserting contact from event");
-    // Check if the contact is the same as the user
-    if &keys.public_key() == db_contact.pubkey() {
-        tracing::warn!("{:?}", Error::SameContactInsert);
-        return Ok(None);
-    }
-
-    // Check if the contact is already in the database
-    if DbContact::have_contact(pool, &db_contact.pubkey()).await? {
-        return update_contact_basic(keys, pool, db_contact).await;
-    }
-
-    // If the contact is not in the database, insert it
-    DbContact::insert(pool, &db_contact).await?;
-
-    Ok(Some(BackendEvent::ContactCreated(db_contact.clone())))
-}
-
-pub async fn update_contact_basic(
-    keys: &Keys,
-    pool: &SqlitePool,
-    db_contact: &DbContact,
-) -> Result<Option<BackendEvent>, Error> {
-    tracing::debug!("update_contact_basic");
-    if &keys.public_key() == db_contact.pubkey() {
-        return Err(Error::SameContactUpdate);
-    }
-    DbContact::update_basic(pool, &db_contact).await?;
-    Ok(Some(BackendEvent::ContactUpdated(db_contact.clone())))
-}
-
 pub async fn update_contact(
     keys: &Keys,
     pool: &SqlitePool,
     db_contact: &DbContact,
-) -> Result<Option<BackendEvent>, Error> {
+) -> Result<(), Error> {
     tracing::debug!("update_contact");
     if &keys.public_key() == db_contact.pubkey() {
         return Err(Error::SameContactUpdate);
     }
     DbContact::update(pool, &db_contact).await?;
-    Ok(Some(BackendEvent::ContactUpdated(db_contact.clone())))
+    Ok(())
 }
 
 pub async fn add_new_contact(
     keys: &Keys,
     pool: &SqlitePool,
     db_contact: &DbContact,
-) -> Result<Option<BackendEvent>, Error> {
+) -> Result<(), Error> {
     tracing::debug!("add_new_contact");
     // Check if the contact is the same as the user
     if &keys.public_key() == db_contact.pubkey() {
         tracing::warn!("{:?}", Error::SameContactInsert);
-        return Ok(None);
+        return Ok(());
     }
 
-    DbContact::insert(pool, &db_contact).await?;
+    DbContact::upsert_contact(pool, &db_contact).await?;
 
-    Ok(Some(BackendEvent::ContactCreated(db_contact.clone())))
+    Ok(())
 }
 
-pub async fn delete_contact(
-    pool: &SqlitePool,
-    db_contact: &DbContact,
-) -> Result<Option<BackendEvent>, Error> {
+pub async fn delete_contact(pool: &SqlitePool, db_contact: &DbContact) -> Result<(), Error> {
     tracing::debug!("delete_contact");
     DbContact::delete(pool, &db_contact).await?;
-    Ok(Some(BackendEvent::ContactDeleted(db_contact.clone())))
+    Ok(())
 }

@@ -1,4 +1,4 @@
-use crate::Error;
+use crate::{net::operations::event::confirmed_event, Error};
 use chrono::NaiveDateTime;
 use futures::channel::mpsc;
 use futures_util::SinkExt;
@@ -7,7 +7,7 @@ use sqlx::SqlitePool;
 
 use crate::{
     db::{DbContact, DbEvent, DbRelayResponse},
-    net::{operations::contact::insert_contact_from_event, BackEndInput, BackendEvent},
+    net::{BackEndInput, BackendEvent},
     utils::ns_event_to_millis,
 };
 
@@ -55,15 +55,9 @@ async fn handle_user_contact_list(
         tracing::info!("No ContactList in the database");
     }
 
-    tracing::info!("Inserting contact list event");
-    tracing::debug!("{:?}", ns_event);
-    // create event struct
-    let mut db_event = DbEvent::confirmed_event(ns_event, relay_url)?;
-    // insert into database
-    let (row_id, _rows_changed) = DbEvent::insert(pool, &db_event).await?;
-    db_event = db_event.with_id(row_id);
-
-    DbRelayResponse::insert_ok(pool, relay_url, &db_event).await?;
+    let db_event = confirmed_event(ns_event, relay_url, pool)
+        .await?
+        .ok_or(Error::FailedToInsert)?;
 
     // contact list from event tags
     let db_contacts: Vec<_> = db_event
@@ -83,15 +77,20 @@ async fn handle_user_contact_list(
     }
 
     for db_contact in &db_contacts {
-        match insert_contact_from_event(keys, pool, db_contact).await {
-            Ok(event) => {
-                if let Err(e) = back_sender.send(BackEndInput::Ok(event)).await {
+        match DbContact::upsert_contact(pool, db_contact).await {
+            Ok(_) => {
+                if let Err(e) = back_sender
+                    .feed(BackEndInput::Ok(BackendEvent::ContactCreated(
+                        db_contact.to_owned(),
+                    )))
+                    .await
+                {
                     tracing::error!("Error sending message to backend: {:?}", e);
                 }
             }
             Err(e) => {
                 if let Err(e) = back_sender
-                    .send(BackEndInput::Error(
+                    .feed(BackEndInput::Error(
                         Error::FailedToSendBackendInput(e.to_string()).into(),
                     ))
                     .await
@@ -101,6 +100,7 @@ async fn handle_user_contact_list(
             }
         }
     }
+    back_sender.flush().await?;
 
     Ok(Some(BackendEvent::ReceivedContactList {
         contact_list: db_contacts,
