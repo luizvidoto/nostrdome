@@ -1,7 +1,7 @@
 use crate::Error;
 
 use nostr::secp256k1::XOnlyPublicKey;
-use ns_client::{NotificationEvent, RelayPool};
+use nostr_sdk::{RelayOptions, RelayPoolNotification};
 use tokio::sync::broadcast;
 
 use crate::db::{DbContact, DbEvent, DbRelay};
@@ -12,12 +12,12 @@ use super::backend::BackEndInput;
 
 pub struct NostrState {
     pub keys: Keys,
-    pub client: RelayPool,
-    pub notifications: broadcast::Receiver<NotificationEvent>,
+    pub client: nostr_sdk::Client,
+    pub notifications: broadcast::Receiver<RelayPoolNotification>,
 }
 impl NostrState {
     pub async fn new(keys: &Keys) -> Self {
-        let client = RelayPool::new();
+        let client = nostr_sdk::Client::new(keys);
         let notifications = client.notifications();
         Self {
             keys: keys.to_owned(),
@@ -26,11 +26,12 @@ impl NostrState {
         }
     }
     pub async fn logout(self) -> Result<(), Error> {
-        Ok(self.client.shutdown()?)
+        self.client.shutdown().await?;
+        Ok(())
     }
 }
 
-pub async fn create_channel(_client: &RelayPool) -> Result<BackendEvent, Error> {
+pub async fn create_channel(_client: &nostr_sdk::Client) -> Result<BackendEvent, Error> {
     // tracing::debug!("create_channel");
     // let metadata = Metadata::new()
     //     .about("Channel about cars")
@@ -46,8 +47,8 @@ pub async fn create_channel(_client: &RelayPool) -> Result<BackendEvent, Error> 
     todo!()
 }
 
-pub fn add_relays_and_connect(
-    client: &RelayPool,
+pub async fn add_relays_and_connect(
+    client: &nostr_sdk::Client,
     keys: &Keys,
     relays: &[DbRelay],
     last_event: Option<DbEvent>,
@@ -56,12 +57,17 @@ pub fn add_relays_and_connect(
 
     // Only adds to the HashMap
     for r in relays {
-        let opts = ns_client::RelayOptions::new(r.read, r.write);
-        match client.add_relay_with_opts(&r.url.to_string(), opts) {
+        let opts = RelayOptions::new(r.read, r.write);
+        match client
+            .add_relay_with_opts(&r.url.to_string(), None, opts)
+            .await
+        {
             Ok(_) => tracing::debug!("Nostr Client Added Relay: {}", &r.url),
             Err(e) => tracing::error!("{}", e),
         }
     }
+
+    client.connect().await;
 
     let last_timestamp_secs: u64 = last_event
         .map(|e| {
@@ -73,17 +79,20 @@ pub fn add_relays_and_connect(
     tracing::info!("last event timestamp: {}", last_timestamp_secs);
 
     let contact_list_sub_id = SubscriptionId::new(SubscriptionType::ContactList.to_string());
-    client.subscribe_eose(
-        &contact_list_sub_id,
-        vec![contact_list_filter(keys.public_key(), last_timestamp_secs)],
-    )?;
+    client
+        .req_events_of(
+            vec![contact_list_filter(keys.public_key(), last_timestamp_secs)],
+            None,
+        )
+        .await;
     let user_metadata_id = SubscriptionId::new(SubscriptionType::UserMetadata.to_string());
-    client.subscribe_eose(&user_metadata_id, vec![user_metadata(keys.public_key())])?;
+    client
+        .req_events_of(vec![user_metadata(keys.public_key())], None)
+        .await;
     let messages_sub_id = SubscriptionId::new(SubscriptionType::Messages.to_string());
-    client.subscribe_id(
-        &messages_sub_id,
-        messages_filter(keys.public_key(), last_timestamp_secs),
-    )?;
+    client
+        .subscribe(messages_filter(keys.public_key(), last_timestamp_secs))
+        .await;
     // client.subscribe_eose(id, channel_filter)?;
 
     Ok(BackendEvent::FinishedPreparing)
@@ -163,29 +172,29 @@ fn messages_filter(public_key: XOnlyPublicKey, last_timestamp_secs: u64) -> Vec<
     vec![sent_msgs, recv_msgs]
 }
 
-pub fn toggle_read_for_relay(
-    client: &RelayPool,
-    db_relay: DbRelay,
-    read: bool,
-) -> Result<BackEndInput, Error> {
-    tracing::debug!("toggle_read_for_relay");
-    client.toggle_read_for(&db_relay.url, read)?;
-    Ok(BackEndInput::ToggleRelayRead((db_relay, read)))
-}
-pub fn toggle_write_for_relay(
-    client: &RelayPool,
-    db_relay: DbRelay,
-    write: bool,
-) -> Result<BackEndInput, Error> {
-    tracing::debug!("toggle_write_for_relay");
-    client.toggle_write_for(&db_relay.url, write)?;
-    Ok(BackEndInput::ToggleRelayWrite((db_relay, write)))
-}
+// pub fn toggle_read_for_relay(
+//     client: &RelayPool,
+//     db_relay: DbRelay,
+//     read: bool,
+// ) -> Result<BackEndInput, Error> {
+//     tracing::debug!("toggle_read_for_relay");
+//     client.toggle_read_for(&db_relay.url, read)?;
+//     Ok(BackEndInput::ToggleRelayRead((db_relay, read)))
+// }
+// pub fn toggle_write_for_relay(
+//     client: &RelayPool,
+//     db_relay: DbRelay,
+//     write: bool,
+// ) -> Result<BackEndInput, Error> {
+//     tracing::debug!("toggle_write_for_relay");
+//     client.toggle_write_for(&db_relay.url, write)?;
+//     Ok(BackEndInput::ToggleRelayWrite((db_relay, write)))
+// }
 
-pub fn delete_relay(client: &RelayPool, db_relay: DbRelay) -> Result<BackEndInput, Error> {
-    tracing::debug!("delete_relay");
-    client.remove_relay(db_relay.url.as_str())?;
-    Ok(BackEndInput::DeleteRelayFromDb(db_relay))
-}
+// pub fn delete_relay(client: &RelayPool, db_relay: DbRelay) -> Result<BackEndInput, Error> {
+//     tracing::debug!("delete_relay");
+//     client.remove_relay(db_relay.url.as_str())?;
+//     Ok(BackEndInput::DeleteRelayFromDb(db_relay))
+// }
 
 const CHANNEL_SEARCH_LIMIT: usize = 100;

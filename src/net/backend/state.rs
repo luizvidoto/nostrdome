@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use futures::channel::mpsc;
 use futures_util::SinkExt;
-use nostr::{RelayMessage, SubscriptionId};
-use ns_client::NotificationEvent;
+use nostr::SubscriptionId;
+use nostr_sdk::RelayPoolNotification;
 
 use crate::{db::Database, net::nostr_events::SubscriptionType};
 
@@ -53,24 +53,14 @@ impl BackendState {
 
     pub async fn process_notification(
         &mut self,
-        notification: NotificationEvent,
+        notification: RelayPoolNotification,
     ) -> Option<BackendEvent> {
         let backend_input_opt = match notification {
-            NotificationEvent::RelayTerminated(url) => {
-                tracing::debug!("Relay terminated - {}", url);
-                None
-            }
-            NotificationEvent::RelayMessage(relay_url, relay_msg) => {
+            RelayPoolNotification::Message(relay_url, relay_msg) => {
                 Some(BackEndInput::StoreRelayMessage((relay_url, relay_msg)))
             }
-            NotificationEvent::SentSubscription(url, sub_id) => {
-                tracing::debug!("Sent subscription to {} - id: {}", url, sub_id);
-                None
-            }
-            NotificationEvent::SentEvent(url, event_hash) => {
-                tracing::debug!("Sent event to {} - hash: {}", url, event_hash);
-                None
-            }
+            RelayPoolNotification::Event(_, _) => None,
+            RelayPoolNotification::Shutdown => None,
         };
 
         if let Some(input) = backend_input_opt {

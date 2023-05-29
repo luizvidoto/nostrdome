@@ -6,7 +6,7 @@ use crate::widget::{Element, Text};
 use chrono::{NaiveDateTime, Utc};
 use iced::widget::{button, checkbox, container, row, text, tooltip, Space};
 use iced::{alignment, Command, Length, Subscription};
-use ns_client::RelayStatus;
+use nostr_sdk::RelayStatus;
 
 #[derive(Debug, Clone)]
 pub enum RelayRowState {
@@ -91,11 +91,6 @@ impl RelayRow {
                     self.db_relay = db_relay;
                 }
             }
-            // BackendEvent::GotRelayStatus((url, relay_status)) => {
-            //     if self.db_relay.url == url {
-            //         self.relay_status = Some(relay_status)
-            //     }
-            // }
             BackendEvent::ConfirmedContactList(db_event) => {
                 if let Some(relay_url) = db_event.relay_url {
                     if relay_url == self.db_relay.url {
@@ -251,6 +246,9 @@ impl RelayRow {
                     RelayStatus::Terminated => solid_circle_icon()
                         .size(16)
                         .style(style::Text::RelayStatusTerminated),
+                    RelayStatus::Initialized => solid_circle_icon()
+                        .size(16)
+                        .style(style::Text::RelayStatusInitialized),
                 };
                 let status_text = status.to_string();
                 (status_icon, status_text)

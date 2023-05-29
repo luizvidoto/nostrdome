@@ -77,7 +77,7 @@ fn port_binder(desired_port: u16) -> Result<UdpSocket, io::Error> {
     }
 }
 
-pub fn spawn_ntp_request(mut sender: tokio::sync::mpsc::Sender<Result<u64, Error>>) {
+pub fn spawn_ntp_request(sender: tokio::sync::mpsc::Sender<Result<u64, Error>>) {
     tokio::spawn(async move {
         loop {
             tracing::debug!("Starting NTP request");

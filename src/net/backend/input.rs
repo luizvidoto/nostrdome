@@ -123,9 +123,9 @@ pub async fn backend_processing(
                                     SubscriptionType::ContactListMetadata.to_string(),
                                 );
                                 let filters = vec![contact_list_metadata(&list)];
-                                nostr
-                                    .client
-                                    .relay_subscribe_eose(&relay_url, &id, filters)?;
+                                if let Ok(relay) = nostr.client.relay(&relay_url).await {
+                                    relay.req_events_of(filters, None);
+                                }
                             }
                             // SubscriptionType::Messages => todo!(),
                             // SubscriptionType::ContactListMetadata => todo!(),

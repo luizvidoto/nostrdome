@@ -1,6 +1,7 @@
 use iced::widget::{button, container, row, text, Space};
 use iced::Subscription;
 use iced::{alignment, Alignment, Command, Length};
+use nostr_sdk::RelayStatus;
 
 use crate::consts::NOSTRTALK_VERSION;
 use crate::icon::signal_icon;
@@ -32,7 +33,7 @@ impl StatusBar {
             BackendEvent::GotRelayStatusList(list) => {
                 self.relays_connected = list
                     .iter()
-                    .filter(|(_url, status)| status.is_connected())
+                    .filter(|(_url, status)| status == &RelayStatus::Connected)
                     .count();
             }
             _ => (),

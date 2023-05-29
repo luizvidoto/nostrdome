@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use nostr::secp256k1::XOnlyPublicKey;
+use nostr_sdk::RelayStatus;
 
 use crate::{
     components::chat_contact::ChatInfo,
@@ -71,8 +72,7 @@ pub enum BackendEvent {
     SentDirectMessage(nostr::EventId),
     ExportedMessagesSucessfully,
     ExportedContactsSucessfully,
-    GotRelayStatus((nostr::Url, ns_client::RelayStatus)),
-    GotRelayStatusList(ns_client::RelayStatusList),
+    GotRelayStatusList(Vec<(nostr::Url, RelayStatus)>),
     // --- Config ---
     SyncedWithNtpServer,
     FirstLogin,

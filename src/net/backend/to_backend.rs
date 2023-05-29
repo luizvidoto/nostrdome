@@ -17,6 +17,7 @@ use futures::channel::mpsc;
 use futures_util::SinkExt;
 use nostr::secp256k1::XOnlyPublicKey;
 use nostr::Keys;
+use nostr_sdk::RelayOptions;
 use rfd::AsyncFileDialog;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
@@ -144,12 +145,7 @@ pub async fn process_message(
                     let last_event =
                         DbEvent::fetch_last_kind(pool, nostr::Kind::EncryptedDirectMessage).await?;
                     UserConfig::store_first_login(pool).await?;
-                    Some(add_relays_and_connect(
-                        &nostr.client,
-                        &keys,
-                        &relays,
-                        last_event,
-                    )?)
+                    Some(add_relays_and_connect(&nostr.client, &keys, &relays, last_event).await?)
                 } else {
                     Some(BackendEvent::FirstLogin)
                 }
@@ -159,12 +155,7 @@ pub async fn process_message(
                 let last_event =
                     DbEvent::fetch_last_kind(pool, nostr::Kind::EncryptedDirectMessage).await?;
                 UserConfig::store_first_login(pool).await?;
-                Some(add_relays_and_connect(
-                    &nostr.client,
-                    &keys,
-                    &relays,
-                    last_event,
-                )?)
+                Some(add_relays_and_connect(&nostr.client, &keys, &relays, last_event).await?)
             }
             // -------- DATABASE MESSAGES -------
             ToBackend::RemoveFileFromCache((cache, kind)) => {
@@ -341,7 +332,11 @@ pub async fn process_message(
             }
             // --------- NOSTR MESSAGES ------------
             ToBackend::GetRelayStatusList => {
-                let list = nostr.client.relay_status_list().await?;
+                // let list = nostr.client.relay_status_list().await?;
+                let mut list = vec![];
+                for (url, relay) in nostr.client.relays().await {
+                    list.push((url, relay.status().await))
+                }
                 Some(BackendEvent::GotRelayStatusList(list))
             }
             ToBackend::RefreshContactsProfile => {
@@ -351,10 +346,11 @@ pub async fn process_message(
             ToBackend::CreateChannel => Some(create_channel(&nostr.client).await?),
             ToBackend::AddRelay(db_relay) => {
                 tracing::debug!("Adding relay to client: {}", db_relay.url);
-                let opts = ns_client::RelayOptions::new(db_relay.read, db_relay.write);
+                let opts = RelayOptions::new(db_relay.read, db_relay.write);
                 nostr
                     .client
-                    .add_relay_with_opts(db_relay.url.as_str(), opts)?;
+                    .add_relay_with_opts(db_relay.url.as_str(), None, opts)
+                    .await?;
                 Some(
                     to_backend_channel(&mut backend.sender, BackEndInput::AddRelayToDb(db_relay))
                         .await?,
@@ -362,7 +358,7 @@ pub async fn process_message(
             }
             ToBackend::DeleteRelay(db_relay) => {
                 tracing::debug!("delete_relay");
-                nostr.client.remove_relay(db_relay.url.as_str())?;
+                nostr.client.remove_relay(db_relay.url.as_str()).await?;
                 Some(
                     to_backend_channel(
                         &mut backend.sender,
@@ -372,26 +368,28 @@ pub async fn process_message(
                 )
             }
             ToBackend::ToggleRelayRead((db_relay, read)) => {
-                tracing::debug!("toggle_read_for_relay");
-                nostr.client.toggle_read_for(&db_relay.url, read)?;
-                Some(
-                    to_backend_channel(
-                        &mut backend.sender,
-                        BackEndInput::ToggleRelayRead((db_relay, read)),
-                    )
-                    .await?,
-                )
+                // tracing::debug!("toggle_read_for_relay");
+                // nostr.client.toggle_read_for(&db_relay.url, read)?;
+                // Some(
+                //     to_backend_channel(
+                //         &mut backend.sender,
+                //         BackEndInput::ToggleRelayRead((db_relay, read)),
+                //     )
+                //     .await?,
+                // )
+                None
             }
             ToBackend::ToggleRelayWrite((db_relay, write)) => {
-                tracing::debug!("toggle_write_for_relay");
-                nostr.client.toggle_write_for(&db_relay.url, write)?;
-                Some(
-                    to_backend_channel(
-                        &mut backend.sender,
-                        BackEndInput::ToggleRelayWrite((db_relay, write)),
-                    )
-                    .await?,
-                )
+                // tracing::debug!("toggle_write_for_relay");
+                // nostr.client.toggle_write_for(&db_relay.url, write)?;
+                // Some(
+                //     to_backend_channel(
+                //         &mut backend.sender,
+                //         BackEndInput::ToggleRelayWrite((db_relay, write)),
+                //     )
+                //     .await?,
+                // )
+                None
             }
             // -- TO BACKEND CHANNEL --
             ToBackend::SendDM((db_contact, content)) => {
