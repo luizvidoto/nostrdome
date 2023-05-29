@@ -7,11 +7,7 @@ use sqlx::SqlitePool;
 
 use crate::{
     db::{DbContact, DbEvent, DbRelayResponse},
-    net::{
-        nostr_events::{NostrInput, NostrState},
-        operations::contact::insert_contact_from_event,
-        BackEndInput, BackendEvent,
-    },
+    net::{operations::contact::insert_contact_from_event, BackEndInput, BackendEvent},
     utils::ns_event_to_millis,
 };
 
@@ -20,11 +16,10 @@ pub async fn handle_contact_list(
     keys: &Keys,
     pool: &SqlitePool,
     back_sender: mpsc::UnboundedSender<BackEndInput>,
-    nostr: &mut NostrState,
     relay_url: &Url,
 ) -> Result<Option<BackendEvent>, Error> {
     if ns_event.pubkey == keys.public_key() {
-        handle_user_contact_list(ns_event, keys, pool, back_sender, nostr, relay_url).await
+        handle_user_contact_list(ns_event, keys, pool, back_sender, relay_url).await
     } else {
         handle_other_contact_list(ns_event)
     }
@@ -35,18 +30,17 @@ async fn handle_user_contact_list(
     keys: &Keys,
     pool: &SqlitePool,
     mut back_sender: mpsc::UnboundedSender<BackEndInput>,
-    nostr: &mut NostrState,
     relay_url: &Url,
 ) -> Result<Option<BackendEvent>, Error> {
     tracing::debug!("Received a ContactList");
 
     if let Some((remote_creation, db_event)) = last_kind_filtered(pool).await? {
-        // if db_event.event_hash == ns_event.id {
-        //     // if event already in the database, just confirmed it
-        //     tracing::info!("ContactList already in the database");
-        //     relay_response_ok(pool, relay_url, &db_event).await?;
-        //     return Ok(Event::None);
-        // }
+        if db_event.event_hash == ns_event.id {
+            // if event already in the database, just confirmed it
+            tracing::info!("ContactList already in the database");
+            DbRelayResponse::insert_ok(pool, relay_url, &db_event).await?;
+            return Ok(None);
+        }
         // if event is older than the last one, ignore it
         if remote_creation.timestamp_millis() > (ns_event_to_millis(ns_event.created_at)) {
             tracing::info!("ContactList is older than the last one");
@@ -107,10 +101,6 @@ async fn handle_user_contact_list(
             }
         }
     }
-
-    let input = NostrInput::GetContactListProfiles(db_contacts.clone());
-    // TODO: do something with output?
-    let _output = nostr.process_in(input).await?;
 
     Ok(Some(BackendEvent::ReceivedContactList {
         contact_list: db_contacts,

@@ -4,10 +4,7 @@ use sqlx::SqlitePool;
 
 use crate::{
     db::{DbContact, DbEvent, DbMessage, DbRelayResponse},
-    net::{
-        nostr_events::{NostrInput, NostrState},
-        BackendEvent,
-    },
+    net::{nostr_events::NostrState, BackendEvent},
     types::ChatMessage,
 };
 
@@ -19,13 +16,16 @@ pub async fn confirmed_event(
     let mut db_event = DbEvent::confirmed_event(ns_event, relay_url)?;
     let (row_id, rows_changed) = DbEvent::insert(pool, &db_event).await?;
     db_event = db_event.with_id(row_id);
+
     DbRelayResponse::insert_ok(pool, relay_url, &db_event).await?;
+
     if rows_changed == 0 {
         //maybe this never happens because the database checks
         // the event_hash uniqueness and sends an error
         tracing::debug!("Event already in database");
         return Ok(None);
     }
+
     Ok(Some(db_event))
 }
 
@@ -50,8 +50,8 @@ async fn insert_pending(
         return Err(Error::DuplicatedEvent);
     }
 
-    let input = NostrInput::SendEventToRelays(ns_event);
-    nostr.process_in(input).await?;
+    let ns_event_id = ns_event.id;
+    nostr.client.send_event(ns_event)?;
 
     Ok(pending_event)
 }

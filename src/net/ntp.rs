@@ -1,6 +1,4 @@
 use chrono::NaiveDateTime;
-use futures::channel::mpsc;
-use futures_util::SinkExt;
 use sntpc::{
     Error as SntpcError, NtpContext, NtpTimestampGenerator, NtpUdpSocket, Result as SntpcR,
 };
@@ -13,9 +11,6 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("Sntpc Error")]
-    SntpcError,
-
     #[error("Sntpc Error: Unable to bind to any port")]
     NtpUnableToBindPort,
 

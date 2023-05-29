@@ -2,7 +2,7 @@ use crate::components::chat_contact::ChatInfo;
 use crate::db::{
     DbContact, DbEvent, DbMessage, DbRelay, DbRelayResponse, ProfileCache, UserConfig,
 };
-use crate::net::nostr_events::{prepare_client, NostrInput, NostrOutput, NostrState};
+use crate::net::nostr_events::{add_relays_and_connect, create_channel, NostrState};
 use crate::net::operations::builder::{build_contact_list_event, build_dm, build_profile_event};
 use crate::net::operations::contact::{
     add_new_contact, delete_contact, fetch_and_decrypt_chat, update_contact,
@@ -49,7 +49,6 @@ pub enum ToBackend {
     FetchSingleContact(XOnlyPublicKey),
 
     // -------- NOSTR CLIENT MESSAGES
-    RequestEventsOf(DbRelay),
     RefreshContactsProfile,
     AddRelay(DbRelay),
     DeleteRelay(DbRelay),
@@ -58,7 +57,6 @@ pub enum ToBackend {
     SendDM((DbContact, String)),
     SendContactListToRelays,
     GetRelayStatusList,
-    GetRelayStatus(url::Url),
     CreateChannel,
     DownloadImage {
         image_url: String,
@@ -115,17 +113,31 @@ pub async fn process_message(
             }
             ToBackend::QueryFirstLogin => {
                 if UserConfig::query_has_logged_in(pool).await? {
-                    let input = prepare_client(pool, cache_pool).await?;
-                    let output = nostr.process_in(input).await?;
-                    process_nostr_output(output, backend).await
+                    let relays = DbRelay::fetch(pool).await?;
+                    let last_event =
+                        DbEvent::fetch_last_kind(pool, nostr::Kind::EncryptedDirectMessage).await?;
+                    UserConfig::store_first_login(pool).await?;
+                    Some(add_relays_and_connect(
+                        &nostr.client,
+                        &keys,
+                        &relays,
+                        last_event,
+                    )?)
                 } else {
                     Some(BackendEvent::FirstLogin)
                 }
             }
             ToBackend::PrepareClient => {
-                let input = prepare_client(pool, cache_pool).await?;
-                let output = nostr.process_in(input).await?;
-                process_nostr_output(output, backend).await
+                let relays = DbRelay::fetch(pool).await?;
+                let last_event =
+                    DbEvent::fetch_last_kind(pool, nostr::Kind::EncryptedDirectMessage).await?;
+                UserConfig::store_first_login(pool).await?;
+                Some(add_relays_and_connect(
+                    &nostr.client,
+                    &keys,
+                    &relays,
+                    last_event,
+                )?)
             }
             // -------- DATABASE MESSAGES -------
             ToBackend::RemoveFileFromCache((cache, kind)) => {
@@ -277,51 +289,58 @@ pub async fn process_message(
                 Some(BackendEvent::GotDbEvent(db_event_opt))
             }
             // --------- NOSTR MESSAGES ------------
-            ToBackend::GetRelayStatus(url) => {
-                todo!()
-            }
             ToBackend::GetRelayStatusList => {
-                let input = NostrInput::GetRelayStatusList;
-                let output = nostr.process_in(input).await?;
-                process_nostr_output(output, backend).await
+                let list = nostr.client.relay_status_list().await?;
+                Some(BackendEvent::GotRelayStatusList(list))
             }
-            ToBackend::RequestEventsOf(db_relay) => {
-                let contact_list = DbContact::fetch(pool, cache_pool).await?;
-                let input = NostrInput::RequestEventsOf((db_relay, contact_list));
-                let output = nostr.process_in(input).await?;
-                process_nostr_output(output, backend).await
-            }
-
             ToBackend::RefreshContactsProfile => {
-                let db_contacts = DbContact::fetch(pool, cache_pool).await?;
-                let input = NostrInput::GetContactListProfiles(db_contacts);
-                let output = nostr.process_in(input).await?;
-                process_nostr_output(output, backend).await
+                // subscribe_eose contact_list_metadata
+                todo!();
             }
-            ToBackend::CreateChannel => {
-                let input = NostrInput::CreateChannel;
-                let output = nostr.process_in(input).await?;
-                process_nostr_output(output, backend).await
-            }
+            ToBackend::CreateChannel => Some(create_channel(&nostr.client).await?),
             ToBackend::AddRelay(db_relay) => {
-                let input = NostrInput::AddRelay(db_relay);
-                let output = nostr.process_in(input).await?;
-                process_nostr_output(output, backend).await
+                tracing::debug!("Adding relay to client: {}", db_relay.url);
+                let opts = ns_client::RelayOptions::new(db_relay.read, db_relay.write);
+                nostr
+                    .client
+                    .add_relay_with_opts(db_relay.url.as_str(), opts)?;
+                Some(
+                    to_backend_channel(&mut backend.sender, BackEndInput::AddRelayToDb(db_relay))
+                        .await?,
+                )
             }
             ToBackend::DeleteRelay(db_relay) => {
-                let input = NostrInput::DeleteRelay(db_relay);
-                let output = nostr.process_in(input).await?;
-                process_nostr_output(output, backend).await
+                tracing::debug!("delete_relay");
+                nostr.client.remove_relay(db_relay.url.as_str())?;
+                Some(
+                    to_backend_channel(
+                        &mut backend.sender,
+                        BackEndInput::DeleteRelayFromDb(db_relay),
+                    )
+                    .await?,
+                )
             }
             ToBackend::ToggleRelayRead((db_relay, read)) => {
-                let input = NostrInput::ToggleRelayRead((db_relay, read));
-                let output = nostr.process_in(input).await?;
-                process_nostr_output(output, backend).await
+                tracing::debug!("toggle_read_for_relay");
+                nostr.client.toggle_read_for(&db_relay.url, read)?;
+                Some(
+                    to_backend_channel(
+                        &mut backend.sender,
+                        BackEndInput::ToggleRelayRead((db_relay, read)),
+                    )
+                    .await?,
+                )
             }
             ToBackend::ToggleRelayWrite((db_relay, write)) => {
-                let input = NostrInput::ToggleRelayWrite((db_relay, write));
-                let output = nostr.process_in(input).await?;
-                process_nostr_output(output, backend).await
+                tracing::debug!("toggle_write_for_relay");
+                nostr.client.toggle_write_for(&db_relay.url, write)?;
+                Some(
+                    to_backend_channel(
+                        &mut backend.sender,
+                        BackEndInput::ToggleRelayWrite((db_relay, write)),
+                    )
+                    .await?,
+                )
             }
             // -- TO BACKEND CHANNEL --
             ToBackend::SendDM((db_contact, content)) => {
@@ -355,23 +374,6 @@ pub async fn process_message(
     } else {
         Ok(None)
     }
-}
-
-async fn process_nostr_output(
-    output: Option<NostrOutput>,
-    backend: &mut BackendState,
-) -> Option<BackendEvent> {
-    if let Some(o) = output {
-        match o {
-            NostrOutput::ToFrontEnd(event) => return Some(event),
-            NostrOutput::ToBackend(back_event) => {
-                if let Err(e) = backend.sender.send(back_event).await {
-                    tracing::debug!("Failed to send event to backend channel: {}", e);
-                }
-            }
-        }
-    }
-    None
 }
 
 pub async fn to_backend_channel(

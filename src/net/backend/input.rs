@@ -1,7 +1,7 @@
 use crate::db::channel_cache::ChannelCache;
 use crate::db::profile_cache::ProfileCache;
 use crate::db::{DbContact, DbEvent, DbRelay, UserConfig};
-use crate::net::nostr_events::NostrState;
+use crate::net::nostr_events::{contact_list_metadata, NostrState, SubscriptionType};
 use crate::net::operations::cache::update_profile_cache;
 use crate::net::operations::contact_list::handle_contact_list;
 use crate::net::operations::direct_message::{handle_dm, handle_dm_confirmation};
@@ -14,7 +14,7 @@ use crate::Error;
 use sqlx::SqlitePool;
 
 use nostr::secp256k1::XOnlyPublicKey;
-use nostr::{Keys, RelayMessage};
+use nostr::{Keys, RelayMessage, SubscriptionId};
 use std::path::PathBuf;
 
 use super::{BackendEvent, BackendState};
@@ -33,7 +33,6 @@ pub enum BackEndInput {
         db_contact: DbContact,
         content: String,
     },
-    StoreConfirmedEvent((nostr::Url, nostr::Event)),
     StoreRelayMessage((nostr::Url, nostr::RelayMessage)),
     LatestVersion(String),
     ImageDownloaded {
@@ -41,9 +40,9 @@ pub enum BackEndInput {
         public_key: XOnlyPublicKey,
         path: PathBuf,
     },
-    FinishedPreparingNostr,
     Error(Error),
     Ok(Option<BackendEvent>),
+    FinishedNostr,
 }
 
 pub async fn backend_processing(
@@ -59,6 +58,7 @@ pub async fn backend_processing(
         let event_opt = match input {
             BackEndInput::Ok(event) => event,
             BackEndInput::Error(e) => return Err(e),
+            BackEndInput::FinishedNostr => Some(BackendEvent::FinishedPreparing),
             // --- REQWEST ---
             BackEndInput::LatestVersion(version) => Some(BackendEvent::LatestVersion(version)),
             // --- TO DATABASE ---
@@ -67,7 +67,6 @@ pub async fn backend_processing(
                 UserConfig::update_ntp_offset(pool, total_microseconds).await?;
                 Some(BackendEvent::SyncedWithNtpServer)
             }
-            BackEndInput::FinishedPreparingNostr => Some(BackendEvent::FinishedPreparing),
             BackEndInput::ImageDownloaded {
                 kind,
                 public_key,
@@ -102,62 +101,6 @@ pub async fn backend_processing(
                 DbRelay::insert(pool, &db_relay).await?;
                 Some(BackendEvent::RelayCreated(db_relay))
             }
-            BackEndInput::StoreConfirmedEvent((relay_url, ns_event)) => {
-                let result = match ns_event.kind {
-                    nostr::Kind::ContactList => {
-                        // contact_list is validating differently
-                        handle_contact_list(
-                            ns_event,
-                            keys,
-                            pool,
-                            backend.sender.clone(),
-                            nostr,
-                            &relay_url,
-                        )
-                        .await
-                    }
-                    other => {
-                        if let Some(db_event) = confirmed_event(ns_event, &relay_url, pool).await? {
-                            match other {
-                                nostr::Kind::Metadata => {
-                                    handle_metadata_event(cache_pool, &db_event).await
-                                }
-                                nostr::Kind::EncryptedDirectMessage => {
-                                    handle_dm(pool, cache_pool, keys, &relay_url, &db_event).await
-                                }
-                                nostr::Kind::RecommendRelay => {
-                                    handle_recommend_relay(db_event).await
-                                }
-                                nostr::Kind::ChannelCreation => {
-                                    handle_channel_creation(cache_pool, &db_event).await
-                                }
-                                nostr::Kind::ChannelMetadata => {
-                                    handle_channel_update(cache_pool, &db_event).await
-                                }
-                                // nostr::Kind::ChannelMessage => {}
-                                // nostr::Kind::ChannelHideMessage => {}
-                                // nostr::Kind::ChannelMuteUser => {}
-                                // Kind::EventDeletion => {},
-                                // Kind::PublicChatReserved45 => {},
-                                // Kind::PublicChatReserved46 => {},
-                                // Kind::PublicChatReserved47 => {},
-                                // Kind::PublicChatReserved48 => {},
-                                // Kind::PublicChatReserved49 => {},
-                                // Kind::ZapRequest => {},
-                                // Kind::Zap => {},
-                                // Kind::MuteList => {},
-                                // Kind::PinList => {},
-                                // Kind::RelayList => {},
-                                // Kind::Authentication => {},
-                                _other_kind => insert_other_kind(db_event).await,
-                            }
-                        } else {
-                            Ok(None)
-                        }
-                    }
-                };
-                return result;
-            }
             BackEndInput::StoreRelayMessage((relay_url, relay_message)) => match relay_message {
                 RelayMessage::Ok {
                     event_id: event_hash,
@@ -174,18 +117,89 @@ pub async fn backend_processing(
                     Some(on_event_confirmation(pool, cache_pool, keys, &db_event).await?)
                 }
                 RelayMessage::EndOfStoredEvents(subscription_id) => {
-                    // preciso pedir a próxima subscrição somente para o relay que me enviou este EOSE
-                    // contact_list => profile_metadata
-                    // channel => channel_metadata
+                    if let Some(sub_type) = backend.subscriptions.get(&subscription_id) {
+                        match sub_type {
+                            SubscriptionType::ContactList => {
+                                // let list = DbContact::fetch(pool, cache_pool).await?;
+                                // let id = SubscriptionId::new(
+                                //     SubscriptionType::ContactListMetadata.to_string(),
+                                // );
+                                // let filters = vec![contact_list_metadata(&list)];
+                                // //TODO: change this
+                                // nostr
+                                //     .client
+                                //     .client
+                                //     .relay_subscribe_eose(&relay_url, &id, filters)?;
+                            }
+                            // SubscriptionType::Messages => todo!(),
+                            // SubscriptionType::ContactListMetadata => todo!(),
+                            // SubscriptionType::Channel => todo!(),
+                            // SubscriptionType::ChannelMetadata => todo!(),
+                            _other => (),
+                        }
+                    }
                     None
                 }
                 RelayMessage::Event {
-                    subscription_id,
-                    event,
+                    subscription_id: _,
+                    event: ns_event,
                 } => {
-                    tracing::debug!("Relay message: Event. ID: {}", subscription_id);
-                    tracing::debug!("{:?}", event);
-                    None
+                    let result = match ns_event.kind {
+                        nostr::Kind::ContactList => {
+                            // contact_list is validating differently
+                            handle_contact_list(
+                                *ns_event,
+                                keys,
+                                pool,
+                                backend.sender.clone(),
+                                &relay_url,
+                            )
+                            .await
+                        }
+                        other => {
+                            if let Some(db_event) =
+                                confirmed_event(*ns_event, &relay_url, pool).await?
+                            {
+                                match other {
+                                    nostr::Kind::Metadata => {
+                                        handle_metadata_event(cache_pool, &db_event).await
+                                    }
+                                    nostr::Kind::EncryptedDirectMessage => {
+                                        handle_dm(pool, cache_pool, keys, &relay_url, &db_event)
+                                            .await
+                                    }
+                                    nostr::Kind::RecommendRelay => {
+                                        handle_recommend_relay(db_event).await
+                                    }
+                                    nostr::Kind::ChannelCreation => {
+                                        handle_channel_creation(cache_pool, &db_event).await
+                                    }
+                                    nostr::Kind::ChannelMetadata => {
+                                        handle_channel_update(cache_pool, &db_event).await
+                                    }
+                                    // nostr::Kind::ChannelMessage => {}
+                                    // nostr::Kind::ChannelHideMessage => {}
+                                    // nostr::Kind::ChannelMuteUser => {}
+                                    // Kind::EventDeletion => {},
+                                    // Kind::PublicChatReserved45 => {},
+                                    // Kind::PublicChatReserved46 => {},
+                                    // Kind::PublicChatReserved47 => {},
+                                    // Kind::PublicChatReserved48 => {},
+                                    // Kind::PublicChatReserved49 => {},
+                                    // Kind::ZapRequest => {},
+                                    // Kind::Zap => {},
+                                    // Kind::MuteList => {},
+                                    // Kind::PinList => {},
+                                    // Kind::RelayList => {},
+                                    // Kind::Authentication => {},
+                                    _other_kind => insert_other_kind(db_event).await,
+                                }
+                            } else {
+                                Ok(None)
+                            }
+                        }
+                    };
+                    return result;
                 }
                 RelayMessage::Notice { message } => {
                     tracing::info!("Relay message: Notice: {}", message);
@@ -218,7 +232,7 @@ async fn handle_metadata_event(
     cache_pool: &SqlitePool,
     db_event: &DbEvent,
 ) -> Result<Option<BackendEvent>, Error> {
-    tracing::debug!(
+    tracing::info!(
         "Received metadata event for public key: {}",
         db_event.pubkey
     );

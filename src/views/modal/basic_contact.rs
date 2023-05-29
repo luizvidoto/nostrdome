@@ -11,6 +11,7 @@ use iced::widget::{button, column, container, image, row, text, tooltip, Space};
 use iced::{alignment, clipboard};
 use iced::{Alignment, Command, Length};
 use iced_aw::{Card, Modal};
+use nostr::prelude::ToBech32;
 
 use crate::style;
 use crate::widget::{Element, Rule};
@@ -62,7 +63,10 @@ impl ContactDetails {
         Self {
             db_contact: Some(db_contact.to_owned()),
             modal_petname_input: db_contact.get_petname().unwrap_or_else(|| "".into()),
-            modal_pubkey_input: db_contact.pubkey().to_string(),
+            modal_pubkey_input: db_contact
+                .pubkey()
+                .to_bech32()
+                .unwrap_or(db_contact.pubkey().to_string()),
             modal_rec_relay_input: db_contact
                 .get_relay_url()
                 .map(|url| url.to_string())
@@ -265,24 +269,32 @@ impl ContactDetails {
                 .into(),
             };
 
+            let delete_btn: Element<_> = match self.mode {
+                Mode::Edit | Mode::View => {
+                    button(text("Delete").horizontal_alignment(alignment::Horizontal::Center))
+                        .width(Length::Fill)
+                        .on_press(CMessage::DeleteContact)
+                        .style(style::Button::Danger)
+                        .into()
+                }
+                Mode::Add => text("").into(),
+            };
+
+            let buttons_row = row![
+                delete_btn,
+                button(text("Cancel").horizontal_alignment(alignment::Horizontal::Center),)
+                    .width(Length::Fill)
+                    .on_press(CMessage::CloseModal),
+                button(text("Ok").horizontal_alignment(alignment::Horizontal::Center),)
+                    .width(Length::Fill)
+                    .on_press(CMessage::SubmitContact)
+            ]
+            .spacing(10)
+            .padding(5)
+            .width(Length::Fill);
+
             Card::new(title, modal_body)
-                .foot(
-                    row![
-                        button(text("Delete").horizontal_alignment(alignment::Horizontal::Center),)
-                            .width(Length::Fill)
-                            .on_press(CMessage::DeleteContact)
-                            .style(style::Button::Danger),
-                        button(text("Cancel").horizontal_alignment(alignment::Horizontal::Center),)
-                            .width(Length::Fill)
-                            .on_press(CMessage::CloseModal),
-                        button(text("Ok").horizontal_alignment(alignment::Horizontal::Center),)
-                            .width(Length::Fill)
-                            .on_press(CMessage::SubmitContact)
-                    ]
-                    .spacing(10)
-                    .padding(5)
-                    .width(Length::Fill),
-                )
+                .foot(buttons_row)
                 .max_width(MODAL_WIDTH)
                 .on_close(CMessage::CloseModal)
                 .into()
@@ -382,5 +394,5 @@ impl ContactDetails {
     }
 }
 
-const MODAL_WIDTH: f32 = 400.0;
+const MODAL_WIDTH: f32 = 500.0;
 const COPY_BTN_WIDTH: f32 = 30.0;

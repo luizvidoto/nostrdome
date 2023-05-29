@@ -57,7 +57,6 @@ pub enum BackendEvent {
     SentEventToRelays(nostr::EventId),
     SentEventTo((url::Url, nostr::EventId)),
     EndOfStoredEvents((nostr::Url, nostr::SubscriptionId)),
-    SubscribedToEvents,
     RequestedEventsOf(DbRelay),
     RequestedMetadata(DbContact),
     RequestedContactListProfiles,
@@ -184,7 +183,6 @@ impl std::fmt::Display for BackendEvent {
                 "Requested Contact Profile Public Key: {}",
                 db_contact.pubkey()
             ),
-            BackendEvent::SubscribedToEvents => write!(f, "Subscribed to Events"),
             BackendEvent::UserProfilePictureUpdated(_) => write!(f, "User Profile Picture Updated"),
             BackendEvent::UserBannerPictureUpdated(_) => write!(f, "User Banner Picture Updated"),
             BackendEvent::EndOfStoredEvents((relay_url, subscription_id)) => {

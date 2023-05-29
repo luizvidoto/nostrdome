@@ -2,23 +2,22 @@ use crate::Error;
 
 use nostr::secp256k1::XOnlyPublicKey;
 use ns_client::{NotificationEvent, RelayPool};
-use sqlx::SqlitePool;
 use tokio::sync::broadcast;
 
-use crate::db::{DbContact, DbEvent, DbRelay, UserConfig};
+use crate::db::{DbContact, DbEvent, DbRelay};
 use crate::net::BackendEvent;
-use nostr::{Filter, Keys, Kind, Timestamp};
+use nostr::{Filter, Keys, Kind, SubscriptionId, Timestamp};
 
 use super::backend::BackEndInput;
 
 pub struct NostrState {
     pub keys: Keys,
-    pub client: NostrSdkWrapper,
+    pub client: RelayPool,
     pub notifications: broadcast::Receiver<NotificationEvent>,
 }
 impl NostrState {
     pub async fn new(keys: &Keys) -> Self {
-        let client = NostrSdkWrapper::new(&keys).await;
+        let client = RelayPool::new();
         let notifications = client.notifications();
         Self {
             keys: keys.to_owned(),
@@ -27,134 +26,8 @@ impl NostrState {
         }
     }
     pub async fn logout(self) -> Result<(), Error> {
-        Ok(self.client.logout().await?)
+        Ok(self.client.shutdown()?)
     }
-    pub async fn process_in(&self, input: NostrInput) -> Result<Option<NostrOutput>, Error> {
-        self.client.process_in(&self.keys, input).await
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum NostrInput {
-    PrepareClient {
-        relays: Vec<DbRelay>,
-        last_event: Option<DbEvent>,
-        contact_list: Vec<DbContact>,
-    },
-    AddRelay(DbRelay),
-    DeleteRelay(DbRelay),
-    ToggleRelayRead((DbRelay, bool)),
-    ToggleRelayWrite((DbRelay, bool)),
-    SendEventToRelays(nostr::Event),
-    GetContactListProfiles(Vec<DbContact>),
-    CreateChannel,
-    RequestEventsOf((DbRelay, Vec<DbContact>)),
-    GetRelayStatusList,
-}
-
-pub enum NostrOutput {
-    ToFrontEnd(BackendEvent),
-    ToBackend(BackEndInput),
-}
-
-impl From<BackendEvent> for NostrOutput {
-    fn from(event: BackendEvent) -> Self {
-        NostrOutput::ToFrontEnd(event)
-    }
-}
-
-impl From<BackEndInput> for NostrOutput {
-    fn from(input: BackEndInput) -> Self {
-        NostrOutput::ToBackend(input)
-    }
-}
-
-pub struct NostrSdkWrapper {
-    client: RelayPool,
-}
-
-impl NostrSdkWrapper {
-    pub async fn new(_keys: &Keys) -> Self {
-        let client = RelayPool::new();
-        Self { client }
-    }
-    pub fn notifications(&self) -> broadcast::Receiver<NotificationEvent> {
-        self.client.notifications()
-    }
-    pub async fn logout(self) -> Result<(), Error> {
-        tracing::info!("Nostr Client Logging out");
-        self.client.shutdown()?;
-        Ok(())
-    }
-    pub async fn process_in(
-        &self,
-        keys: &Keys,
-        input: NostrInput,
-    ) -> Result<Option<NostrOutput>, Error> {
-        let event_opt = match input {
-            NostrInput::GetRelayStatusList => {
-                let list = self.client.relay_status_list().await?;
-                Some(BackendEvent::GotRelayStatusList(list).into())
-            }
-            NostrInput::RequestEventsOf((db_relay, contact_list)) => Some(
-                request_events_of(&self.client, &keys, db_relay, contact_list)
-                    .await?
-                    .into(),
-            ),
-            NostrInput::GetContactListProfiles(_db_contacts) => {
-                //     Some(
-                //     get_contact_list_profile(&self.client, db_contacts)
-                //         .await?
-                //         .into(),
-                // )
-                None
-            }
-
-            NostrInput::SendEventToRelays(ns_event) => {
-                Some(send_event_to_relays(&self.client, ns_event)?.into())
-            }
-
-            NostrInput::PrepareClient {
-                relays,
-                last_event,
-                contact_list,
-            } => Some(
-                add_relays_and_connect(&self.client, &keys, &relays, last_event, contact_list)?
-                    .into(),
-            ),
-            NostrInput::AddRelay(db_relay) => Some(add_relay(&self.client, db_relay)?.into()),
-            NostrInput::DeleteRelay(db_relay) => Some(delete_relay(&self.client, db_relay)?.into()),
-            NostrInput::ToggleRelayRead((db_relay, read)) => {
-                Some(toggle_read_for_relay(&self.client, db_relay, read)?.into())
-            }
-            NostrInput::ToggleRelayWrite((db_relay, write)) => {
-                Some(toggle_write_for_relay(&self.client, db_relay, write)?.into())
-            }
-
-            NostrInput::CreateChannel => Some(create_channel(&self.client).await?.into()),
-        };
-
-        Ok(event_opt)
-    }
-}
-
-pub async fn prepare_client(
-    pool: &SqlitePool,
-    cache_pool: &SqlitePool,
-) -> Result<NostrInput, Error> {
-    tracing::debug!("prepare_client");
-    tracing::info!("Fetching relays and last event to nostr client");
-    let relays = DbRelay::fetch(pool).await?;
-    let last_event = DbEvent::fetch_last_kind(pool, nostr::Kind::EncryptedDirectMessage).await?;
-    let contact_list = DbContact::fetch(pool, cache_pool).await?;
-
-    UserConfig::store_first_login(pool).await?;
-
-    Ok(NostrInput::PrepareClient {
-        relays,
-        last_event,
-        contact_list,
-    })
 }
 
 pub async fn create_channel(_client: &RelayPool) -> Result<BackendEvent, Error> {
@@ -185,11 +58,8 @@ pub fn add_relays_and_connect(
     keys: &Keys,
     relays: &[DbRelay],
     last_event: Option<DbEvent>,
-    contact_list: Vec<DbContact>,
-) -> Result<BackEndInput, Error> {
-    tracing::debug!("add_relays_and_connect");
-    // Received from BackEndEvent::PrepareClient
-    tracing::debug!("Adding relays to client: {}", relays.len());
+) -> Result<BackendEvent, Error> {
+    tracing::info!("Adding relays to client: {}", relays.len());
 
     // Only adds to the HashMap
     for r in relays {
@@ -200,15 +70,104 @@ pub fn add_relays_and_connect(
         }
     }
 
-    // tracing::debug!("Connecting to relays");
-    // client.connect().await;
+    let last_timestamp_secs: u64 = last_event
+        .map(|e| {
+            // syncronization problems with different machines
+            let earlier_time = e.local_creation - chrono::Duration::minutes(10);
+            (earlier_time.timestamp_millis() / 1000) as u64
+        })
+        .unwrap_or(0);
+    tracing::info!("last event timestamp: {}", last_timestamp_secs);
 
-    // tracing::info!("Subscribing to events");
-    // let filters = make_nostr_filters(keys.public_key(), last_event, &contact_list);
-    // client.subscribe(filters)?;
-    // Ok(BackendEvent::SubscribedToEvents)
+    let contact_list_sub_id = SubscriptionId::new(SubscriptionType::ContactList.to_string());
+    client.subscribe_eose(
+        &contact_list_sub_id,
+        vec![contact_list_filter(keys.public_key(), last_timestamp_secs)],
+    )?;
+    let user_metadata_id = SubscriptionId::new(SubscriptionType::UserMetadata.to_string());
+    client.subscribe_eose(&user_metadata_id, vec![user_metadata(keys.public_key())])?;
+    let messages_sub_id = SubscriptionId::new(SubscriptionType::Messages.to_string());
+    client.subscribe_id(
+        &messages_sub_id,
+        messages_filter(keys.public_key(), last_timestamp_secs),
+    )?;
+    // client.subscribe_eose(id, channel_filter)?;
 
-    Ok(BackEndInput::FinishedPreparingNostr)
+    Ok(BackendEvent::FinishedPreparing)
+}
+fn channel_search_filter() -> Vec<Filter> {
+    tracing::trace!("channel_search_filter");
+
+    let channel_filter = Filter::new()
+        .kinds(vec![Kind::ChannelCreation, Kind::ChannelMetadata])
+        .limit(CHANNEL_SEARCH_LIMIT);
+
+    vec![channel_filter]
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SubscriptionType {
+    ContactList,
+    ContactListMetadata,
+    UserMetadata,
+    Messages,
+    Channel,
+    ChannelMetadata,
+}
+impl SubscriptionType {
+    pub const ALL: [SubscriptionType; 6] = [
+        SubscriptionType::ContactList,
+        SubscriptionType::ContactListMetadata,
+        SubscriptionType::UserMetadata,
+        SubscriptionType::Messages,
+        SubscriptionType::Channel,
+        SubscriptionType::ChannelMetadata,
+    ];
+}
+impl std::fmt::Display for SubscriptionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SubscriptionType::ContactList => write!(f, "ContactList"),
+            SubscriptionType::ContactListMetadata => write!(f, "ContactListMetadata"),
+            SubscriptionType::UserMetadata => write!(f, "UserMetadata"),
+            SubscriptionType::Messages => write!(f, "Messages"),
+            SubscriptionType::Channel => write!(f, "Channel"),
+            SubscriptionType::ChannelMetadata => write!(f, "ChannelMetadata"),
+        }
+    }
+}
+pub fn contact_list_metadata(contact_list: &[DbContact]) -> Filter {
+    let all_pubkeys = contact_list
+        .iter()
+        .map(|c| c.pubkey().to_string())
+        .collect::<Vec<_>>();
+    Filter::new().authors(all_pubkeys).kind(Kind::Metadata)
+    // .since(Timestamp::from(last_timestamp_secs))
+}
+pub fn user_metadata(pubkey: XOnlyPublicKey) -> Filter {
+    Filter::new()
+        .author(pubkey.to_string())
+        .kind(Kind::Metadata)
+}
+
+fn contact_list_filter(public_key: XOnlyPublicKey, last_timestamp_secs: u64) -> Filter {
+    let user_contact_list = Filter::new()
+        .author(public_key.to_string())
+        .kind(Kind::ContactList)
+        .since(Timestamp::from(last_timestamp_secs));
+    user_contact_list
+}
+
+fn messages_filter(public_key: XOnlyPublicKey, last_timestamp_secs: u64) -> Vec<Filter> {
+    let sent_msgs = Filter::new()
+        .kind(nostr::Kind::EncryptedDirectMessage)
+        .author(public_key.to_string())
+        .since(Timestamp::from(last_timestamp_secs));
+    let recv_msgs = Filter::new()
+        .kind(nostr::Kind::EncryptedDirectMessage)
+        .pubkey(public_key)
+        .since(Timestamp::from(last_timestamp_secs));
+    vec![sent_msgs, recv_msgs]
 }
 
 pub fn toggle_read_for_relay(
@@ -235,92 +194,5 @@ pub fn delete_relay(client: &RelayPool, db_relay: DbRelay) -> Result<BackEndInpu
     client.remove_relay(db_relay.url.as_str())?;
     Ok(BackEndInput::DeleteRelayFromDb(db_relay))
 }
-
-pub async fn request_events_of(
-    _client: &RelayPool,
-    _keys: &Keys,
-    db_relay: DbRelay,
-    contact_list: Vec<DbContact>,
-) -> Result<BackendEvent, Error> {
-    tracing::info!("Requesting events of {}", db_relay.url);
-    tracing::debug!("contact_list: {}", contact_list.len());
-    // if let Some(relay) = client.relays().await.get(&db_relay.url) {
-    //     let filters = make_nostr_filters(keys.public_key().clone(), None, &contact_list);
-    //     let timeout = Some(Duration::from_secs(10));
-    //     relay.req_events_of(filters, timeout);
-    // }
-    Ok(BackendEvent::RequestedEventsOf(db_relay))
-}
-
-fn channel_search_filter() -> Vec<Filter> {
-    tracing::trace!("channel_search_filter");
-
-    let channel_filter = Filter::new()
-        .kinds(vec![Kind::ChannelCreation, Kind::ChannelMetadata])
-        .limit(CHANNEL_SEARCH_LIMIT);
-
-    vec![channel_filter]
-}
-
-fn make_nostr_filters(
-    public_key: XOnlyPublicKey,
-    last_event: Option<DbEvent>,
-    contact_list: &[DbContact],
-) -> Vec<Filter> {
-    tracing::trace!("make_nostr_filters");
-    let last_timestamp_secs: u64 = last_event
-        .map(|e| {
-            // syncronization problems with different machines
-            let earlier_time = e.local_creation - chrono::Duration::minutes(10);
-            (earlier_time.timestamp_millis() / 1000) as u64
-        })
-        .unwrap_or(0);
-    tracing::info!("last event timestamp: {}", last_timestamp_secs);
-
-    let all_pubkeys = contact_list
-        .iter()
-        .map(|c| c.pubkey().to_string())
-        .collect::<Vec<_>>();
-
-    let contacts_metadata = Filter::new()
-        .authors(all_pubkeys)
-        .kind(Kind::Metadata)
-        .since(Timestamp::from(last_timestamp_secs));
-    let user_contact_list = Filter::new()
-        .author(public_key.to_string())
-        .kind(Kind::ContactList)
-        .since(Timestamp::from(last_timestamp_secs));
-    let sent_msgs = Filter::new()
-        .kind(nostr::Kind::EncryptedDirectMessage)
-        .author(public_key.to_string())
-        .since(Timestamp::from(last_timestamp_secs));
-    let recv_msgs = Filter::new()
-        .kind(nostr::Kind::EncryptedDirectMessage)
-        .pubkey(public_key)
-        .since(Timestamp::from(last_timestamp_secs));
-
-    vec![sent_msgs, recv_msgs, user_contact_list, contacts_metadata]
-}
-
-pub fn send_event_to_relays(
-    client: &RelayPool,
-    ns_event: nostr::Event,
-) -> Result<BackendEvent, Error> {
-    tracing::debug!("send_event_to_relays ID: {}", ns_event.id);
-    tracing::debug!("{:?}", ns_event);
-    let ns_event_id = ns_event.id;
-    client.send_event(ns_event)?;
-    Ok(BackendEvent::SentEventToRelays(ns_event_id))
-}
-
-struct Subscription {
-    id: nostr::SubscriptionId,
-    name: String,
-    filters: Vec<nostr::Filter>,
-}
-
-// fn subscribe_to_contact_list() -> Subscription {
-
-// }
 
 const CHANNEL_SEARCH_LIMIT: usize = 100;

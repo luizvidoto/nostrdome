@@ -86,6 +86,7 @@ impl ProfileCache {
             .relay_url
             .as_ref()
             .ok_or(Error::NotConfirmedEvent(event_hash.to_owned()))?;
+
         if let Some(last_cache) = Self::fetch_by_public_key(cache_pool, public_key).await? {
             if &last_cache.event_hash == event_hash {
                 tracing::info!(

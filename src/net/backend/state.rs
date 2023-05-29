@@ -1,9 +1,11 @@
+use std::collections::HashMap;
+
 use futures::channel::mpsc;
 use futures_util::SinkExt;
-use nostr::RelayMessage;
+use nostr::{RelayMessage, SubscriptionId};
 use ns_client::NotificationEvent;
 
-use crate::db::Database;
+use crate::{db::Database, net::nostr_events::SubscriptionType};
 
 use super::{BackEndInput, BackendEvent};
 
@@ -12,15 +14,23 @@ pub struct BackendState {
     pub req_client: Option<reqwest::Client>,
     pub sender: mpsc::UnboundedSender<BackEndInput>,
     pub receiver: mpsc::UnboundedReceiver<BackEndInput>,
+    pub subscriptions: HashMap<SubscriptionId, SubscriptionType>,
 }
 impl BackendState {
     pub fn new() -> Self {
         let (sender, receiver) = mpsc::unbounded();
+
+        let mut subscriptions = HashMap::new();
+        for sub_type in SubscriptionType::ALL.iter() {
+            subscriptions.insert(SubscriptionId::new(sub_type.to_string()), *sub_type);
+        }
+
         Self {
             db_client: None,
             req_client: None,
             sender,
             receiver,
+            subscriptions,
         }
     }
 
@@ -50,13 +60,9 @@ impl BackendState {
                 tracing::debug!("Relay terminated - {}", url);
                 None
             }
-            NotificationEvent::RelayMessage(relay_url, relay_msg) => match relay_msg {
-                RelayMessage::Event {
-                    subscription_id,
-                    event,
-                } => Some(BackEndInput::StoreConfirmedEvent((relay_url, *event))),
-                other => Some(BackEndInput::StoreRelayMessage((relay_url, other))),
-            },
+            NotificationEvent::RelayMessage(relay_url, relay_msg) => {
+                Some(BackEndInput::StoreRelayMessage((relay_url, relay_msg)))
+            }
             NotificationEvent::SentSubscription(url, sub_id) => {
                 tracing::debug!("Sent subscription to {} - id: {}", url, sub_id);
                 None

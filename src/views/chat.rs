@@ -411,6 +411,9 @@ impl State {
                 let id = self.chats.len() as i32;
                 self.chats
                     .push(chat_contact::ChatContact::new(id, &db_contact, conn));
+                conn.send(net::ToBackend::FetchSingleContact(
+                    db_contact.pubkey().to_owned(),
+                ));
             }
             BackendEvent::ContactUpdated(db_contact) => {
                 self.find_and_update_contact(
@@ -430,7 +433,7 @@ impl State {
             }
             BackendEvent::GotSingleContact((pubkey, db_contact)) => {
                 if let Some(db_contact) = db_contact.as_ref() {
-                    tracing::info!("Got single contact: {:?}", db_contact);
+                    tracing::debug!("Got single contact: {:?}", db_contact);
                     self.find_and_update_contact(
                         db_contact,
                         chat_contact::Message::ContactUpdated(db_contact.to_owned()),

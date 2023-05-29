@@ -51,7 +51,7 @@ impl RelaysConfirmation {
                 self.responses.len(),
                 self.all_relays.len()
             );
-            let title = title(title_txt).center_x();
+            let title = container(text(title_txt).size(22)).center_x();
             let header = container(title)
                 .width(Length::Fill)
                 .height(HEADER_HEIGHT)

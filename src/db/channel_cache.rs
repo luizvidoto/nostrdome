@@ -6,9 +6,8 @@ use nostr::secp256k1::XOnlyPublicKey;
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
-use crate::{
-    net::image_filename,
-    utils::{event_hash_or_err, millis_to_naive_or_err, profile_meta_or_err, public_key_or_err},
+use crate::utils::{
+    event_hash_or_err, millis_to_naive_or_err, profile_meta_or_err, public_key_or_err,
 };
 
 #[derive(Error, Debug)]

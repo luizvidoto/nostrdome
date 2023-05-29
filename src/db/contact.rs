@@ -1,5 +1,6 @@
 use chrono::{NaiveDateTime, Utc};
 use iced::widget::image::Handle;
+use nostr::prelude::FromBech32;
 use nostr::{prelude::UncheckedUrl, secp256k1::XOnlyPublicKey, Tag};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
@@ -128,8 +129,14 @@ impl DbContact {
         &self.pubkey
     }
     pub fn from_str(pubkey: &str) -> Result<Self, Error> {
-        let pubkey = XOnlyPublicKey::from_str(pubkey).map_err(|_| Error::InvalidPublicKey)?;
-        Ok(Self::new(&pubkey))
+        match XOnlyPublicKey::from_bech32(pubkey) {
+            Ok(pubkey) => Ok(Self::new(&pubkey)),
+            Err(_e) => {
+                let pubkey =
+                    XOnlyPublicKey::from_str(pubkey).map_err(|_| Error::InvalidPublicKey)?;
+                Ok(Self::new(&pubkey))
+            }
+        }
     }
     pub fn new_from_submit(pubkey: &str, petname: &str, relay_url: &str) -> Result<Self, Error> {
         let db_contact = Self::from_str(pubkey)?;
