@@ -14,8 +14,8 @@ pub enum Error {
     #[error("System time before unix epoch")]
     SystemTimeBeforeUnixEpoch,
 
-    #[error("{0}")]
-    FromNtpError(#[from] crate::net::ntp::Error),
+    #[error("Error converting to NaiveDateTime UTC: {0}")]
+    ErrorConvertingToNaiveUtc(String),
 }
 
 #[derive(Debug, Clone)]
@@ -54,16 +54,13 @@ impl UserConfig {
         Ok(has_logged_in != 0)
     }
 
-    pub(crate) async fn update_ntp_offset(
-        pool: &SqlitePool,
-        total_microseconds: u64,
-    ) -> Result<(), Error> {
+    pub(crate) async fn update_ntp_offset(pool: &SqlitePool, ntp_time: u64) -> Result<(), Error> {
         tracing::debug!("update_ntp_offset");
 
         let system_total_microseconds =
             system_now_total_microseconds().map_err(|_| Error::SystemTimeBeforeUnixEpoch)?;
 
-        let offset = total_microseconds as i64 - system_total_microseconds as i64;
+        let offset = ntp_time as i64 - system_total_microseconds as i64;
 
         let query = "UPDATE user_config SET ntp_offset = ?1 WHERE id = 1;";
         sqlx::query(query).bind(offset).execute(pool).await?;
@@ -83,7 +80,8 @@ impl UserConfig {
 
         // Correct the system time with the offset and convert to NaiveDateTime
         let corrected_system_time = correct_time_with_offset(system_total_microseconds, offset);
-        let corrected_time = system_time_to_naive_utc(corrected_system_time)?;
+        let corrected_time = system_time_to_naive_utc(corrected_system_time)
+            .map_err(|e| Error::ErrorConvertingToNaiveUtc(e.to_string()))?;
 
         Ok(corrected_time)
     }

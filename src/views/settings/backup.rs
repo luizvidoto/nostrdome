@@ -5,6 +5,12 @@ use crate::{db::DbContact, widget::Element};
 use iced::widget::{button, column, row, text};
 
 #[derive(Debug, Clone)]
+pub enum Listener {
+    Contacts,
+    Messages,
+}
+
+#[derive(Debug, Clone)]
 pub enum Message {
     ExportContacts,
     ExportMessages,
@@ -22,6 +28,7 @@ pub struct State {
     messages: Vec<DbEvent>,
     contacts_state: LoadingState,
     messages_state: LoadingState,
+    listening_to: Option<Listener>,
 }
 impl State {
     pub fn new(conn: &mut BackEndConnection) -> Self {
@@ -32,6 +39,7 @@ impl State {
             messages: Vec::new(),
             contacts_state: LoadingState::Idle,
             messages_state: LoadingState::Idle,
+            listening_to: None,
         }
     }
 
@@ -43,18 +51,16 @@ impl State {
             BackendEvent::GotAllMessages(all_messages) => {
                 self.messages = all_messages;
             }
-            BackendEvent::ExportedContactsSucessfully => {
-                self.contacts_state = LoadingState::Success;
-            }
-            BackendEvent::ExportedMessagesSucessfully => {
-                self.messages_state = LoadingState::Success;
-            }
-            BackendEvent::ExportedContactsToIdle => {
-                self.contacts_state = LoadingState::Idle;
-            }
-            BackendEvent::ExportedMessagesToIdle => {
-                self.messages_state = LoadingState::Idle;
-            }
+            BackendEvent::RFDSavedFile(_path) => match self.listening_to {
+                Some(Listener::Contacts) => self.contacts_state = LoadingState::Success,
+                Some(Listener::Messages) => self.messages_state = LoadingState::Success,
+                None => (),
+            },
+            BackendEvent::RFDCancelPick => match self.listening_to {
+                Some(Listener::Contacts) => self.contacts_state = LoadingState::Idle,
+                Some(Listener::Messages) => self.messages_state = LoadingState::Idle,
+                None => (),
+            },
             _ => (),
         }
     }
@@ -62,10 +68,12 @@ impl State {
         match message {
             Message::ExportContacts => {
                 self.contacts_state = LoadingState::Loading;
+                self.listening_to = Some(Listener::Contacts);
                 conn.send(net::ToBackend::ExportContacts);
             }
             Message::ExportMessages => {
                 self.messages_state = LoadingState::Loading;
+                self.listening_to = Some(Listener::Messages);
                 conn.send(net::ToBackend::ExportMessages(self.messages.clone()));
             }
         }

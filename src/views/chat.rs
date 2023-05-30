@@ -23,6 +23,7 @@ use crate::widget::{Button, Container, Element};
 use once_cell::sync::Lazy;
 
 use super::modal::{basic_contact, relays_confirmation, ContactDetails, RelaysConfirmation};
+use super::RouterMessage;
 
 static CONTACTS_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
 static CHAT_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
@@ -397,13 +398,13 @@ impl State {
         &mut self,
         event: BackendEvent,
         conn: &mut BackEndConnection,
-    ) -> Command<Message> {
+    ) -> (Command<Message>, Option<RouterMessage>) {
+        let router_message = None;
         let mut commands = vec![];
-        commands.push(
-            self.status_bar
-                .backend_event(event.clone(), conn)
-                .map(Message::StatusBarMessage),
-        );
+
+        let cmd = self.status_bar.backend_event(event.clone(), conn);
+        commands.push(cmd.map(Message::StatusBarMessage));
+
         self.modal_state.backend_event(event.clone(), conn);
 
         match event {
@@ -411,7 +412,7 @@ impl State {
                 let id = self.chats.len() as i32;
                 self.chats
                     .push(chat_contact::ChatContact::new(id, &db_contact, conn));
-                conn.send(net::ToBackend::FetchSingleContact(
+                conn.send(net::ToBackend::FetchContactWithMetadata(
                     db_contact.pubkey().to_owned(),
                 ));
             }
@@ -429,7 +430,7 @@ impl State {
                 self.active_idx = None;
             }
             BackendEvent::UpdatedMetadata(pubkey) => {
-                conn.send(net::ToBackend::FetchSingleContact(pubkey));
+                conn.send(net::ToBackend::FetchContactWithMetadata(pubkey));
             }
             BackendEvent::GotSingleContact((pubkey, db_contact)) => {
                 if let Some(db_contact) = db_contact.as_ref() {
@@ -576,11 +577,17 @@ impl State {
             _ => (),
         };
 
-        Command::batch(commands)
+        (Command::batch(commands), router_message)
     }
 
-    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Command<Message> {
+    pub fn update(
+        &mut self,
+        message: Message,
+        conn: &mut BackEndConnection,
+    ) -> (Command<Message>, Option<RouterMessage>) {
         let mut commands = vec![];
+        let mut router_message = None;
+
         match message {
             Message::CopyPressed => {
                 if let Some(chat_msg) = &self.chat_message_pressed {
@@ -622,7 +629,7 @@ impl State {
                         other => {
                             let (cmd, close_modal) = state.update(other, conn);
                             if close_modal {
-                                return self.close_modal();
+                                commands.push(self.close_modal())
                             }
                             commands
                                 .push(cmd.map(|m| Message::RelaysConfirmationMessage(Box::new(m))));
@@ -639,7 +646,7 @@ impl State {
                         other => {
                             let (cmd, close_modal) = state.update(other, conn);
                             if close_modal {
-                                return self.close_modal();
+                                commands.push(self.close_modal())
                             }
                             commands.push(cmd.map(|m| Message::BasicContactMessage(Box::new(m))));
                         }
@@ -648,14 +655,11 @@ impl State {
             }
 
             Message::StatusBarMessage(status_msg) => {
-                commands.push(
-                    self.status_bar
-                        .update(status_msg, conn)
-                        .map(Message::StatusBarMessage),
-                );
+                let (cmd, msg) = self.status_bar.update(status_msg, conn);
+                router_message = msg;
+                commands.push(cmd.map(Message::StatusBarMessage));
             }
             // ---------
-            Message::GoToChannelsPress => (),
             Message::Scrolled(offset) => {
                 self.msgs_scroll_offset = offset;
 
@@ -681,13 +685,12 @@ impl State {
             Message::ChatMessage(chat_msg) => match chat_msg {
                 chat_message::Message::None => (),
                 chat_message::Message::ChatRightClick((msg, point)) => {
-                    conn.send(net::ToBackend::FetchRelayResponses(msg.clone()));
+                    conn.send(net::ToBackend::FetchRelayResponsesChatMsg(msg.clone()));
                     self.calculate_ctx_menu_pos(point);
                     self.hide_context_menu = false;
                     self.chat_message_pressed = Some(msg);
                 }
             },
-            Message::AddContactPress => (),
             Message::DMNMessageChange(text) => {
                 self.dm_msg = text;
             }
@@ -720,15 +723,21 @@ impl State {
                     }
                 }
             }
-            Message::NavSettingsPress => (),
             Message::ContactCardMessage(wrapped) => {
                 if let chat_contact::Message::ContactPress(idx) = &wrapped.message.clone() {
                     commands.push(self.set_active_contact(*idx, conn));
                 }
             }
+            Message::AddContactPress => {
+                router_message = Some(RouterMessage::GoToSettingsContacts);
+            }
+            Message::GoToChannelsPress => {
+                router_message = Some(RouterMessage::GoToChannels);
+            }
+            Message::NavSettingsPress => router_message = Some(RouterMessage::GoToSettings),
         }
 
-        Command::batch(commands)
+        (Command::batch(commands), router_message)
     }
 }
 

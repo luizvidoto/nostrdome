@@ -1,4 +1,4 @@
-use nostr::{EventId, Kind, Url};
+use nostr::{EventId, Url};
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{FromRow, Row, SqlitePool};

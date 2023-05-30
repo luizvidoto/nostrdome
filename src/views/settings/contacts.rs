@@ -3,7 +3,7 @@ use iced::{Alignment, Length};
 
 use crate::components::{common_scrollable, contact_row, ContactRow};
 use crate::db::{DbRelay, DbRelayResponse};
-use crate::icon::{import_icon, plus_icon, refresh_icon, satellite_icon, to_cloud_icon};
+use crate::icon::{import_icon, plus_icon, refresh_icon, satellite_icon};
 use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
 use crate::utils::contact_matches_search_full;
@@ -23,7 +23,6 @@ pub enum Message {
     OpenImportContactModal,
     SearchContactInputChange(String),
     RefreshContacts,
-    SendContactList,
     RelaysConfirmationPress(Option<ContactsRelaysResponse>),
     SendMessageTo(DbContact),
 }
@@ -70,9 +69,6 @@ impl State {
         match message {
             Message::SendMessageTo(_) => (),
             Message::RelaysConfirmationPress(_) => (),
-            Message::SendContactList => {
-                conn.send(net::ToBackend::SendContactListToRelays);
-            }
             Message::RefreshContacts => {
                 conn.send(net::ToBackend::RefreshContactsProfile);
             }

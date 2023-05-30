@@ -263,6 +263,13 @@ impl DbContact {
         Handle::from_memory(default_profile_image(size))
     }
 
+    pub async fn fetch_basic(pool: &SqlitePool) -> Result<Vec<DbContact>, Error> {
+        let db_contacts = sqlx::query_as::<_, DbContact>(Self::FETCH_QUERY)
+            .fetch_all(pool)
+            .await?;
+        Ok(db_contacts)
+    }
+
     pub async fn fetch(
         pool: &SqlitePool,
         cache_pool: &SqlitePool,
@@ -308,7 +315,7 @@ impl DbContact {
     }
 
     pub async fn upsert_contact(pool: &SqlitePool, contact: &DbContact) -> Result<(), Error> {
-        tracing::info!("Upserting Contact {}", contact.pubkey().to_string());
+        tracing::debug!("Upserting Contact {}", contact.pubkey().to_string());
         tracing::debug!("{:?}", contact);
 
         let now_utc = UserConfig::get_corrected_time(pool)

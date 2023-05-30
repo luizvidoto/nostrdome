@@ -113,7 +113,7 @@ impl DbRelay {
     pub(crate) async fn update_with_error(
         pool: &SqlitePool,
         url: &Url,
-        message: &str,
+        error_msg: &str,
     ) -> Result<DbRelay, Error> {
         let mut db_relay = DbRelay::fetch_one(pool, url)
             .await?
@@ -125,12 +125,12 @@ impl DbRelay {
 
         sqlx::query(sql)
             .bind(now_utc.timestamp_millis())
-            .bind(message)
+            .bind(error_msg)
             .bind(&db_relay.url.to_string())
             .execute(pool)
             .await?;
 
-        db_relay.have_error = Some(message.to_owned());
+        db_relay.have_error = Some(error_msg.to_owned());
         db_relay.updated_at = now_utc;
 
         Ok(db_relay)

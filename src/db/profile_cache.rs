@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::{
-    net::{image_filename, ImageKind, ImageSize},
+    net::{image_filename, reqwest_client::ImageDownloaded, ImageKind, ImageSize},
     utils::{
         event_hash_or_err, millis_to_naive_or_err, profile_meta_or_err, public_key_or_err,
         url_or_err,
@@ -145,13 +145,11 @@ impl ProfileCache {
         Ok(rows_affected)
     }
 
-    pub(crate) async fn update_local_path(
+    pub(crate) async fn image_downloaded(
         cache_pool: &SqlitePool,
-        public_key: &XOnlyPublicKey,
-        kind: ImageKind,
-        path: &PathBuf,
+        img: &ImageDownloaded,
     ) -> Result<(), Error> {
-        let kind_str = match kind {
+        let kind_str = match img.kind {
             ImageKind::Profile => "profile_image_path",
             ImageKind::Banner => "banner_image_path",
         };
@@ -164,8 +162,8 @@ impl ProfileCache {
             kind_str
         );
         sqlx::query(&update_query)
-            .bind(&path.to_string_lossy())
-            .bind(&public_key.to_string())
+            .bind(&img.path.to_string_lossy())
+            .bind(&img.public_key.to_string())
             .execute(cache_pool)
             .await?;
         Ok(())

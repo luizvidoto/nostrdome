@@ -1,16 +1,20 @@
+use crate::Error;
 use chrono::NaiveDateTime;
-use sntpc::{
-    Error as SntpcError, NtpContext, NtpTimestampGenerator, NtpUdpSocket, Result as SntpcR,
-};
+use rand::Rng;
+use sntpc::{NtpContext, NtpResult, NtpTimestampGenerator, NtpUdpSocket, Result as SntpcR};
 use std::{
-    io,
     net::{SocketAddr, ToSocketAddrs, UdpSocket},
     time::Duration,
 };
 use thiserror::Error;
 
+use super::TaskOutput;
+
 #[derive(Error, Debug)]
-pub enum Error {
+pub enum NtpError {
+    #[error("Sntpc Error: {0:?}")]
+    FromMySntpcError(sntpc::Error),
+
     #[error("Sntpc Error: Unable to bind to any port")]
     NtpUnableToBindPort,
 
@@ -50,57 +54,58 @@ impl NtpUdpSocket for UdpSocketWrapper {
     fn send_to<T: ToSocketAddrs>(&self, buf: &[u8], addr: T) -> SntpcR<usize> {
         match self.0.send_to(buf, addr) {
             Ok(usize) => Ok(usize),
-            Err(_) => Err(SntpcError::Network),
+            Err(_) => Err(sntpc::Error::Network),
         }
     }
     fn recv_from(&self, buf: &mut [u8]) -> SntpcR<(usize, SocketAddr)> {
         match self.0.recv_from(buf) {
             Ok((size, addr)) => Ok((size, addr)),
-            Err(_) => Err(SntpcError::Network),
+            Err(_) => Err(sntpc::Error::Network),
         }
     }
 }
 
-fn port_binder(desired_port: u16) -> Result<UdpSocket, io::Error> {
-    let mut tries = 0;
-    loop {
-        let port = if tries == 0 {
-            desired_port
-        } else {
-            rand::random::<u16>().saturating_add(1024) // Avoid well-known ports
-        };
-        match UdpSocket::bind(format!("0.0.0.0:{}", desired_port)) {
-            Ok(socket) => return Ok(socket),
-            Err(e) => tracing::error!("Failed to bind to port {}: {}", port, e),
+fn bind_to_random_port() -> std::io::Result<UdpSocket> {
+    let mut rng = rand::thread_rng();
+    let port_range = 49152..=65535;
+    for _ in 0..1000 {
+        let port = rng.gen_range(port_range.clone());
+        match UdpSocket::bind(("0.0.0.0", port)) {
+            Ok(socket) => {
+                tracing::debug!("Bound to port {}", port);
+                return Ok(socket);
+            }
+            Err(_) => continue,
         }
-        tries += 1;
     }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AddrNotAvailable,
+        "Could not bind to any port in the range 49152-65535",
+    ))
 }
 
-pub fn spawn_ntp_request(mut sender: tokio::sync::mpsc::Sender<Result<u64, Error>>) {
+pub fn spawn_ntp_request(sender: tokio::sync::mpsc::Sender<Result<TaskOutput, Error>>) {
     tokio::spawn(async move {
         loop {
             tracing::debug!("Starting NTP request");
             let ntp_addrs = ntp_addrs();
-            let random_port = rand::random::<u16>().saturating_add(1024); // Avoid well-known ports;
-            tracing::debug!(
-                "Trying to get time from NTP servers using port: {}",
-                random_port
-            );
 
             for addr in &ntp_addrs {
-                let socket = match port_binder(random_port) {
+                let socket = match bind_to_random_port() {
                     Ok(socket) => socket,
                     Err(_e) => {
-                        if let Err(e) = sender.send(Err(Error::NtpUnableToBindPort)).await {
+                        if let Err(e) = sender.send(Err(NtpError::NtpUnableToBindPort.into())).await
+                        {
                             tracing::error!("Failed to send time to backend: {}", e);
                         }
                         return;
                     }
                 };
-
                 if let Err(_e) = socket.set_read_timeout(Some(Duration::from_secs(10))) {
-                    if let Err(e) = sender.send(Err(Error::NtpUnableToSetReadTimeout)).await {
+                    if let Err(e) = sender
+                        .send(Err(NtpError::NtpUnableToSetReadTimeout.into()))
+                        .await
+                    {
                         tracing::error!("Failed to send time to backend: {}", e);
                     }
                 }
@@ -108,7 +113,10 @@ pub fn spawn_ntp_request(mut sender: tokio::sync::mpsc::Sender<Result<u64, Error
                 let ntp_context = NtpContext::new(StdTimestampGen::default());
                 match sntpc::get_time(addr.1, sock_wrapper, ntp_context) {
                     Ok(time) => {
-                        if let Err(e) = sender.send(Ok(ntp_total_microseconds(time))).await {
+                        if let Err(e) = sender
+                            .send(Ok(TaskOutput::Ntp(ntp_total_microseconds(time))))
+                            .await
+                        {
                             tracing::error!("Failed to send time to backend: {}", e);
                         }
                         return;
@@ -125,6 +133,21 @@ pub fn spawn_ntp_request(mut sender: tokio::sync::mpsc::Sender<Result<u64, Error
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
     });
+}
+
+async fn ntp_request(ntp_addrs: &[(String, SocketAddr)]) -> Result<Option<NtpResult>, NtpError> {
+    for addr in ntp_addrs {
+        let socket = bind_to_random_port().map_err(|_| NtpError::NtpUnableToBindPort)?;
+        socket
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .map_err(|_| NtpError::NtpUnableToSetReadTimeout)?;
+        let sock_wrapper = UdpSocketWrapper(socket);
+        let ntp_context = NtpContext::new(StdTimestampGen::default());
+        let time = sntpc::get_time(addr.1, sock_wrapper, ntp_context)
+            .map_err(NtpError::FromMySntpcError)?;
+        return Ok(Some(time));
+    }
+    Ok(None)
 }
 
 fn ntp_addrs() -> Vec<(String, SocketAddr)> {
@@ -162,19 +185,19 @@ fn ntp_total_microseconds(time: sntpc::NtpResult) -> u64 {
 }
 
 // Helper function to get total microseconds from SystemTime
-fn system_total_microseconds(time: std::time::SystemTime) -> Result<u64, Error> {
+fn system_total_microseconds(time: std::time::SystemTime) -> Result<u64, NtpError> {
     match time.duration_since(std::time::UNIX_EPOCH) {
         Ok(since_the_epoch) => {
             let system_total_microseconds =
                 since_the_epoch.as_secs() * 1_000_000 + since_the_epoch.subsec_micros() as u64;
             Ok(system_total_microseconds)
         }
-        Err(_) => Err(Error::SystemTimeBeforeUnixEpoch),
+        Err(_) => Err(NtpError::SystemTimeBeforeUnixEpoch),
     }
 }
 
 // Function to get current system time in total microseconds
-pub fn system_now_total_microseconds() -> Result<u64, Error> {
+pub fn system_now_total_microseconds() -> Result<u64, NtpError> {
     system_total_microseconds(std::time::SystemTime::now())
 }
 
@@ -188,7 +211,9 @@ pub fn correct_time_with_offset(time_microseconds: u64, offset: i64) -> std::tim
     std::time::UNIX_EPOCH + corrected_duration
 }
 
-pub fn system_time_to_naive_utc(sys_time: std::time::SystemTime) -> Result<NaiveDateTime, Error> {
+pub fn system_time_to_naive_utc(
+    sys_time: std::time::SystemTime,
+) -> Result<NaiveDateTime, NtpError> {
     // Duration since UNIX_EPOCH
     let duration = sys_time
         .duration_since(std::time::UNIX_EPOCH)
@@ -196,7 +221,7 @@ pub fn system_time_to_naive_utc(sys_time: std::time::SystemTime) -> Result<Naive
     let secs = duration.as_secs() as i64;
     let nanos = duration.subsec_nanos();
     Ok(NaiveDateTime::from_timestamp_opt(secs, nanos)
-        .ok_or(Error::InvalidTimestampNanos(secs, nanos))?)
+        .ok_or(NtpError::InvalidTimestampNanos(secs, nanos))?)
 }
 
 #[cfg(test)]

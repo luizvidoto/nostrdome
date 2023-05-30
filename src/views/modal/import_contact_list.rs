@@ -56,7 +56,7 @@ impl ImportContactList {
     }
     pub fn backend_event(&mut self, event: BackendEvent, _conn: &mut BackEndConnection) {
         match event {
-            BackendEvent::ChoosenFile(path) => {
+            BackendEvent::RFDPickedFile(path) => {
                 self.handle_file_importer_message(&path);
                 self.file_importer
                     .update(async_file_importer::Message::UpdateFilePath(path), _conn);

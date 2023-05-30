@@ -78,9 +78,9 @@ impl ContactDetails {
         }
     }
     pub(crate) fn viewer(db_contact: &DbContact, conn: &mut BackEndConnection) -> Self {
-        if let Some(cache) = db_contact.get_profile_cache() {
-            conn.send(net::ToBackend::GetDbEventWithHash(cache.event_hash));
-        }
+        // if let Some(cache) = db_contact.get_profile_cache() {
+        //     conn.send(net::ToBackend::GetDbEventWithHash(cache.event_hash));
+        // }
         let mut details = Self::edit(db_contact, conn);
         details.mode = Mode::View;
         details

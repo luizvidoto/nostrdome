@@ -167,25 +167,26 @@ impl Settings {
         &mut self,
         event: BackendEvent,
         conn: &mut BackEndConnection,
-    ) -> Command<Message> {
+    ) -> (Command<Message>, Option<RouterMessage>) {
+        let mut commands = vec![];
+        let router_message = None;
+
         self.modal_state.backend_event(event.clone(), conn);
 
         match &mut self.menu_state {
             MenuState::About { state } => {
-                return state
-                    .update(about::Message::BackEndEvent(event))
-                    .map(Message::AboutMessage)
+                let cmd = state.update(about::Message::BackEndEvent(event));
+                commands.push(cmd.map(Message::AboutMessage));
             }
             MenuState::Account { state } => {
-                let _ = state.update(account::Message::BackEndEvent(event), conn);
+                state.update(account::Message::BackEndEvent(event), conn);
             }
             MenuState::Appearance { state } => {
                 state.update(appearance::Message::BackEndEvent(event))
             }
             MenuState::Network { state } => {
-                return state
-                    .update(network::Message::BackEndEvent(event), conn)
-                    .map(Message::NetworkMessage);
+                let cmd = state.update(network::Message::BackEndEvent(event), conn);
+                commands.push(cmd.map(Message::NetworkMessage));
             }
             MenuState::Backup { state } => state.backend_event(event, conn),
             MenuState::Contacts { state } => {
@@ -193,7 +194,7 @@ impl Settings {
             }
         }
 
-        Command::none()
+        (Command::batch(commands), router_message)
     }
     pub fn update(
         &mut self,
@@ -201,8 +202,8 @@ impl Settings {
         conn: &mut BackEndConnection,
         selected_theme: Option<style::Theme>,
     ) -> (Command<Message>, Option<RouterMessage>) {
-        let command = Command::none();
-        let router_message = None;
+        let mut commands = vec![];
+        let mut router_message = None;
 
         match message {
             Message::AccountMessage(msg) => {
@@ -242,9 +243,9 @@ impl Settings {
                 }
             }
             Message::ContactsMessage(msg) => {
-                return (command, self.handle_contacts_message(msg, conn));
+                router_message = self.handle_contacts_message(msg, conn);
             }
-            Message::NavEscPress => (),
+            Message::NavEscPress => router_message = Some(RouterMessage::GoToChat),
             Message::MenuAccountPress
             | Message::MenuAppearancePress
             | Message::MenuNetworkPress
@@ -258,7 +259,7 @@ impl Settings {
             }
             other => return (self.modal_state.update(other, conn), None),
         }
-        (command, router_message)
+        (Command::batch(commands), router_message)
     }
 
     fn handle_menu_press(
@@ -283,6 +284,8 @@ impl Settings {
         msg: contacts::Message,
         conn: &mut BackEndConnection,
     ) -> Option<RouterMessage> {
+        let mut router_message = None;
+
         if let MenuState::Contacts { state } = &mut self.menu_state {
             match msg {
                 contacts::Message::RelaysConfirmationPress(ct_resp) => {
@@ -308,7 +311,7 @@ impl Settings {
                                     ModalState::ContactDetails(ContactDetails::edit(&contact, conn))
                             }
                             SettingsRouterMessage::RouterMessage(router_msg) => {
-                                return Some(router_msg);
+                                router_message = Some(router_msg);
                             }
                             SettingsRouterMessage::OpenProfileModal(contact) => {
                                 self.modal_state = ModalState::ContactDetails(
@@ -320,7 +323,8 @@ impl Settings {
                 }
             }
         }
-        None
+
+        router_message
     }
 
     pub fn view(&self) -> Element<Message> {

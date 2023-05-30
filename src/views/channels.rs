@@ -9,6 +9,8 @@ use iced::{
     Command, Length,
 };
 
+use super::RouterMessage;
+
 #[derive(Debug, Clone)]
 pub enum Message {
     CreateChannel,
@@ -26,12 +28,16 @@ impl State {
         &mut self,
         event: BackendEvent,
         _conn: &mut BackEndConnection,
-    ) -> Command<Message> {
+    ) -> (Command<Message>, Option<RouterMessage>) {
+        let mut command = Command::none();
+        let mut router_message = None;
+
         if let BackendEvent::ChannelCreated(cache) = event {
             println!("*** CHANNEL CREATED ***");
             println!("{}", cache.channel_id);
         }
-        Command::none()
+
+        (command, router_message)
     }
     pub fn update(&mut self, message: Message, _conn: &mut BackEndConnection) {
         match message {

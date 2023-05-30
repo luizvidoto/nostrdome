@@ -1,7 +1,6 @@
 use iced::{Command, Subscription};
 
 use crate::{
-    components::status_bar,
     db::DbContact,
     net::{BackEndConnection, BackendEvent},
     style,
@@ -24,6 +23,8 @@ pub enum RouterMessage {
     GoToNetwork,
     GoToSettings,
     GoToChatTo(DbContact),
+    GoToWelcome,
+    GoToLogin,
     GoBack,
 }
 
@@ -32,16 +33,19 @@ pub enum Message {
     ChannelsMsg(channels::Message),
     ChatMsg(chat::Message),
     SettingsMsg(settings::Message),
+    LoginMsg(login::Message),
+    WelcomeMsg(welcome::Message),
 }
 pub struct Router {
     previous_state: Option<ViewState>,
     state: ViewState,
 }
 impl Router {
-    pub fn new(db_conn: &mut BackEndConnection) -> Self {
+    pub fn new(conn: &mut BackEndConnection) -> Self {
+        let (state, _command) = ViewState::login(conn);
         Self {
             previous_state: None,
-            state: ViewState::chat(db_conn),
+            state,
         }
     }
     fn next_state(&mut self, next: ViewState) {
@@ -65,13 +69,6 @@ impl Router {
     pub fn view(&self) -> Element<Message> {
         self.state.view()
     }
-    pub fn backend_event(
-        &mut self,
-        event: BackendEvent,
-        conn: &mut BackEndConnection,
-    ) -> Command<Message> {
-        self.state.backend_event(event, conn)
-    }
 
     pub fn change_route(
         &mut self,
@@ -93,8 +90,32 @@ impl Router {
                 self.next_state(state);
                 return command;
             }
+            RouterMessage::GoToLogin => {
+                let (state, command) = ViewState::login(conn);
+                self.next_state(state);
+                return command;
+            }
+            RouterMessage::GoToWelcome => {
+                let (state, command) = ViewState::welcome(conn);
+                self.next_state(state);
+                return command;
+            }
         }
         Command::none()
+    }
+
+    pub fn backend_event(
+        &mut self,
+        event: BackendEvent,
+        conn: &mut BackEndConnection,
+    ) -> Command<Message> {
+        let (command, router_message) = self.state.backend_event(event, conn);
+        if let Some(router_message) = router_message {
+            let change_cmd = self.change_route(router_message, conn);
+            Command::batch(vec![command, change_cmd])
+        } else {
+            command
+        }
     }
 
     pub fn update(
@@ -117,6 +138,8 @@ pub enum ViewState {
     Channels { state: channels::State },
     Chat { state: chat::State },
     Settings { state: settings::Settings },
+    Login { state: login::State },
+    Welcome { state: welcome::State },
 }
 
 impl ViewState {
@@ -124,6 +147,7 @@ impl ViewState {
         match self {
             ViewState::Settings { state } => state.subscription().map(Message::SettingsMsg),
             ViewState::Chat { state } => state.subscription().map(Message::ChatMsg),
+            ViewState::Welcome { state } => state.subscription().map(Message::WelcomeMsg),
             _ => Subscription::none(),
         }
     }
@@ -132,24 +156,47 @@ impl ViewState {
             Self::Channels { state } => state.view().map(Message::ChannelsMsg),
             Self::Chat { state } => state.view().map(Message::ChatMsg),
             Self::Settings { state } => state.view().map(Message::SettingsMsg),
+            Self::Login { state } => state.view().map(Message::LoginMsg),
+            Self::Welcome { state } => state.view().map(Message::WelcomeMsg),
         }
     }
     pub fn backend_event(
         &mut self,
         event: BackendEvent,
         conn: &mut BackEndConnection,
-    ) -> Command<Message> {
-        match event {
-            event => match self {
-                ViewState::Channels { state } => {
-                    state.backend_event(event, conn).map(Message::ChannelsMsg)
-                }
-                ViewState::Chat { state } => state.backend_event(event, conn).map(Message::ChatMsg),
-                ViewState::Settings { state } => {
-                    state.backend_event(event, conn).map(Message::SettingsMsg)
-                }
-            },
+    ) -> (Command<Message>, Option<RouterMessage>) {
+        let mut commands = vec![];
+        let mut router_message = None;
+
+        match self {
+            ViewState::Channels { state } => {
+                let (cmd, msg) = state.backend_event(event, conn);
+                router_message = msg;
+                commands.push(cmd.map(Message::ChannelsMsg));
+            }
+            ViewState::Chat { state } => {
+                let (cmd, msg) = state.backend_event(event, conn);
+                router_message = msg;
+                commands.push(cmd.map(Message::ChatMsg));
+            }
+            ViewState::Settings { state } => {
+                let (cmd, msg) = state.backend_event(event, conn);
+                router_message = msg;
+                commands.push(cmd.map(Message::SettingsMsg));
+            }
+            ViewState::Welcome { state } => {
+                let (cmd, msg) = state.backend_event(event, conn);
+                router_message = msg;
+                commands.push(cmd.map(Message::WelcomeMsg));
+            }
+            ViewState::Login { state } => {
+                let (cmd, msg) = state.backend_event(event, conn);
+                router_message = msg;
+                commands.push(cmd.map(Message::LoginMsg));
+            }
         }
+
+        (Command::batch(commands), router_message)
     }
     pub fn update(
         &mut self,
@@ -158,7 +205,7 @@ impl ViewState {
         selected_theme: Option<style::Theme>,
     ) -> (Command<Message>, Option<RouterMessage>) {
         let mut router_message = None;
-        let mut command = Command::none();
+        let mut commands = vec![];
         match message {
             Message::ChannelsMsg(msg) => {
                 if let ViewState::Channels { state } = self {
@@ -170,55 +217,47 @@ impl ViewState {
                     }
                 }
             }
-            Message::ChatMsg(msg) => {
+            Message::ChatMsg(chat_msg) => {
                 if let ViewState::Chat { state } = self {
-                    match msg {
-                        chat::Message::AddContactPress => {
-                            router_message = Some(RouterMessage::GoToSettingsContacts);
-                        }
-                        chat::Message::GoToChannelsPress => {
-                            router_message = Some(RouterMessage::GoToChannels);
-                        }
-                        chat::Message::StatusBarMessage(status_msg) => match status_msg {
-                            status_bar::Message::GoToAbout => {
-                                router_message = Some(RouterMessage::GoToAbout);
-                            }
-                            status_bar::Message::GoToNetwork => {
-                                router_message = Some(RouterMessage::GoToNetwork);
-                            }
-                            other => {
-                                return (
-                                    state
-                                        .update(chat::Message::StatusBarMessage(other), conn)
-                                        .map(Message::ChatMsg),
-                                    None,
-                                )
-                            }
-                        },
-                        chat::Message::NavSettingsPress => {
-                            router_message = Some(RouterMessage::GoToSettings)
-                        }
-                        msg => return (state.update(msg, conn).map(Message::ChatMsg), None),
-                    }
+                    let (cmd, msg) = state.update(chat_msg, conn);
+                    router_message = msg;
+                    commands.push(cmd.map(Message::ChatMsg));
                 }
             }
             Message::SettingsMsg(msg) => {
                 if let ViewState::Settings { state } = self {
-                    match msg {
-                        settings::Message::NavEscPress => {
-                            // router_message = Some(RouterMessage::GoBack)
-                            router_message = Some(RouterMessage::GoToChat)
-                        }
-                        msg => {
-                            let (cmd, msg) = state.update(msg, conn, selected_theme);
-                            command = cmd.map(Message::SettingsMsg);
-                            router_message = msg;
-                        }
-                    }
+                    let (cmd, msg) = state.update(msg, conn, selected_theme);
+                    commands.push(cmd.map(Message::SettingsMsg));
+                    router_message = msg;
+                }
+            }
+            Message::WelcomeMsg(welcome_msg) => {
+                if let ViewState::Welcome { state } = self {
+                    let (cmd, msg) = state.update(welcome_msg, conn);
+                    commands.push(cmd.map(Message::WelcomeMsg));
+                    router_message = msg;
+                }
+            }
+            Message::LoginMsg(login_msg) => {
+                if let ViewState::Login { state } = self {
+                    let (cmd, msg) = state.update(login_msg, conn);
+                    commands.push(cmd.map(Message::LoginMsg));
+                    router_message = msg;
                 }
             }
         };
-        (command, router_message)
+
+        (Command::batch(commands), router_message)
+    }
+
+    fn login(_conn: &mut BackEndConnection) -> (ViewState, Command<Message>) {
+        let state = login::State::new();
+        (Self::Login { state }, Command::none())
+    }
+
+    fn welcome(_conn: &mut BackEndConnection) -> (ViewState, Command<Message>) {
+        let state = welcome::State::new();
+        (Self::Welcome { state }, Command::none())
     }
 
     fn chat_contact(

@@ -101,11 +101,17 @@ pub fn sized_image(filename: &Path, kind: ImageKind, size: ImageSize) -> PathBuf
     filename.with_file_name(new_file_name)
 }
 
+pub struct ImageDownloaded {
+    pub kind: ImageKind,
+    pub public_key: XOnlyPublicKey,
+    pub path: PathBuf,
+}
+
 pub async fn download_image(
     image_url: &str,
     public_key: &XOnlyPublicKey,
     kind: ImageKind,
-) -> Result<PathBuf, Error> {
+) -> Result<ImageDownloaded, Error> {
     let image_url = Url::parse(image_url)?;
     let response = reqwest::get(image_url.clone()).await?;
 
@@ -146,7 +152,11 @@ pub async fn download_image(
     resize_and_save_image(&original_path, &images_dir, kind, ImageSize::Medium)?;
     resize_and_save_image(&original_path, &images_dir, kind, ImageSize::Small)?;
 
-    Ok(original_path)
+    Ok(ImageDownloaded {
+        kind,
+        public_key: public_key.clone(),
+        path: original_path,
+    })
 }
 
 pub fn resize_and_save_image(

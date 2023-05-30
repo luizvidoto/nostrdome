@@ -5,33 +5,8 @@ use crate::style;
 use crate::widget::{Element, Text};
 use chrono::{NaiveDateTime, Utc};
 use iced::widget::{button, checkbox, container, row, text, tooltip, Space};
-use iced::{alignment, Command, Length, Subscription};
+use iced::{alignment, Command, Length};
 use ns_client::RelayStatus;
-
-#[derive(Debug, Clone)]
-pub enum RelayRowState {
-    Idle,
-    Loading,
-    Success,
-}
-
-#[derive(Debug, Clone)]
-pub enum Mode {
-    ModalView { state: RelayRowState },
-    Normal,
-}
-impl Mode {
-    pub fn success(&mut self) {
-        if let Mode::ModalView { state } = self {
-            *state = RelayRowState::Success;
-        }
-    }
-    pub fn loading(&mut self) {
-        if let Mode::ModalView { state } = self {
-            *state = RelayRowState::Loading;
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -39,7 +14,6 @@ pub enum Message {
     DeleteRelay(DbRelay),
     ToggleRead(DbRelay),
     ToggleWrite(DbRelay),
-    SendContactListToRelays,
     UpdateRelayStatus(RelayStatus),
 }
 #[derive(Debug, Clone)]
@@ -59,7 +33,6 @@ pub struct RelayRow {
     pub db_relay: DbRelay,
     relay_status: Option<RelayStatus>,
     last_connected_at: Option<NaiveDateTime>,
-    mode: Mode,
 }
 
 impl RelayRow {
@@ -69,17 +42,7 @@ impl RelayRow {
             db_relay,
             relay_status: None,
             last_connected_at: None,
-            mode: Mode::Normal,
         }
-    }
-    pub fn with_mode(mut self) -> Self {
-        self.mode = Mode::ModalView {
-            state: RelayRowState::Idle,
-        };
-        self
-    }
-    pub fn subscription(&self) -> Subscription<MessageWrapper> {
-        Subscription::none()
     }
 
     pub fn backend_event(&mut self, event: BackendEvent, _conn: &mut BackEndConnection) {
@@ -89,18 +52,6 @@ impl RelayRow {
                     tracing::debug!("Relay updated");
                     tracing::debug!("{:?}", db_relay);
                     self.db_relay = db_relay;
-                }
-            }
-            // BackendEvent::GotRelayStatus((url, relay_status)) => {
-            //     if self.db_relay.url == url {
-            //         self.relay_status = Some(relay_status)
-            //     }
-            // }
-            BackendEvent::ConfirmedContactList(db_event) => {
-                if let Some(relay_url) = db_event.relay_url {
-                    if relay_url == self.db_relay.url {
-                        self.mode.success()
-                    }
                 }
             }
             _ => (),
@@ -117,13 +68,6 @@ impl RelayRow {
             Message::UpdateRelayStatus(status) => {
                 self.relay_status = Some(status);
             }
-            Message::SendContactListToRelays => {
-                if let Mode::ModalView { .. } = &mut self.mode {
-                    conn.send(net::ToBackend::SendContactListToRelays);
-                    self.mode.loading();
-                }
-            }
-
             Message::DeleteRelay(db_relay) => {
                 conn.send(net::ToBackend::DeleteRelay(db_relay));
             }

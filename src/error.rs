@@ -58,7 +58,7 @@ pub enum Error {
     FromEventBuilderError(#[from] crate::net::operations::builder::Error),
 
     #[error("{0}")]
-    FromNtpError(#[from] crate::net::ntp::Error),
+    FromNtpError(#[from] crate::net::ntp::NtpError),
 
     #[error("Failed to send to backend input channel: {0}")]
     FailedToSendBackendInput(String),

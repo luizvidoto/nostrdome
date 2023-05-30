@@ -1,15 +1,18 @@
 use iced::{
     alignment,
     widget::{button, column, container, row, text, Space},
-    Length,
+    Command, Length,
 };
 use nostr::{prelude::FromSkStr, Keys};
 
 use crate::{
     components::{text::title, text_input_group::TextInputGroup},
+    net::{BackEndConnection, BackendEvent, ToBackend},
     style,
     widget::Element,
 };
+
+use super::RouterMessage;
 
 #[derive(Debug, Clone)]
 pub struct BasicProfile {
@@ -48,9 +51,6 @@ pub enum Message {
     NameInputChange(String),
     AboutInputChange(String),
     ProfilePictureInputChange(String),
-    // to main
-    CreateAccountSubmitSuccess((BasicProfile, Keys)),
-    LoginSuccess(Keys),
 }
 
 #[allow(dead_code)]
@@ -89,7 +89,41 @@ impl State {
         }
     }
 
-    pub fn update(&mut self, message: Message) -> Option<Message> {
+    pub fn backend_event(
+        &mut self,
+        event: BackendEvent,
+        conn: &mut BackEndConnection,
+    ) -> (Command<Message>, Option<RouterMessage>) {
+        let mut router_message = None;
+        let command = Command::none();
+
+        match event {
+            BackendEvent::LoginSuccess => {
+                conn.send(ToBackend::QueryFirstLogin);
+            }
+            BackendEvent::FinishedPreparing => {
+                router_message = Some(RouterMessage::GoToChat);
+            }
+            BackendEvent::FirstLoginSuccess => {
+                router_message = Some(RouterMessage::GoToWelcome);
+            }
+            BackendEvent::CreateAccountSuccess => {
+                router_message = Some(RouterMessage::GoToWelcome);
+            }
+            _ => (),
+        }
+
+        (command, router_message)
+    }
+
+    pub fn update(
+        &mut self,
+        message: Message,
+        conn: &mut BackEndConnection,
+    ) -> (Command<Message>, Option<RouterMessage>) {
+        let router_message = None;
+        let command = Command::none();
+
         match self {
             State::ChooseAccount => match message {
                 Message::ToCreateAccount => *self = Self::create_account(),
@@ -110,8 +144,7 @@ impl State {
                 }
                 Message::ToChooseAccount => *self = Self::new(),
                 Message::CreateAccountSubmit(profile) => {
-                    let keys = Keys::generate();
-                    return Some(Message::CreateAccountSubmitSuccess((profile, keys)));
+                    conn.send(ToBackend::CreateAccount(profile.into()));
                 }
                 _ => (),
             },
@@ -124,7 +157,9 @@ impl State {
                     *is_invalid = false;
                 }
                 Message::SubmitPress(secret_key) => match Keys::from_sk_str(&secret_key) {
-                    Ok(keys) => return Some(Message::LoginSuccess(keys)),
+                    Ok(keys) => {
+                        conn.send(ToBackend::LoginWithSK(keys));
+                    }
                     Err(e) => {
                         tracing::error!("Invalid secret key: {}", e);
                         *is_invalid = true;
@@ -135,7 +170,7 @@ impl State {
             },
         }
 
-        None
+        (command, router_message)
     }
 
     pub fn view(&self) -> Element<Message> {
