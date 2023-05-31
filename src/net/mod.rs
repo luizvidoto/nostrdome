@@ -17,6 +17,7 @@ use crate::views::login::BasicProfile;
 use crate::Error;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crate::db::Database;
 use crate::net::ntp::spawn_ntp_request;
@@ -392,8 +393,8 @@ pub fn backend_connect() -> Subscription<BackendEvent> {
                                         if let ToBackend::Logout = message {
                                             backend.logout().await;
                                             let _ = nostr.logout().await;
-                                            let _ = output.send(BackendEvent::LogoutSuccess).await;
 
+                                            let _ = output.send(BackendEvent::LogoutSuccess).await;
                                             state = State::Start;
                                             client_state = ClientState::Empty;
 
@@ -405,8 +406,12 @@ pub fn backend_connect() -> Subscription<BackendEvent> {
                                         }
                                     } else {
                                         tracing::info!("Front to backend channel closed");
+                                        backend.logout().await;
+                                        let _ = nostr.logout().await;
+
                                         let _ = output.send(BackendEvent::LogoutSuccess).await;
                                         state = State::Start;
+                                        client_state = ClientState::Empty;
                                     }
                                 }
                                 notification = nostr.notifications.recv() => {

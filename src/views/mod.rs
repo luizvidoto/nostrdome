@@ -14,6 +14,28 @@ pub(crate) mod modal;
 pub(crate) mod settings;
 pub(crate) mod welcome;
 
+pub struct RouterCommand<M> {
+    commands: Vec<Command<M>>,
+    router_message: Option<RouterMessage>,
+}
+impl<M> RouterCommand<M> {
+    pub fn new() -> Self {
+        Self {
+            commands: vec![],
+            router_message: None,
+        }
+    }
+    pub fn push(&mut self, command: Command<M>) {
+        self.commands.push(command);
+    }
+    pub fn change_route(&mut self, router_message: RouterMessage) {
+        self.router_message = Some(router_message);
+    }
+    pub fn batch(self) -> (Command<M>, Option<RouterMessage>) {
+        (Command::batch(self.commands), self.router_message)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum RouterMessage {
     GoToSettingsContacts,
@@ -25,6 +47,7 @@ pub enum RouterMessage {
     GoToChatTo(DbContact),
     GoToWelcome,
     GoToLogin,
+    GoToLogout,
     GoBack,
 }
 
@@ -76,6 +99,9 @@ impl Router {
         conn: &mut BackEndConnection,
     ) -> Command<Message> {
         match router_message {
+            RouterMessage::GoToLogout => self.next_state(ViewState::Logout {
+                state: logout::State::new(),
+            }),
             RouterMessage::GoBack => self.back(conn),
             RouterMessage::GoToSettingsContacts => {
                 self.next_state(ViewState::settings_contacts(conn))
@@ -86,9 +112,8 @@ impl Router {
             RouterMessage::GoToNetwork => self.next_state(ViewState::settings_network(conn)),
             RouterMessage::GoToSettings => self.next_state(ViewState::settings(conn)),
             RouterMessage::GoToChatTo(db_contact) => {
-                let (state, command) = ViewState::chat_contact(db_contact, conn);
+                let state = ViewState::chat_contact(db_contact, conn);
                 self.next_state(state);
-                return command;
             }
             RouterMessage::GoToLogin => {
                 let (state, command) = ViewState::login(conn);
@@ -135,6 +160,7 @@ impl Router {
 }
 
 pub enum ViewState {
+    Logout { state: logout::State },
     Channels { state: channels::State },
     Chat { state: chat::State },
     Settings { state: settings::Settings },
@@ -153,6 +179,7 @@ impl ViewState {
     }
     pub fn view(&self) -> Element<Message> {
         match self {
+            Self::Logout { state } => state.view(),
             Self::Channels { state } => state.view().map(Message::ChannelsMsg),
             Self::Chat { state } => state.view().map(Message::ChatMsg),
             Self::Settings { state } => state.view().map(Message::SettingsMsg),
@@ -169,20 +196,25 @@ impl ViewState {
         let mut router_message = None;
 
         match self {
+            ViewState::Logout { state } => {
+                let (cmd, msg) = state.backend_event(event, conn);
+                router_message = msg;
+                commands.push(cmd);
+            }
             ViewState::Channels { state } => {
                 let (cmd, msg) = state.backend_event(event, conn);
                 router_message = msg;
                 commands.push(cmd.map(Message::ChannelsMsg));
             }
             ViewState::Chat { state } => {
-                let (cmd, msg) = state.backend_event(event, conn);
+                let (cmds, msg) = state.backend_event(event, conn).batch();
                 router_message = msg;
-                commands.push(cmd.map(Message::ChatMsg));
+                commands.push(cmds.map(Message::ChatMsg));
             }
             ViewState::Settings { state } => {
-                let (cmd, msg) = state.backend_event(event, conn);
+                let (cmds, msg) = state.backend_event(event, conn).batch();
                 router_message = msg;
-                commands.push(cmd.map(Message::SettingsMsg));
+                commands.push(cmds.map(Message::SettingsMsg));
             }
             ViewState::Welcome { state } => {
                 let (cmd, msg) = state.backend_event(event, conn);
@@ -204,8 +236,8 @@ impl ViewState {
         conn: &mut BackEndConnection,
         selected_theme: Option<style::Theme>,
     ) -> (Command<Message>, Option<RouterMessage>) {
-        let mut router_message = None;
         let mut commands = vec![];
+        let mut router_message = None;
         match message {
             Message::ChannelsMsg(msg) => {
                 if let ViewState::Channels { state } = self {
@@ -219,16 +251,16 @@ impl ViewState {
             }
             Message::ChatMsg(chat_msg) => {
                 if let ViewState::Chat { state } = self {
-                    let (cmd, msg) = state.update(chat_msg, conn);
+                    let (cmds, msg) = state.update(chat_msg, conn).batch();
                     router_message = msg;
-                    commands.push(cmd.map(Message::ChatMsg));
+                    commands.push(cmds.map(Message::ChatMsg));
                 }
             }
-            Message::SettingsMsg(msg) => {
+            Message::SettingsMsg(settings_msg) => {
                 if let ViewState::Settings { state } = self {
-                    let (cmd, msg) = state.update(msg, conn, selected_theme);
-                    commands.push(cmd.map(Message::SettingsMsg));
+                    let (cmds, msg) = state.update(settings_msg, conn, selected_theme).batch();
                     router_message = msg;
+                    commands.push(cmds.map(Message::SettingsMsg));
                 }
             }
             Message::WelcomeMsg(welcome_msg) => {
@@ -260,12 +292,9 @@ impl ViewState {
         (Self::Welcome { state }, Command::none())
     }
 
-    fn chat_contact(
-        db_contact: DbContact,
-        conn: &mut BackEndConnection,
-    ) -> (ViewState, Command<Message>) {
-        let (state, command) = chat::State::chat_to(db_contact, conn);
-        (Self::Chat { state }, command.map(Message::ChatMsg))
+    fn chat_contact(db_contact: DbContact, conn: &mut BackEndConnection) -> ViewState {
+        let state = chat::State::chat_to(db_contact, conn);
+        Self::Chat { state }
     }
 
     pub fn channels(_db_conn: &mut BackEndConnection) -> ViewState {
@@ -296,6 +325,43 @@ impl ViewState {
     pub fn settings_contacts(db_conn: &mut BackEndConnection) -> ViewState {
         Self::Settings {
             state: settings::Settings::contacts(db_conn),
+        }
+    }
+}
+
+mod logout {
+    use crate::components::inform_card;
+    use crate::net::{BackEndConnection, BackendEvent};
+    use crate::widget::Element;
+    use iced::Command;
+
+    use super::RouterMessage;
+
+    #[derive(Debug, Clone)]
+    pub struct State {}
+    impl State {
+        pub fn new() -> Self {
+            Self {}
+        }
+
+        pub fn backend_event<M>(
+            &mut self,
+            event: BackendEvent,
+            _conn: &mut BackEndConnection,
+        ) -> (Command<M>, Option<RouterMessage>) {
+            let command = Command::none();
+            let mut router_message = None;
+            match event {
+                BackendEvent::LogoutSuccess => {
+                    router_message = Some(RouterMessage::GoToLogin);
+                }
+                _ => (),
+            }
+            (command, router_message)
+        }
+
+        pub fn view<'a, M: 'a>(&'a self) -> Element<M> {
+            inform_card("Logging out", "Please wait...").into()
         }
     }
 }

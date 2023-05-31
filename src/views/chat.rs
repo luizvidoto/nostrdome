@@ -23,7 +23,7 @@ use crate::widget::{Button, Container, Element};
 use once_cell::sync::Lazy;
 
 use super::modal::{basic_contact, relays_confirmation, ContactDetails, RelaysConfirmation};
-use super::RouterMessage;
+use super::{RouterCommand, RouterMessage};
 
 static CONTACTS_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
 static CHAT_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
@@ -126,13 +126,10 @@ impl State {
             focus_pubkey: None,
         }
     }
-    pub(crate) fn chat_to(
-        db_contact: DbContact,
-        conn: &mut BackEndConnection,
-    ) -> (Self, Command<Message>) {
+    pub(crate) fn chat_to(db_contact: DbContact, conn: &mut BackEndConnection) -> Self {
         let mut state = Self::new(conn);
         state.focus_pubkey = Some(db_contact.pubkey().to_owned());
-        (state, Command::none())
+        state
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -398,9 +395,8 @@ impl State {
         &mut self,
         event: BackendEvent,
         conn: &mut BackEndConnection,
-    ) -> (Command<Message>, Option<RouterMessage>) {
-        let router_message = None;
-        let mut commands = vec![];
+    ) -> RouterCommand<Message> {
+        let mut commands = RouterCommand::new();
 
         let cmd = self.status_bar.backend_event(event.clone(), conn);
         commands.push(cmd.map(Message::StatusBarMessage));
@@ -427,6 +423,8 @@ impl State {
             BackendEvent::ContactDeleted(db_contact) => {
                 self.chats
                     .retain(|c| c.contact.pubkey() != db_contact.pubkey());
+                // Set to none because it can only deletes a contact if the modal is open
+                // and if the modal is open, the contact is the active one
                 self.active_idx = None;
             }
             BackendEvent::UpdatedMetadata(pubkey) => {
@@ -434,7 +432,6 @@ impl State {
             }
             BackendEvent::GotSingleContact((pubkey, db_contact)) => {
                 if let Some(db_contact) = db_contact.as_ref() {
-                    tracing::debug!("Got single contact: {:?}", db_contact);
                     self.find_and_update_contact(
                         db_contact,
                         chat_contact::Message::ContactUpdated(db_contact.to_owned()),
@@ -454,6 +451,8 @@ impl State {
                     cmds.into_iter().for_each(|c| commands.push(c));
                 }
             }
+            // instead of fetching relay responses
+            // each message already got the responses?
             BackendEvent::GotRelayResponses {
                 chat_message,
                 responses,
@@ -577,16 +576,15 @@ impl State {
             _ => (),
         };
 
-        (Command::batch(commands), router_message)
+        commands
     }
 
     pub fn update(
         &mut self,
         message: Message,
         conn: &mut BackEndConnection,
-    ) -> (Command<Message>, Option<RouterMessage>) {
-        let mut commands = vec![];
-        let mut router_message = None;
+    ) -> RouterCommand<Message> {
+        let mut commands = RouterCommand::new();
 
         match message {
             Message::CopyPressed => {
@@ -655,8 +653,10 @@ impl State {
             }
 
             Message::StatusBarMessage(status_msg) => {
-                let (cmd, msg) = self.status_bar.update(status_msg, conn);
-                router_message = msg;
+                let (cmd, router_message) = self.status_bar.update(status_msg, conn);
+                if let Some(router_message) = router_message {
+                    commands.change_route(router_message);
+                }
                 commands.push(cmd.map(Message::StatusBarMessage));
             }
             // ---------
@@ -729,15 +729,17 @@ impl State {
                 }
             }
             Message::AddContactPress => {
-                router_message = Some(RouterMessage::GoToSettingsContacts);
+                commands.change_route(RouterMessage::GoToSettingsContacts);
             }
             Message::GoToChannelsPress => {
-                router_message = Some(RouterMessage::GoToChannels);
+                commands.change_route(RouterMessage::GoToChannels);
             }
-            Message::NavSettingsPress => router_message = Some(RouterMessage::GoToSettings),
+            Message::NavSettingsPress => {
+                commands.change_route(RouterMessage::GoToSettings);
+            }
         }
 
-        (Command::batch(commands), router_message)
+        commands
     }
 }
 

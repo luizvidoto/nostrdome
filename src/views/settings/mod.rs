@@ -11,7 +11,7 @@ use super::modal::{
     basic_contact, import_contact_list, relays_confirmation, ContactDetails, ImportContactList,
     RelaysConfirmation,
 };
-use super::RouterMessage;
+use super::{RouterCommand, RouterMessage};
 
 mod about;
 mod account;
@@ -167,9 +167,8 @@ impl Settings {
         &mut self,
         event: BackendEvent,
         conn: &mut BackEndConnection,
-    ) -> (Command<Message>, Option<RouterMessage>) {
-        let mut commands = vec![];
-        let router_message = None;
+    ) -> RouterCommand<Message> {
+        let mut commands = RouterCommand::new();
 
         self.modal_state.backend_event(event.clone(), conn);
 
@@ -194,16 +193,15 @@ impl Settings {
             }
         }
 
-        (Command::batch(commands), router_message)
+        commands
     }
     pub fn update(
         &mut self,
         message: Message,
         conn: &mut BackEndConnection,
         selected_theme: Option<style::Theme>,
-    ) -> (Command<Message>, Option<RouterMessage>) {
-        let mut commands = vec![];
-        let mut router_message = None;
+    ) -> RouterCommand<Message> {
+        let mut commands = RouterCommand::new();
 
         match message {
             Message::AccountMessage(msg) => {
@@ -224,7 +222,8 @@ impl Settings {
             }
             Message::AboutMessage(msg) => {
                 if let MenuState::About { state } = &mut self.menu_state {
-                    return (state.update(msg).map(Message::AboutMessage), None);
+                    let cmd = state.update(msg);
+                    commands.push(cmd.map(Message::AboutMessage))
                 }
             }
             Message::AppearanceMessage(msg) => {
@@ -234,7 +233,8 @@ impl Settings {
             }
             Message::NetworkMessage(msg) => {
                 if let MenuState::Network { state } = &mut self.menu_state {
-                    return (state.update(msg, conn).map(Message::NetworkMessage), None);
+                    let cmd = state.update(msg, conn);
+                    commands.push(cmd.map(Message::NetworkMessage));
                 }
             }
             Message::BackupMessage(msg) => {
@@ -243,9 +243,11 @@ impl Settings {
                 }
             }
             Message::ContactsMessage(msg) => {
-                router_message = self.handle_contacts_message(msg, conn);
+                if let Some(router_message) = self.handle_contacts_message(msg, conn) {
+                    commands.change_route(router_message)
+                }
             }
-            Message::NavEscPress => router_message = Some(RouterMessage::GoToChat),
+            Message::NavEscPress => commands.change_route(RouterMessage::GoToChat),
             Message::MenuAccountPress
             | Message::MenuAppearancePress
             | Message::MenuNetworkPress
@@ -256,10 +258,15 @@ impl Settings {
             }
             Message::LogoutPress => {
                 conn.send(net::ToBackend::Logout);
+                commands.change_route(RouterMessage::GoToLogout)
             }
-            other => return (self.modal_state.update(other, conn), None),
+            other => {
+                let cmd = self.modal_state.update(other, conn);
+                commands.push(cmd);
+            }
         }
-        (Command::batch(commands), router_message)
+
+        commands
     }
 
     fn handle_menu_press(

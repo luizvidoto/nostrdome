@@ -23,7 +23,7 @@ pub enum Message {
     RelayMessage(relay_row::MessageWrapper),
     ToNextStep,
     ToPreviousStep,
-    Exit,
+    Logout,
     AddRelay(nostr::Url),
     AddOtherPress,
 
@@ -169,7 +169,7 @@ impl StepView {
     fn make_btns(&self) -> Element<'static, Message> {
         match self {
             StepView::Welcome => row![
-                button("Cancel").on_press(Message::Exit),
+                button("Cancel").on_press(Message::Logout),
                 button("Next").on_press(Message::ToNextStep)
             ]
             .spacing(10)
@@ -435,8 +435,9 @@ impl State {
                     }
                 }
             }
-            Message::Exit => {
+            Message::Logout => {
                 conn.send(ToBackend::Logout);
+                router_message = Some(RouterMessage::GoToLogout);
             }
             Message::ToNextStep => self.to_next_step(conn),
             Message::ToPreviousStep => self.to_previous_step(conn),
@@ -524,9 +525,6 @@ impl State {
                     .iter_mut()
                     .for_each(|r| r.backend_event(event.clone(), conn));
                 match event {
-                    BackendEvent::LogoutSuccess => {
-                        router_message = Some(RouterMessage::GoToLogin);
-                    }
                     BackendEvent::GotRelayStatusList(list) => {
                         for (url, status) in list {
                             if let Some(row) =

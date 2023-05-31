@@ -75,16 +75,20 @@ async fn get_cache_pool() -> Result<SqlitePool, Error> {
     std::fs::create_dir_all(project_dir)?;
 
     tracing::debug!("Creating cache database");
-    let mut path_ext = String::new();
-    for dir in project_dir.iter() {
-        if let Some(p) = dir.to_str() {
-            if p.contains("\\") || p.contains("/") {
-                continue;
+    let db_url = if IN_MEMORY {
+        "sqlite::memory:".to_owned()
+    } else {
+        let mut path_ext = String::new();
+        for dir in project_dir.iter() {
+            if let Some(p) = dir.to_str() {
+                if p.contains("\\") || p.contains("/") {
+                    continue;
+                }
+                path_ext.push_str(&format!("/{}", p));
             }
-            path_ext.push_str(&format!("/{}", p));
         }
-    }
-    let db_url = format!("sqlite://{}.db3?mode=rwc", &path_ext);
+        format!("sqlite://{}.db3?mode=rwc", &path_ext)
+    };
 
     tracing::info!("Connecting to cache database");
     let pool = SqlitePool::connect(&db_url).await?;
