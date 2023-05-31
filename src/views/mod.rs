@@ -9,6 +9,7 @@ use crate::{
 
 mod channels;
 mod chat;
+pub(crate) mod home;
 pub(crate) mod login;
 pub(crate) mod modal;
 pub(crate) mod settings;
@@ -53,8 +54,7 @@ pub enum RouterMessage {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    ChannelsMsg(channels::Message),
-    ChatMsg(chat::Message),
+    HomeMsg(home::Message),
     SettingsMsg(settings::Message),
     LoginMsg(login::Message),
     WelcomeMsg(welcome::Message),
@@ -160,31 +160,29 @@ impl Router {
 }
 
 pub enum ViewState {
-    Logout { state: logout::State },
-    Channels { state: channels::State },
-    Chat { state: chat::State },
-    Settings { state: settings::Settings },
-    Login { state: login::State },
     Welcome { state: welcome::State },
+    Home { state: home::State },
+    Login { state: login::State },
+    Logout { state: logout::State },
+    Settings { state: settings::Settings },
 }
 
 impl ViewState {
     pub fn subscription(&self) -> Subscription<Message> {
         match self {
             ViewState::Settings { state } => state.subscription().map(Message::SettingsMsg),
-            ViewState::Chat { state } => state.subscription().map(Message::ChatMsg),
+            ViewState::Home { state } => state.subscription().map(Message::HomeMsg),
             ViewState::Welcome { state } => state.subscription().map(Message::WelcomeMsg),
             _ => Subscription::none(),
         }
     }
     pub fn view(&self) -> Element<Message> {
         match self {
-            Self::Logout { state } => state.view(),
-            Self::Channels { state } => state.view().map(Message::ChannelsMsg),
-            Self::Chat { state } => state.view().map(Message::ChatMsg),
-            Self::Settings { state } => state.view().map(Message::SettingsMsg),
-            Self::Login { state } => state.view().map(Message::LoginMsg),
             Self::Welcome { state } => state.view().map(Message::WelcomeMsg),
+            Self::Home { state } => state.view().map(Message::HomeMsg),
+            Self::Login { state } => state.view().map(Message::LoginMsg),
+            Self::Logout { state } => state.view(),
+            Self::Settings { state } => state.view().map(Message::SettingsMsg),
         }
     }
     pub fn backend_event(
@@ -201,15 +199,10 @@ impl ViewState {
                 router_message = msg;
                 commands.push(cmd);
             }
-            ViewState::Channels { state } => {
-                let (cmd, msg) = state.backend_event(event, conn);
+            ViewState::Home { state } => {
+                let (cmd, msg) = state.backend_event(event, conn).batch();
                 router_message = msg;
-                commands.push(cmd.map(Message::ChannelsMsg));
-            }
-            ViewState::Chat { state } => {
-                let (cmds, msg) = state.backend_event(event, conn).batch();
-                router_message = msg;
-                commands.push(cmds.map(Message::ChatMsg));
+                commands.push(cmd.map(Message::HomeMsg));
             }
             ViewState::Settings { state } => {
                 let (cmds, msg) = state.backend_event(event, conn).batch();
@@ -239,21 +232,11 @@ impl ViewState {
         let mut commands = vec![];
         let mut router_message = None;
         match message {
-            Message::ChannelsMsg(msg) => {
-                if let ViewState::Channels { state } = self {
-                    match msg {
-                        channels::Message::GoToChat => {
-                            router_message = Some(RouterMessage::GoToChat);
-                        }
-                        msg => state.update(msg, conn),
-                    }
-                }
-            }
-            Message::ChatMsg(chat_msg) => {
-                if let ViewState::Chat { state } = self {
-                    let (cmds, msg) = state.update(chat_msg, conn).batch();
+            Message::HomeMsg(home_msg) => {
+                if let ViewState::Home { state } = self {
+                    let (cmds, msg) = state.update(home_msg, conn).batch();
                     router_message = msg;
-                    commands.push(cmds.map(Message::ChatMsg));
+                    commands.push(cmds.map(Message::HomeMsg));
                 }
             }
             Message::SettingsMsg(settings_msg) => {
@@ -293,38 +276,38 @@ impl ViewState {
     }
 
     fn chat_contact(db_contact: DbContact, conn: &mut BackEndConnection) -> ViewState {
-        let state = chat::State::chat_to(db_contact, conn);
-        Self::Chat { state }
-    }
-
-    pub fn channels(_db_conn: &mut BackEndConnection) -> ViewState {
-        Self::Channels {
-            state: channels::State::new(),
+        Self::Home {
+            state: home::State::chat_to(db_contact, conn),
         }
     }
-    pub fn chat(db_conn: &mut BackEndConnection) -> ViewState {
-        Self::Chat {
-            state: chat::State::new(db_conn),
+    pub fn chat(conn: &mut BackEndConnection) -> ViewState {
+        Self::Home {
+            state: home::State::chat(conn),
         }
     }
-    pub fn settings(db_conn: &mut BackEndConnection) -> ViewState {
+    pub fn channels(conn: &mut BackEndConnection) -> ViewState {
+        Self::Home {
+            state: home::State::find_channels(conn),
+        }
+    }
+    pub fn settings(conn: &mut BackEndConnection) -> ViewState {
         Self::Settings {
-            state: settings::Settings::new(db_conn),
+            state: settings::Settings::new(conn),
         }
     }
-    pub fn settings_network(db_conn: &mut BackEndConnection) -> ViewState {
+    pub fn settings_network(conn: &mut BackEndConnection) -> ViewState {
         Self::Settings {
-            state: settings::Settings::network(db_conn),
+            state: settings::Settings::network(conn),
         }
     }
-    pub fn settings_about(db_conn: &mut BackEndConnection) -> ViewState {
+    pub fn settings_about(conn: &mut BackEndConnection) -> ViewState {
         Self::Settings {
-            state: settings::Settings::about(db_conn),
+            state: settings::Settings::about(conn),
         }
     }
-    pub fn settings_contacts(db_conn: &mut BackEndConnection) -> ViewState {
+    pub fn settings_contacts(conn: &mut BackEndConnection) -> ViewState {
         Self::Settings {
-            state: settings::Settings::contacts(db_conn),
+            state: settings::Settings::contacts(conn),
         }
     }
 }

@@ -69,7 +69,6 @@ pub enum Message {
     StatusBarMessage(status_bar::Message),
     OnVerResize(u16),
     GoToChannelsPress,
-    NavSettingsPress,
     ContactCardMessage(chat_contact::MessageWrapper),
     DMNMessageChange(String),
     DMSentPress,
@@ -190,11 +189,8 @@ impl State {
                 .style(style::TextInput::ChatSearch)
                 .into(),
         };
-        let menu_btn = button(menu_bars_icon())
-            .on_press(Message::NavSettingsPress)
-            .style(style::Button::Invisible);
         let search_container = container(
-            row![menu_btn, search_contact]
+            row![search_contact]
                 .spacing(5)
                 .align_items(alignment::Alignment::Center),
         )
@@ -382,15 +378,6 @@ impl State {
         }
     }
 
-    fn add_unseen_count(&mut self, db_contact: &DbContact, conn: &mut BackEndConnection) {
-        self.find_and_update_contact(
-            db_contact,
-            chat_contact::Message::AddUnseenCount,
-            conn,
-            |c| c.contact.pubkey() == db_contact.pubkey(),
-        );
-    }
-
     pub fn backend_event(
         &mut self,
         event: BackendEvent,
@@ -471,20 +458,15 @@ impl State {
                             self.msgs_scroll_offset,
                         ));
                     } else {
-                        // scrollable doesnt stay still when new messages are added at the top
+                        // TODO: scrollable doesnt stay still when new messages are added at the top
                         self.messages.extend(chat_msgs);
                     }
+
                     self.messages
                         .sort_by(|a, b| a.display_time.cmp(&b.display_time));
                     self.active_chat_mut()
                         .map(|c| c.update(chat_contact::Message::ResetUnseenCount, conn));
                 }
-            }
-            BackendEvent::ConfirmedDM((_db_contact, chat_msg)) => {
-                self.messages
-                    .iter_mut()
-                    .find(|m| m.msg_id == chat_msg.msg_id)
-                    .map(|m| m.confirm_msg(&chat_msg));
             }
             BackendEvent::UpdatedContactMetadata { db_contact, .. } => self
                 .find_and_update_contact(
@@ -493,6 +475,12 @@ impl State {
                     conn,
                     |c| c.contact.pubkey() == db_contact.pubkey(),
                 ),
+            BackendEvent::ConfirmedDM((_db_contact, chat_msg)) => {
+                self.messages
+                    .iter_mut()
+                    .find(|m| m.msg_id == chat_msg.msg_id)
+                    .map(|m| m.confirm_msg(&chat_msg));
+            }
             BackendEvent::PendingDM((db_contact, msg)) => {
                 self.messages.push(msg.clone());
                 self.find_and_update_contact(
@@ -523,7 +511,6 @@ impl State {
                 } else {
                     // não estou na conversa
                     self.move_contact_to_top(&db_contact);
-                    self.add_unseen_count(&db_contact, conn);
                     commands.push(scrollable::snap_to(
                         CONTACTS_SCROLLABLE_ID.clone(),
                         scrollable::RelativeOffset::START,
@@ -733,9 +720,6 @@ impl State {
             }
             Message::GoToChannelsPress => {
                 commands.change_route(RouterMessage::GoToChannels);
-            }
-            Message::NavSettingsPress => {
-                commands.change_route(RouterMessage::GoToSettings);
             }
         }
 

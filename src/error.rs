@@ -1,11 +1,8 @@
 use futures::channel::mpsc;
-use nostr::{secp256k1::XOnlyPublicKey, EventId};
+use nostr::secp256k1::XOnlyPublicKey;
 use thiserror::Error;
 
-// pub type Result<T> = std::result::Result<T, Error>;
-
 /// Errors that can occur in the nostrtalk crate
-
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("SendError: {0}")]
@@ -59,9 +56,6 @@ pub enum Error {
 
     #[error("{0}")]
     FromNtpError(#[from] crate::net::ntp::NtpError),
-
-    #[error("Failed to send to backend input channel: {0}")]
-    FailedToSendBackendInput(String),
 
     #[error("App didn't ask for kind: {0:?}")]
     NotSubscribedToKind(nostr::Kind),

@@ -29,7 +29,6 @@ pub enum Message {
     ShowOnlyProfileImage,
     ShowFullCard,
     GotChatInfo(Option<ChatInfo>),
-    AddUnseenCount,
     NewMessage(ChatMessage),
     UpdatedMetadata(DbContact),
     ResetUnseenCount,
@@ -200,15 +199,11 @@ impl ChatContact {
                     self.mode = CardMode::Small;
                 }
                 Message::ShowFullCard => self.mode = CardMode::Full,
-                Message::AddUnseenCount => {
-                    if let Some(chat_info) = &mut self.chat_info {
-                        chat_info.unseen_messages = (chat_info.unseen_messages + 1).min(100);
-                    }
-                }
                 Message::NewMessage(chat_msg) => {
                     if let Some(chat_info) = &mut self.chat_info {
                         chat_info.last_message = chat_msg.content;
                         chat_info.last_message_time = chat_msg.display_time;
+                        chat_info.unseen_messages = (chat_info.unseen_messages + 1).min(100);
                     }
                 }
             },
