@@ -24,6 +24,7 @@ use crate::views::login::BasicProfile;
 use crate::Error;
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crate::db::Database;
 use crate::net::ntp::spawn_ntp_request;
@@ -118,8 +119,10 @@ impl BackendState {
         &mut self,
         sub_type: &SubscriptionType,
         filters: Vec<Filter>,
+        timeout: Option<Duration>,
     ) -> Result<(), Error> {
-        self.nostr.subscribe_eose(&sub_type.id(), filters)?;
+        self.nostr
+            .subscribe_eose(&sub_type.id(), filters, timeout)?;
         self.active_subscriptions.push(sub_type.to_owned());
         Ok(())
     }
@@ -127,8 +130,9 @@ impl BackendState {
         &mut self,
         sub_type: &SubscriptionType,
         filters: Vec<Filter>,
+        timeout: Option<Duration>,
     ) -> Result<(), Error> {
-        self.nostr.subscribe_id(&sub_type.id(), filters)?;
+        self.nostr.subscribe_id(&sub_type.id(), filters, timeout)?;
         self.active_subscriptions.push(sub_type.to_owned());
         Ok(())
     }
@@ -137,9 +141,10 @@ impl BackendState {
         url: &Url,
         sub_type: &SubscriptionType,
         filters: Vec<Filter>,
+        timeout: Option<Duration>,
     ) -> Result<(), Error> {
         self.nostr
-            .relay_subscribe_eose(url, &sub_type.id(), filters)?;
+            .relay_subscribe_eose(url, &sub_type.id(), filters, timeout)?;
         self.active_subscriptions.push(sub_type.to_owned());
         Ok(())
     }
@@ -157,6 +162,153 @@ pub enum TaskOutput {
     ImageDownloaded(ImageDownloaded),
 }
 
+async fn handle_eose(
+    output: &mut futures::channel::mpsc::Sender<BackendEvent>,
+    _keys: &Keys,
+    backend: &mut BackendState,
+    url: Url,
+    subscription_id: SubscriptionId,
+) -> Result<(), Error> {
+    tracing::info!("EOSE {} - {}", &url, &subscription_id);
+
+    if let Some(sub_type) = backend.find_subscription(subscription_id) {
+        let pool = &backend.db_client.pool;
+        let cache_pool = &backend.db_client.cache_pool;
+
+        match sub_type {
+            SubscriptionType::ContactList => {
+                let list = DbContact::fetch(pool, cache_pool).await?;
+                backend.relay_subscribe_eose(
+                    &url,
+                    &SubscriptionType::ContactListMetadata,
+                    contact_list_metadata(&list),
+                    Some(Duration::from_secs(10)),
+                )?;
+            }
+            SubscriptionType::SearchChannels => {
+                // send search channels metadata now
+                let _ = output
+                    .send(BackendEvent::EOSESearchChannels(url.to_owned()))
+                    .await;
+            }
+            SubscriptionType::SearchChannelsDetails(channel_id) => {
+                let _ = output
+                    .send(BackendEvent::EOSESearchChannelsDetails(
+                        url.to_owned(),
+                        channel_id,
+                    ))
+                    .await;
+
+                if let Some(search_result) = backend.search_channel_details.pop_front() {
+                    if search_result.id == channel_id {
+                        if let Some(result) = backend.search_channel_details.pop_front() {
+                            tracing::info!("Search Channels Details - {}", result.id);
+                            backend.relay_subscribe_eose(
+                                &url,
+                                &SubscriptionType::SearchChannelsDetails(result.id),
+                                channel_details_filter(result.id.to_owned()),
+                                Some(Duration::from_secs(5)),
+                            )?;
+                            let _ = output
+                                .send(BackendEvent::LoadingChannelDetails(url, result.id))
+                                .await;
+                        }
+                    }
+                }
+            }
+            _other => (),
+        }
+    }
+    Ok(())
+}
+
+async fn handle_event(
+    output: &mut futures::channel::mpsc::Sender<BackendEvent>,
+    keys: &Keys,
+    backend: &mut BackendState,
+    url: Url,
+    subscription_id: SubscriptionId,
+    ns_event: nostr::Event,
+) -> Result<(), Error> {
+    let pool = &backend.db_client.pool;
+    let cache_pool = &backend.db_client.cache_pool;
+
+    if let Some(sub_type) = backend.find_subscription(subscription_id) {
+        match sub_type {
+            SubscriptionType::SearchChannels => {
+                let result = ChannelResult::from_ns_event(url.to_owned(), ns_event)?;
+
+                if backend.search_channel_details.is_empty() {
+                    backend.relay_subscribe_eose(
+                        &url,
+                        &SubscriptionType::SearchChannelsDetails(result.id),
+                        channel_details_filter(result.id.to_owned()),
+                        Some(Duration::from_secs(5)),
+                    )?;
+                    let _ = output
+                        .send(BackendEvent::LoadingChannelDetails(url, result.id))
+                        .await;
+                }
+                backend.search_channel_details.push_back(result.clone());
+
+                let _ = output.send(BackendEvent::SearchChannelResult(result)).await;
+
+                return Ok(());
+            }
+            SubscriptionType::SearchChannelsDetails(channel_id) => {
+                if let Kind::ChannelMetadata = ns_event.kind {
+                    let _ = output
+                        .send(BackendEvent::SearchChannelMetaUpdate(channel_id, ns_event))
+                        .await;
+                } else if let Kind::ChannelMessage = ns_event.kind {
+                    let _ = output
+                        .send(BackendEvent::SearchChannelMessage(channel_id, ns_event))
+                        .await;
+                }
+                return Ok(());
+            }
+            _ => (),
+        }
+    }
+
+    match ns_event.kind {
+        nostr::Kind::ContactList => {
+            // contact_list is validating differently
+            handle_contact_list(output, keys, pool, &url, ns_event).await?;
+        }
+        other => {
+            if let Some(db_event) = confirmed_event(pool, &url, ns_event).await? {
+                match other {
+                    nostr::Kind::Metadata => {
+                        handle_metadata_event(output, cache_pool, &db_event).await?;
+                    }
+                    nostr::Kind::EncryptedDirectMessage => {
+                        handle_dm(output, pool, cache_pool, keys, &url, &db_event).await?;
+                    }
+                    nostr::Kind::RecommendRelay => {
+                        handle_recommend_relay(db_event).await?;
+                    }
+                    nostr::Kind::ChannelCreation => {
+                        handle_channel_creation(output, cache_pool, &db_event).await?;
+                    }
+                    nostr::Kind::ChannelMetadata => {
+                        handle_channel_update(output, cache_pool, &db_event).await?;
+                    }
+                    nostr::Kind::ChannelMessage => {
+                        handle_channel_message(output, cache_pool, &db_event).await?;
+                    }
+                    _other_kind => {
+                        let _ = output
+                            .send(BackendEvent::OtherKindEventInserted(db_event))
+                            .await;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn handle_relay_message(
     output: &mut futures::channel::mpsc::Sender<BackendEvent>,
     keys: &Keys,
@@ -167,7 +319,6 @@ async fn handle_relay_message(
 ) -> Result<(), Error> {
     let pool = &backend.db_client.pool;
     let cache_pool = &backend.db_client.cache_pool;
-    let nostr = &backend.nostr;
     match message {
         RelayMessage::Ok {
             event_id: event_hash,
@@ -242,128 +393,13 @@ async fn handle_relay_message(
             }
         }
         RelayMessage::EndOfStoredEvents(subscription_id) => {
-            tracing::info!("EOSE {} - {}", &url, &subscription_id);
-
-            if let Some(sub_type) = backend.find_subscription(subscription_id) {
-                match sub_type {
-                    SubscriptionType::ContactList => {
-                        let list = DbContact::fetch(pool, cache_pool).await?;
-                        backend.relay_subscribe_eose(
-                            &url,
-                            &SubscriptionType::ContactListMetadata,
-                            contact_list_metadata(&list),
-                        )?;
-                    }
-                    SubscriptionType::SearchChannels => {
-                        // send search channels metadata now
-                        let _ = output
-                            .send(BackendEvent::EOSESearchChannels(url.to_owned()))
-                            .await;
-                    }
-                    SubscriptionType::SearchChannelsDetails(channel_id) => {
-                        let _ = output
-                            .send(BackendEvent::EOSESearchChannelsDetails(
-                                url.to_owned(),
-                                channel_id,
-                            ))
-                            .await;
-
-                        if let Some(search_result) = backend.search_channel_details.pop_front() {
-                            if search_result.id == channel_id {
-                                if let Some(result) = backend.search_channel_details.pop_front() {
-                                    tracing::info!("Search Channels Details - {}", result.id);
-                                    backend.relay_subscribe_eose(
-                                        &url,
-                                        &SubscriptionType::SearchChannelsDetails(result.id),
-                                        channel_details_filter(result.id.to_owned()),
-                                    )?;
-                                    let _ = output
-                                        .send(BackendEvent::LoadingChannelDetails(url, result.id))
-                                        .await;
-                                }
-                            }
-                        }
-                    }
-                    _other => (),
-                }
-            }
+            handle_eose(output, keys, backend, url, subscription_id).await?;
         }
         RelayMessage::Event {
             subscription_id,
             event: ns_event,
         } => {
-            if let Some(sub_type) = backend.find_subscription(subscription_id) {
-                match sub_type {
-                    SubscriptionType::SearchChannels => {
-                        let result = ChannelResult::from_ns_event(url.to_owned(), *ns_event)?;
-
-                        if backend.search_channel_details.is_empty() {
-                            backend.relay_subscribe_eose(
-                                &url,
-                                &SubscriptionType::SearchChannelsDetails(result.id),
-                                channel_details_filter(result.id.to_owned()),
-                            )?;
-                            let _ = output
-                                .send(BackendEvent::LoadingChannelDetails(url, result.id))
-                                .await;
-                        }
-                        backend.search_channel_details.push_back(result.clone());
-
-                        let _ = output.send(BackendEvent::SearchChannelResult(result)).await;
-
-                        return Ok(());
-                    }
-                    SubscriptionType::SearchChannelsDetails(channel_id) => {
-                        if let Kind::ChannelMetadata = ns_event.kind {
-                            let _ = output
-                                .send(BackendEvent::SearchChannelMetaUpdate(channel_id, ns_event))
-                                .await;
-                        } else if let Kind::ChannelMessage = ns_event.kind {
-                            let _ = output
-                                .send(BackendEvent::SearchChannelMessage(channel_id, ns_event))
-                                .await;
-                        }
-                        return Ok(());
-                    }
-                    _ => (),
-                }
-            }
-
-            match ns_event.kind {
-                nostr::Kind::ContactList => {
-                    // contact_list is validating differently
-                    handle_contact_list(output, keys, pool, &url, *ns_event).await?;
-                }
-                other => {
-                    if let Some(db_event) = confirmed_event(pool, &url, *ns_event).await? {
-                        match other {
-                            nostr::Kind::Metadata => {
-                                handle_metadata_event(output, cache_pool, &db_event).await?;
-                            }
-                            nostr::Kind::EncryptedDirectMessage => {
-                                handle_dm(output, pool, cache_pool, keys, &url, &db_event).await?;
-                            }
-                            nostr::Kind::RecommendRelay => {
-                                handle_recommend_relay(db_event).await?;
-                            }
-                            nostr::Kind::ChannelCreation => {
-                                handle_channel_creation(output, cache_pool, &db_event).await?;
-                            }
-                            nostr::Kind::ChannelMetadata => {
-                                handle_channel_update(output, cache_pool, &db_event).await?;
-                            }
-                            nostr::Kind::ChannelMessage => {
-                                handle_channel_message(output, cache_pool, &db_event).await?;
-                            }
-                            _other_kind => {
-                                let _ = output
-                                    .send(BackendEvent::OtherKindEventInserted(db_event))
-                                    .await;
-                            }
-                        }
-                    }
-                }
-            }
+            handle_event(output, keys, backend, url, subscription_id, *ns_event).await?;
         }
         RelayMessage::Notice { message } => {
             tracing::info!("Relay message: Notice: {}", message);
@@ -499,6 +535,12 @@ pub fn backend_connect() -> Subscription<BackendEvent> {
                                     tracing::debug!("Received notification from nostr");
                                     if let Ok(notification) = notification{
                                         match notification {
+                                            NotificationEvent::Timeout(url, subscription_id) => {
+                                                if let Err(e) = handle_eose(&mut output, keys, backend, url, subscription_id).await {
+                                                    // depending on the error, restart backend?
+                                                    tracing::error!("{}", e);
+                                                }
+                                            }
                                             NotificationEvent::RelayTerminated(url) => {
                                                 tracing::debug!("Relay terminated - {}", url);
                                             }
@@ -571,7 +613,7 @@ pub enum BackendEvent {
     FetchingLatestVersion,
     DownloadingImage {
         kind: ImageKind,
-        image_url: String,
+        image_url: Url,
     },
     ImageDownloaded(ImageDownloaded),
 
@@ -658,8 +700,8 @@ pub enum BackendEvent {
     SearchingForChannels,
     EOSESearchChannels(Url),
     SearchChannelResult(ChannelResult),
-    SearchChannelMetaUpdate(nostr::EventId, Box<nostr::Event>),
-    SearchChannelMessage(nostr::EventId, Box<nostr::Event>),
+    SearchChannelMetaUpdate(nostr::EventId, nostr::Event),
+    SearchChannelMessage(nostr::EventId, nostr::Event),
     EOSESearchChannelsDetails(Url, nostr::EventId),
     LoadingChannelDetails(Url, nostr::EventId),
 }
@@ -702,7 +744,7 @@ pub enum ToBackend {
     GetRelayStatusList,
     CreateChannel,
     DownloadImage {
-        image_url: String,
+        image_url: Url,
         kind: ImageKind,
         identifier: String,
     },
@@ -808,36 +850,34 @@ pub async fn process_message(
             image_url,
             identifier,
             kind,
-        } => {
-            let image_url_parsed = Url::parse(&image_url)?;
-            match ImageDownloaded::fetch(cache_pool, &image_url_parsed).await? {
-                Some(image) => {
-                    let _ = output.send(BackendEvent::ImageDownloaded(image)).await;
-                }
-                None => {
-                    let task_tx_1 = task_tx.clone();
-                    let identifier_1 = identifier.clone();
-                    let image_url_1 = image_url.clone();
-                    tokio::spawn(async move {
-                        let result = download_image(&image_url_1, &identifier_1, kind)
-                            .await
-                            .map(TaskOutput::ImageDownloaded)
-                            .map_err(|e| e.into());
-                        if let Err(e) = task_tx_1.send(result).await {
-                            tracing::error!("Error sending image downloaded event: {}", e);
-                        }
-                    });
-                    let _ = output
-                        .send(BackendEvent::DownloadingImage { kind, image_url })
-                        .await;
-                }
+        } => match ImageDownloaded::fetch(cache_pool, &image_url).await? {
+            Some(image) => {
+                let _ = output.send(BackendEvent::ImageDownloaded(image)).await;
             }
-        }
+            None => {
+                let task_tx_1 = task_tx.clone();
+                let identifier_1 = identifier.clone();
+                let image_url_1 = image_url.to_string();
+                tokio::spawn(async move {
+                    let result = download_image(&image_url_1, &identifier_1, kind)
+                        .await
+                        .map(TaskOutput::ImageDownloaded)
+                        .map_err(|e| e.into());
+                    if let Err(e) = task_tx_1.send(result).await {
+                        tracing::error!("Error sending image downloaded event: {}", e);
+                    }
+                });
+                let _ = output
+                    .send(BackendEvent::DownloadingImage { kind, image_url })
+                    .await;
+            }
+        },
         // -----------
         ToBackend::FindChannels(search_term) => {
             backend.subscribe_eose(
                 &SubscriptionType::SearchChannels,
                 vec![channel_search_filter(&search_term)],
+                Some(Duration::from_secs(10)),
             )?;
             let _ = output.send(BackendEvent::SearchingForChannels).await;
         }
@@ -1193,14 +1233,17 @@ pub fn add_relays_and_connect(
     backend.subscribe_eose(
         &SubscriptionType::ContactList,
         vec![contact_list_filter(keys.public_key(), last_timestamp_secs)],
+        None,
     )?;
     backend.subscribe_eose(
         &SubscriptionType::UserMetadata,
         vec![user_metadata(keys.public_key())],
+        None,
     )?;
     backend.subscribe_id(
         &SubscriptionType::Messages,
         messages_filter(keys.public_key(), last_timestamp_secs),
+        None,
     )?;
 
     Ok(())
@@ -1260,4 +1303,4 @@ async fn export_contacts(keys: &Keys, pool: &SqlitePool) -> Result<BackendEvent,
     save_file(&event, "json").await
 }
 
-const BACKEND_CHANNEL_SIZE: usize = 100;
+const BACKEND_CHANNEL_SIZE: usize = 1024;

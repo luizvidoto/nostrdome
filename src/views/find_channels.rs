@@ -1,6 +1,10 @@
+use std::collections::HashMap;
+
 use iced::widget::{button, column, container, image, row, text, tooltip, Space};
 use iced::{clipboard, Alignment, Command, Length, Subscription};
 use iced_native::widget::text_input;
+use nostr::EventId;
+use url::Url;
 
 use crate::components::common_scrollable;
 use crate::components::text::title;
@@ -19,14 +23,14 @@ pub enum Message {
     CopyChannelId(nostr::EventId),
 }
 pub struct State {
-    search_results: Vec<ChannelResult>,
+    search_results: HashMap<EventId, ChannelResult>,
     search_input_value: String,
     searching: bool,
 }
 impl State {
     pub fn new(_conn: &mut BackEndConnection) -> Self {
         Self {
-            search_results: Vec::new(),
+            search_results: HashMap::new(),
             search_input_value: String::new(),
             searching: false,
         }
@@ -49,6 +53,7 @@ impl State {
             }
             Message::SubmitPress => {
                 self.searching = false;
+                self.search_results = HashMap::new();
                 conn.send(ToBackend::FindChannels(self.search_input_value.clone()))
             }
         }
@@ -66,47 +71,51 @@ impl State {
                 self.searching = true;
             }
             BackendEvent::SearchChannelResult(result) => {
-                self.search_results.push(result);
+                self.search_results.insert(result.id, result);
             }
             BackendEvent::EOSESearchChannels(url) => {
                 self.searching = false;
             }
             BackendEvent::SearchChannelMetaUpdate(channel_id, ns_event) => {
-                if let Some(result) = self.search_results.iter_mut().find(|r| r.id == channel_id) {
-                    if let Err(e) = result.update_meta(*ns_event) {
+                if let Some(result) = self.search_results.get_mut(&channel_id) {
+                    if let Err(e) = result.update_meta(ns_event) {
                         tracing::error!("Error updating channel meta: {:?}", e);
                     }
                 }
             }
             BackendEvent::SearchChannelMessage(channel_id, ns_event) => {
                 self.search_results
-                    .iter_mut()
-                    .find(|r| r.id == channel_id)
-                    .map(|r| r.message(*ns_event));
+                    .get_mut(&channel_id)
+                    .map(|r| r.message(ns_event));
             }
             BackendEvent::LoadingChannelDetails(_url, channel_id) => {
                 self.search_results
-                    .iter_mut()
-                    .find(|r| r.id == channel_id)
+                    .get_mut(&channel_id)
                     .map(|r| r.loading_details());
             }
             BackendEvent::EOSESearchChannelsDetails(_url, channel_id) => {
-                if let Some(result) = self.search_results.iter_mut().find(|r| r.id == channel_id) {
+                if let Some(result) = self.search_results.get_mut(&channel_id) {
                     result.done_loading();
+
                     if let Some(image_url) = &result.picture {
-                        conn.send(ToBackend::DownloadImage {
-                            identifier: result.id.to_string(),
-                            image_url: image_url.to_owned(),
-                            kind: ImageKind::Channel,
-                        })
+                        match Url::parse(image_url) {
+                            Ok(image_url_parsed) => conn.send(ToBackend::DownloadImage {
+                                identifier: result.id.to_string(),
+                                image_url: image_url_parsed,
+                                kind: ImageKind::Channel,
+                            }),
+                            Err(e) => {
+                                tracing::error!("Error parsing image url: {:?}", e);
+                            }
+                        }
                     }
                 }
             }
             BackendEvent::ImageDownloaded(image) => {
-                if let Some(result) = self
+                if let Some((_, result)) = self
                     .search_results
                     .iter_mut()
-                    .find(|r| r.picture == Some(image.url.to_string()))
+                    .find(|(_, r)| r.picture == Some(image.url.to_string()))
                 {
                     result.update_image(image);
                 }
@@ -145,7 +154,7 @@ impl State {
         let results_container = self
             .search_results
             .iter()
-            .fold(column![], |acc, result| acc.push(make_results(result)));
+            .fold(column![], |acc, (_, result)| acc.push(make_results(result)));
 
         common_scrollable(
             container(column![

@@ -7,6 +7,7 @@ use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use std::borrow::Borrow;
 use std::str::FromStr;
 use thiserror::Error;
+use url::Url;
 
 use crate::consts::default_profile_image;
 use crate::db::UserConfig;
@@ -247,12 +248,19 @@ impl DbContact {
                 return Handle::from_path(path);
             } else {
                 if let Some(image_url) = &cache.metadata.picture {
-                    tracing::info!("Download image. url: {}", image_url);
-                    conn.send(net::ToBackend::DownloadImage {
-                        image_url: image_url.to_owned(),
-                        kind,
-                        identifier: self.pubkey.to_string(),
-                    });
+                    match Url::parse(image_url) {
+                        Ok(image_url_parsed) => {
+                            tracing::info!("Download image. url: {}", image_url);
+                            conn.send(net::ToBackend::DownloadImage {
+                                image_url: image_url_parsed,
+                                kind,
+                                identifier: self.pubkey.to_string(),
+                            });
+                        }
+                        Err(e) => {
+                            tracing::error!("Error parsing image url: {:?}", e);
+                        }
+                    }
                 } else {
                     tracing::info!("Contact don't have profile image");
                 }
