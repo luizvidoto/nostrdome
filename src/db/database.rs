@@ -193,10 +193,11 @@ const INITIAL_SETUP: [&str; 8] = [
     include_str!("../../migrations/8_relay_response.sql"),
 ];
 
-const CACHE_SETUP: [&str; 3] = [
+const CACHE_SETUP: [&str; 4] = [
     include_str!("../../migrations/cache/1_setup.sql"),
     include_str!("../../migrations/cache/2_profile_meta_cache.sql"),
     include_str!("../../migrations/cache/3_channel_cache.sql"),
+    include_str!("../../migrations/cache/4_image_cache.sql"),
 ];
 
 const IN_MEMORY: bool = false;

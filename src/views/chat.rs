@@ -9,12 +9,10 @@ use nostr::secp256k1::XOnlyPublicKey;
 
 use crate::components::chat_contact::{ChatContact, CARD_HEIGHT};
 use crate::components::floating_element::{Anchor, FloatingElement, Offset};
-use crate::components::{chat_contact, common_scrollable, status_bar, Responsive, StatusBar};
+use crate::components::{chat_contact, common_scrollable, Responsive};
 use crate::consts::YMD_FORMAT;
 use crate::db::{DbContact, DbRelay, DbRelayResponse};
-use crate::icon::{
-    copy_icon, file_icon_regular, menu_bars_icon, reply_icon, satellite_icon, send_icon,
-};
+use crate::icon::{copy_icon, file_icon_regular, reply_icon, satellite_icon, send_icon};
 use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
 use crate::types::{chat_message, ChatMessage};
@@ -66,7 +64,6 @@ pub enum Message {
     RelaysConfirmationPress,
     BasicContactMessage(Box<basic_contact::CMessage<Message>>),
     RelaysConfirmationMessage(Box<relays_confirmation::CMessage<Message>>),
-    StatusBarMessage(status_bar::Message),
     OnVerResize(u16),
     GoToChannelsPress,
     ContactCardMessage(chat_contact::MessageWrapper),
@@ -91,7 +88,6 @@ pub struct State {
     search_input: String,
     show_only_profile: bool,
     msgs_scroll_offset: scrollable::RelativeOffset,
-    status_bar: StatusBar,
     modal_state: ModalState,
     context_menu_position: Offset,
     chat_window_size: Size,
@@ -114,7 +110,6 @@ impl State {
             search_input: "".into(),
             show_only_profile: false,
             msgs_scroll_offset: scrollable::RelativeOffset::END,
-            status_bar: StatusBar::new(),
             modal_state: ModalState::Off,
             context_menu_position: Offset { x: 0., y: 0. },
             chat_window_size: Size::ZERO,
@@ -132,9 +127,7 @@ impl State {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        self.status_bar
-            .subscription()
-            .map(Message::StatusBarMessage)
+        Subscription::none()
     }
 
     fn active_chat(&self) -> Option<&ChatContact> {
@@ -248,17 +241,15 @@ impl State {
         )
         .spacing(1.0)
         .min_size_second(300);
-        let status_bar = self.status_bar.view().map(Message::StatusBarMessage);
 
-        let underlay = column![main_content, status_bar];
-
-        let float =
-            FloatingElement::new(underlay, || make_context_menu(&self.last_relays_response))
-                .on_esc(Message::CloseCtxMenu)
-                .backdrop(Message::CloseCtxMenu)
-                .anchor(Anchor::NorthWest)
-                .offset(self.context_menu_position)
-                .hide(self.hide_context_menu);
+        let float = FloatingElement::new(main_content, || {
+            make_context_menu(&self.last_relays_response)
+        })
+        .on_esc(Message::CloseCtxMenu)
+        .backdrop(Message::CloseCtxMenu)
+        .anchor(Anchor::NorthWest)
+        .offset(self.context_menu_position)
+        .hide(self.hide_context_menu);
 
         self.modal_state.view(float)
     }
@@ -385,12 +376,18 @@ impl State {
     ) -> RouterCommand<Message> {
         let mut commands = RouterCommand::new();
 
-        let cmd = self.status_bar.backend_event(event.clone(), conn);
-        commands.push(cmd.map(Message::StatusBarMessage));
-
         self.modal_state.backend_event(event.clone(), conn);
 
         match event {
+            BackendEvent::ImageDownloaded(image) => {
+                if let Some(chat) = self
+                    .chats
+                    .iter_mut()
+                    .find(|c| c.contact.get_profile_pic() == Some(image.url.to_string()))
+                {
+                    chat.update(chat_contact::Message::ImageDownloaded(image), conn);
+                }
+            }
             BackendEvent::ContactCreated(db_contact) => {
                 let id = self.chats.len() as i32;
                 self.chats
@@ -639,13 +636,6 @@ impl State {
                 }
             }
 
-            Message::StatusBarMessage(status_msg) => {
-                let (cmd, router_message) = self.status_bar.update(status_msg, conn);
-                if let Some(router_message) = router_message {
-                    commands.change_route(router_message);
-                }
-                commands.push(cmd.map(Message::StatusBarMessage));
-            }
             // ---------
             Message::Scrolled(offset) => {
                 self.msgs_scroll_offset = offset;

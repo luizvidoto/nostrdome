@@ -18,9 +18,7 @@ pub async fn confirmed_event(
     DbRelayResponse::insert_ok(pool, url, &db_event).await?;
 
     if rows_changed == 0 {
-        //maybe this never happens because the database checks
-        // the event_hash uniqueness and sends an error
-        tracing::debug!("Event already in database");
+        tracing::debug!("Event already in database: {:?}", db_event);
         return Ok(None);
     }
 

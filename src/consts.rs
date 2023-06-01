@@ -1,5 +1,6 @@
 use crate::net::ImageSize;
 
+pub(crate) const YMD_FORMAT: &'static str = "%Y-%m-%d";
 pub(crate) const APP_PROJECT_DIRS: (&'static str, &'static str, &'static str) =
     ("com.nostrtalk", "", "NostrTalk");
 pub(crate) const WELCOME_IMAGE: &[u8] = include_bytes!("../assets/welcome_img.jpg");
@@ -12,18 +13,33 @@ pub(crate) const DEFAULT_PROFILE_IMAGE_MEDIUM: &[u8] =
 // pub(crate) const DEFAULT_PROFILE_IMAGE_ORIGINAL: &[u8] =
 //     include_bytes!("../assets/default_profile_image_original.png");
 
-pub(crate) const SMALL_PROFILE_PIC_WIDTH: u32 = 50;
-pub(crate) const SMALL_PROFILE_PIC_HEIGHT: u32 = 50;
-pub(crate) const MEDIUM_PROFILE_PIC_WIDTH: u32 = 200;
-pub(crate) const MEDIUM_PROFILE_PIC_HEIGHT: u32 = 200;
-
-pub(crate) const YMD_FORMAT: &'static str = "%Y-%m-%d";
+pub(crate) const SMALL_PROFILE_IMG_WIDTH: u16 = 50;
+pub(crate) const SMALL_PROFILE_IMG_HEIGHT: u16 = 50;
+pub(crate) const MEDIUM_PROFILE_IMG_WIDTH: u16 = 200;
+pub(crate) const MEDIUM_PROFILE_IMG_HEIGHT: u16 = 200;
 
 pub const fn default_profile_image(size: ImageSize) -> &'static [u8] {
     match size {
         ImageSize::Small => DEFAULT_PROFILE_IMAGE_SMALL,
         ImageSize::Medium => DEFAULT_PROFILE_IMAGE_MEDIUM,
         ImageSize::Original => DEFAULT_PROFILE_IMAGE_MEDIUM,
+    }
+}
+
+pub(crate) const SMALL_CHANNEL_IMG_WIDTH: u16 = 100;
+pub(crate) const SMALL_CHANNEL_IMG_HEIGHT: u16 = 55;
+pub(crate) const MEDIUM_CHANNEL_IMG_WIDTH: u16 = 220;
+pub(crate) const MEDIUM_CHANNEL_IMG_HEIGHT: u16 = 120;
+
+pub(crate) const DEFAULT_CHANNEL_IMAGE_SMALL: &[u8] =
+    include_bytes!("../assets/default_channel_image_small.png");
+pub(crate) const DEFAULT_CHANNEL_IMAGE_MEDIUM: &[u8] =
+    include_bytes!("../assets/default_channel_image_medium.png");
+pub const fn default_channel_image(size: ImageSize) -> &'static [u8] {
+    match size {
+        ImageSize::Small => DEFAULT_CHANNEL_IMAGE_SMALL,
+        ImageSize::Medium => DEFAULT_CHANNEL_IMAGE_MEDIUM,
+        ImageSize::Original => DEFAULT_CHANNEL_IMAGE_MEDIUM,
     }
 }
 

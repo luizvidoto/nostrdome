@@ -1,11 +1,12 @@
 use chrono::{Datelike, NaiveDateTime, Utc};
+use iced::widget::image::Handle;
 use iced::widget::{button, column, container, image, row, text};
 use iced::{alignment, Length};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::consts::YMD_FORMAT;
-use crate::db::DbContact;
-use crate::net::{self, BackEndConnection, ImageSize};
+use crate::db::{DbContact, ImageDownloaded};
+use crate::net::{self, sized_image, BackEndConnection, ImageSize};
 use crate::style;
 use crate::types::ChatMessage;
 use crate::utils::from_naive_utc_to_local;
@@ -32,6 +33,7 @@ pub enum Message {
     NewMessage(ChatMessage),
     UpdatedMetadata(DbContact),
     ResetUnseenCount,
+    ImageDownloaded(ImageDownloaded),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -182,6 +184,10 @@ impl ChatContact {
                 }
             },
             false => match message {
+                Message::ImageDownloaded(image) => {
+                    let path = sized_image(&image.path, image.kind, ImageSize::Small);
+                    self.profile_img_handle = Handle::from_path(path);
+                }
                 Message::GotChatInfo(chat_info) => {
                     self.handle_got_chat_info(chat_info, conn);
                 }

@@ -5,7 +5,5 @@ CREATE TABLE IF NOT EXISTS profile_meta_cache (
     event_hash BLOB NOT NULL,
     from_relay TEXT NOT NULL,
     -- METADATA JSON CONTENT
-    metadata TEXT NOT NULL,
-    profile_image_path TEXT,
-    banner_image_path TEXT
+    metadata TEXT NOT NULL
 );

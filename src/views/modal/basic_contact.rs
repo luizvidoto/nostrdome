@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use crate::components::common_scrollable;
 use crate::components::text_input_group::TextInputGroup;
-use crate::consts::{MEDIUM_PROFILE_PIC_HEIGHT, MEDIUM_PROFILE_PIC_WIDTH, YMD_FORMAT};
+use crate::consts::{MEDIUM_PROFILE_IMG_HEIGHT, MEDIUM_PROFILE_IMG_WIDTH, YMD_FORMAT};
 use crate::db::DbContact;
 use crate::icon::{copy_icon, edit_icon};
 use crate::net::{self, BackEndConnection, BackendEvent, ImageSize};
@@ -195,8 +195,8 @@ impl ContactDetails {
                                     text("No image").into()
                                 };
                             let image_container = container(image_container)
-                                .height(MEDIUM_PROFILE_PIC_HEIGHT as f32)
-                                .width(MEDIUM_PROFILE_PIC_WIDTH as f32);
+                                .height(MEDIUM_PROFILE_IMG_HEIGHT as f32)
+                                .width(MEDIUM_PROFILE_IMG_WIDTH as f32);
 
                             let profile_name_group = column![
                                 text("Profile Name"),
@@ -304,8 +304,16 @@ impl ContactDetails {
         .into()
     }
 
-    pub fn backend_event(&mut self, event: BackendEvent, _conn: &mut BackEndConnection) {
+    pub fn backend_event(&mut self, event: BackendEvent, conn: &mut BackEndConnection) {
         match event {
+            BackendEvent::ImageDownloaded(image) => {
+                if let Some(db_contact) = &self.db_contact {
+                    if db_contact.get_profile_pic() == Some(image.url.to_string()) {
+                        self.profile_img_handle =
+                            Some(db_contact.profile_image(ImageSize::Medium, conn))
+                    }
+                }
+            }
             _ => (),
         }
     }

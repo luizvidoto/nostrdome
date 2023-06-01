@@ -46,9 +46,7 @@ impl AsyncFileImporter {
     pub fn view(&self) -> Element<'static, Message> {
         let file_input =
             text_input(&self.placeholder, &self.file_input.to_string_lossy()).width(Length::Fill);
-        let file_input_btn = button("...")
-            .width(Length::Fixed(30.0))
-            .on_press(Message::ChooseFile);
+        let file_input_btn = button("...").width(30).on_press(Message::ChooseFile);
         row![file_input, file_input_btn]
             .spacing(10)
             .width(Length::Fill)

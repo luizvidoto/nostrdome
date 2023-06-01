@@ -51,8 +51,7 @@ async fn handle_user_contact_list(
             DbEvent::delete(pool, db_event.event_id()?).await?;
         }
     } else {
-        // if no contact list in the database, insert it
-        tracing::info!("No ContactList in the database");
+        tracing::info!("No ContactList in the database - inserting");
     }
 
     let db_event = confirmed_event(pool, url, ns_event)

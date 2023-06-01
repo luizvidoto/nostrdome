@@ -1,18 +1,20 @@
-use iced::widget::{button, column, container, row, text, Space};
+use iced::widget::{button, column, container, row, Space};
 use iced::{alignment, Command, Length, Subscription};
+use status_bar::StatusBar;
 
+use crate::components::status_bar;
 use crate::db::DbContact;
-use crate::icon::{server_icon, settings_icon};
+use crate::icon::settings_icon;
 use crate::net::{BackEndConnection, BackendEvent};
 
-use crate::widget::{Button, Rule, Text};
+use crate::widget::Text;
 use crate::{
     icon::{home_icon, search_icon},
     style,
     widget::Element,
 };
 
-use super::{chat, RouterCommand, RouterMessage};
+use super::{chat, find_channels, RouterCommand, RouterMessage};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -20,14 +22,17 @@ pub enum Message {
     FindChannelsPressed,
     SettingsPressed,
     DmsMessage(chat::Message),
-    FindChannelsMessage(find_channel::Message),
+    FindChannelsMessage(find_channels::Message),
+    StatusBarMessage(status_bar::Message),
 }
 pub struct State {
     active_view: ViewState,
+    status_bar: StatusBar,
 }
 impl State {
     pub(crate) fn chat(conn: &mut BackEndConnection) -> Self {
         Self {
+            status_bar: StatusBar::new(),
             active_view: ViewState::DMs {
                 state: chat::State::new(conn),
             },
@@ -35,6 +40,7 @@ impl State {
     }
     pub(crate) fn chat_to(db_contact: DbContact, conn: &mut BackEndConnection) -> Self {
         Self {
+            status_bar: StatusBar::new(),
             active_view: ViewState::DMs {
                 state: chat::State::chat_to(db_contact, conn),
             },
@@ -42,20 +48,37 @@ impl State {
     }
     pub(crate) fn find_channels(conn: &mut BackEndConnection) -> State {
         Self {
+            status_bar: StatusBar::new(),
             active_view: ViewState::FindChannel {
-                state: find_channel::State::new(conn),
+                state: find_channels::State::new(conn),
             },
         }
     }
     pub(crate) fn subscription(&self) -> Subscription<Message> {
-        self.active_view.subscription()
+        Subscription::batch(vec![
+            self.active_view.subscription(),
+            self.status_bar
+                .subscription()
+                .map(Message::StatusBarMessage),
+        ])
     }
     pub(crate) fn backend_event(
         &mut self,
         event: BackendEvent,
         conn: &mut BackEndConnection,
     ) -> RouterCommand<Message> {
-        self.active_view.backend_event(event.clone(), conn)
+        let mut commands = RouterCommand::new();
+
+        let cmd = self.status_bar.backend_event(event.clone(), conn);
+        commands.push(cmd.map(Message::StatusBarMessage));
+
+        let (cmds, router_message) = self.active_view.backend_event(event.clone(), conn).batch();
+        if let Some(router_message) = router_message {
+            commands.change_route(router_message);
+        }
+        commands.push(cmds);
+
+        commands
     }
     pub(crate) fn update(
         &mut self,
@@ -72,8 +95,15 @@ impl State {
             }
             Message::FindChannelsPressed => {
                 self.active_view = ViewState::FindChannel {
-                    state: find_channel::State::new(conn),
+                    state: find_channels::State::new(conn),
                 }
+            }
+            Message::StatusBarMessage(status_msg) => {
+                let (cmd, router_message) = self.status_bar.update(status_msg, conn);
+                if let Some(router_message) = router_message {
+                    commands.change_route(router_message);
+                }
+                commands.push(cmd.map(Message::StatusBarMessage));
             }
             Message::SettingsPressed => commands.change_route(RouterMessage::GoToSettings),
             other => {
@@ -111,9 +141,14 @@ impl State {
         .width(NAVBAR_WIDTH)
         .height(Length::Fill);
 
-        let active_view = container(self.active_view.view())
-            .width(Length::Fill)
-            .height(Length::Fill);
+        let status_bar = self.status_bar.view().map(Message::StatusBarMessage);
+
+        let active_view = column![
+            container(self.active_view.view())
+                .width(Length::Fill)
+                .height(Length::Fill),
+            status_bar
+        ];
 
         row![nav_bar, active_view].into()
     }
@@ -152,7 +187,7 @@ fn make_menu_btn<'a, M: 'a + Clone>(
 
 pub enum ViewState {
     DMs { state: chat::State },
-    FindChannel { state: find_channel::State },
+    FindChannel { state: find_channels::State },
 }
 impl ViewState {
     pub(crate) fn update(
@@ -180,6 +215,7 @@ impl ViewState {
                     commands.push(cmds.map(Message::FindChannelsMessage));
                 }
             }
+            Message::StatusBarMessage(_) => (),
             Message::SettingsPressed => (),
             Message::FindChannelsPressed => (),
             Message::DMsPressed => (),
@@ -193,6 +229,7 @@ impl ViewState {
         conn: &mut BackEndConnection,
     ) -> RouterCommand<Message> {
         let mut commands = RouterCommand::new();
+
         match self {
             ViewState::DMs { state } => {
                 let (cmds, msg) = state.backend_event(event, conn).batch();
@@ -239,117 +276,6 @@ impl ViewState {
             _ => false,
         }
     }
-}
-
-mod find_channel {
-    use iced::widget::{button, column, container, row, text, Space};
-    use iced::{Alignment, Command, Length, Subscription};
-    use iced_native::widget::text_input;
-
-    use crate::components::common_scrollable;
-    use crate::components::text::title;
-    use crate::net::{BackEndConnection, BackendEvent};
-    use crate::views::RouterCommand;
-    use crate::widget::Rule;
-    use crate::{
-        icon::{regular_bell_icon, search_icon},
-        style,
-        widget::Element,
-    };
-
-    #[derive(Debug, Clone)]
-    pub enum Message {
-        SearchInputChanged(String),
-    }
-    pub struct State {
-        search_input_value: String,
-    }
-    impl State {
-        pub fn new(_conn: &mut BackEndConnection) -> Self {
-            Self {
-                search_input_value: String::new(),
-            }
-        }
-        pub(crate) fn subscription(&self) -> Subscription<Message> {
-            Subscription::none()
-        }
-        pub(crate) fn update(
-            &mut self,
-            message: Message,
-            _conn: &mut BackEndConnection,
-        ) -> RouterCommand<Message> {
-            let commands = RouterCommand::new();
-            match message {
-                Message::SearchInputChanged(text) => {
-                    self.search_input_value = text;
-                }
-            }
-            commands
-        }
-        pub(crate) fn backend_event(
-            &mut self,
-            event: BackendEvent,
-            _conn: &mut BackEndConnection,
-        ) -> RouterCommand<Message> {
-            let commands = RouterCommand::new();
-
-            commands
-        }
-        pub fn view(&self) -> Element<Message> {
-            let title = title("Find Channels");
-            let search_input =
-                text_input("Channel name, type, about, etc..", &self.search_input_value)
-                    .on_input(Message::SearchInputChanged)
-                    .size(30);
-            let results_container = container(column![
-                make_results(),
-                make_results(),
-                make_results(),
-                make_results(),
-            ]);
-
-            common_scrollable(
-                container(column![title, search_input, results_container]).padding([20, 0, 0, 20]),
-            )
-            .into()
-        }
-    }
-
-    fn make_results<'a, M: 'a>() -> Element<'a, M> {
-        let image_container = container(text("Image 1"))
-            .width(IMAGE_WIDTH)
-            .height(IMAGE_HEIGHT)
-            .center_x()
-            .center_y()
-            .style(style::Container::Bordered);
-
-        let channel_about = container(
-            column![
-                text("Channel Name").size(22),
-                text("Channel about").size(18),
-                Space::with_height(Length::Fill),
-                text("Members").size(14)
-            ]
-            .spacing(5),
-        )
-        .center_y()
-        .height(IMAGE_HEIGHT)
-        .width(Length::Fill);
-
-        container(
-            column![
-                row![image_container, channel_about].spacing(20),
-                Rule::horizontal(10)
-            ]
-            .spacing(10),
-        )
-        .padding(10)
-        .max_width(MAX_WIDTH_RESULT)
-        .into()
-    }
-    const MAX_WIDTH_RESULT: u16 = 600;
-    const IMAGE_WIDTH: u16 = 220;
-    const IMAGE_HEIGHT: u16 = 120;
 }
 
 const NAVBAR_WIDTH: u16 = 55;

@@ -3,8 +3,8 @@ use directories::ProjectDirs;
 use futures::TryStreamExt;
 use futures_util::StreamExt;
 use image::ImageFormat;
-use nostr::{secp256k1::XOnlyPublicKey, Url};
-use serde::Deserialize;
+use nostr::Url;
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -12,9 +12,10 @@ use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
 use crate::consts::{
-    APP_PROJECT_DIRS, MEDIUM_PROFILE_PIC_HEIGHT, MEDIUM_PROFILE_PIC_WIDTH,
-    SMALL_PROFILE_PIC_HEIGHT, SMALL_PROFILE_PIC_WIDTH,
+    APP_PROJECT_DIRS, MEDIUM_PROFILE_IMG_HEIGHT, MEDIUM_PROFILE_IMG_WIDTH,
+    SMALL_PROFILE_IMG_HEIGHT, SMALL_PROFILE_IMG_WIDTH,
 };
+use crate::db::ImageDownloaded;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -53,6 +54,9 @@ pub enum Error {
 
     #[error("I/O Error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("Invalid image kind")]
+    InvalidImageKind,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -71,22 +75,45 @@ impl ImageSize {
     }
     pub fn get_width_height(&self) -> Option<(u32, u32)> {
         match self {
-            ImageSize::Small => Some((SMALL_PROFILE_PIC_WIDTH, SMALL_PROFILE_PIC_HEIGHT)),
-            ImageSize::Medium => Some((MEDIUM_PROFILE_PIC_WIDTH, MEDIUM_PROFILE_PIC_HEIGHT)),
+            ImageSize::Small => Some((
+                SMALL_PROFILE_IMG_WIDTH as u32,
+                SMALL_PROFILE_IMG_HEIGHT as u32,
+            )),
+            ImageSize::Medium => Some((
+                MEDIUM_PROFILE_IMG_WIDTH as u32,
+                MEDIUM_PROFILE_IMG_HEIGHT as u32,
+            )),
             ImageSize::Original => None,
         }
     }
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum ImageKind {
     Profile,
     Banner,
+    Channel,
 }
 impl ImageKind {
     pub fn to_str(&self) -> &str {
         match self {
             ImageKind::Profile => "profile_1",
             ImageKind::Banner => "banner_1",
+            ImageKind::Channel => "channel_1",
+        }
+    }
+    pub fn as_i32(&self) -> i32 {
+        match self {
+            ImageKind::Profile => 1,
+            ImageKind::Banner => 2,
+            ImageKind::Channel => 3,
+        }
+    }
+    pub fn from_i32(i: i32) -> Result<ImageKind, Error> {
+        match i {
+            1 => Ok(ImageKind::Profile),
+            2 => Ok(ImageKind::Banner),
+            3 => Ok(ImageKind::Channel),
+            _ => Err(Error::InvalidImageKind),
         }
     }
 }
@@ -101,15 +128,9 @@ pub fn sized_image(filename: &Path, kind: ImageKind, size: ImageSize) -> PathBuf
     filename.with_file_name(new_file_name)
 }
 
-pub struct ImageDownloaded {
-    pub kind: ImageKind,
-    pub public_key: XOnlyPublicKey,
-    pub path: PathBuf,
-}
-
 pub async fn download_image(
     image_url: &str,
-    public_key: &XOnlyPublicKey,
+    identifier: &str,
     kind: ImageKind,
 ) -> Result<ImageDownloaded, Error> {
     let image_url = Url::parse(image_url)?;
@@ -120,6 +141,8 @@ pub async fn download_image(
         .get(reqwest::header::CONTENT_TYPE)
         .ok_or(Error::RequestMissingContentType)
         .cloned()?;
+
+    //TODO: builder error for url when BASE64
 
     if !content_type.to_str()?.starts_with("image/") {
         return Err(Error::ImageInvalidContentType(
@@ -132,7 +155,7 @@ pub async fn download_image(
     let images_dir = dirs
         .cache_dir()
         .join(IMAGES_FOLDER_NAME)
-        .join(public_key.to_string());
+        .join(identifier.to_string());
     tokio::fs::create_dir_all(&images_dir).await?;
 
     // Extract the image type from the content type.
@@ -154,7 +177,7 @@ pub async fn download_image(
 
     Ok(ImageDownloaded {
         kind,
-        public_key: public_key.clone(),
+        url: image_url,
         path: original_path,
     })
 }

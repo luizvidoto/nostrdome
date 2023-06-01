@@ -6,18 +6,24 @@ use crate::db::DbEvent;
 use crate::db::DbMessage;
 use crate::db::DbRelay;
 use crate::db::DbRelayResponse;
+use crate::db::ImageDownloaded;
 use crate::db::ProfileCache;
 use crate::db::UserConfig;
+use crate::net::filters::channel_search_filter;
+use crate::net::filters::contact_list_filter;
+use crate::net::filters::messages_filter;
+use crate::net::filters::user_metadata;
 use crate::net::operations::builder::build_contact_list_event;
 use crate::net::operations::builder::build_dm;
 use crate::net::operations::builder::build_profile_event;
 use crate::net::reqwest_client::fetch_latest_version;
+use crate::types::ChannelResult;
 use crate::types::ChatMessage;
+use crate::types::SubscriptionType;
 use crate::views::login::BasicProfile;
 use crate::Error;
-use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use crate::db::Database;
 use crate::net::ntp::spawn_ntp_request;
@@ -30,13 +36,13 @@ use nostr::Keys;
 use nostr::Kind;
 use nostr::RelayMessage;
 
+mod filters;
 pub(crate) mod ntp;
 pub(crate) mod operations;
 pub(crate) mod reqwest_client;
 
 use nostr::secp256k1::XOnlyPublicKey;
 use nostr::SubscriptionId;
-use nostr::Timestamp;
 use ns_client::NotificationEvent;
 use ns_client::RelayPool;
 
@@ -47,12 +53,13 @@ use sqlx::SqlitePool;
 use tokio::sync::broadcast;
 use url::Url;
 
+use self::filters::channel_details_filter;
+use self::filters::contact_list_metadata;
 use self::operations::contact_list::handle_contact_list;
 use self::operations::direct_message::handle_dm;
 use self::operations::event::confirmed_event;
 use self::operations::event::insert_pending;
 use self::reqwest_client::download_image;
-use self::reqwest_client::ImageDownloaded;
 
 #[derive(Debug, Clone)]
 pub struct BackEndConnection(tokio::sync::mpsc::Sender<ToBackend>);
@@ -78,49 +85,69 @@ pub enum ClientState {
         tasks_tx: tokio::sync::mpsc::Sender<Result<TaskOutput, Error>>,
         keys: Keys,
         backend: BackendState,
-        nostr: NostrState,
+        notifications: broadcast::Receiver<NotificationEvent>,
     },
 }
 
-pub struct NostrState {
-    pub client: RelayPool,
-    pub notifications: broadcast::Receiver<NotificationEvent>,
-}
-impl NostrState {
-    pub fn new(_keys: &Keys) -> Self {
-        let client = RelayPool::new();
-        let notifications = client.notifications();
-        Self {
-            client,
-            notifications,
-        }
-    }
-    pub async fn logout(&self) -> Result<(), Error> {
-        Ok(self.client.shutdown()?)
-    }
-}
 pub struct BackendState {
     pub db_client: Database,
     pub req_client: reqwest::Client,
-    pub subscriptions: HashMap<SubscriptionId, SubscriptionType>,
+    pub search_channel_details: VecDeque<ChannelResult>,
+    pub active_subscriptions: Vec<SubscriptionType>,
+    pub nostr: RelayPool,
 }
 impl BackendState {
-    pub fn new(db_client: Database, req_client: reqwest::Client) -> Self {
-        let mut subscriptions = HashMap::new();
-        for sub_type in SubscriptionType::ALL.iter() {
-            subscriptions.insert(SubscriptionId::new(sub_type.to_string()), *sub_type);
-        }
+    pub fn new(db_client: Database, req_client: reqwest::Client, nostr: RelayPool) -> Self {
         Self {
             db_client,
             req_client,
-            subscriptions,
+            search_channel_details: VecDeque::new(),
+            active_subscriptions: Vec::new(),
+            nostr,
         }
     }
 
-    pub async fn logout(&self) {
+    pub async fn logout(&self) -> Result<(), Error> {
         tracing::info!("Database Logging out");
         self.db_client.pool.close().await;
         self.db_client.cache_pool.close().await;
+        self.nostr.shutdown()?;
+        Ok(())
+    }
+    pub fn subscribe_eose(
+        &mut self,
+        sub_type: &SubscriptionType,
+        filters: Vec<Filter>,
+    ) -> Result<(), Error> {
+        self.nostr.subscribe_eose(&sub_type.id(), filters)?;
+        self.active_subscriptions.push(sub_type.to_owned());
+        Ok(())
+    }
+    pub fn subscribe_id(
+        &mut self,
+        sub_type: &SubscriptionType,
+        filters: Vec<Filter>,
+    ) -> Result<(), Error> {
+        self.nostr.subscribe_id(&sub_type.id(), filters)?;
+        self.active_subscriptions.push(sub_type.to_owned());
+        Ok(())
+    }
+    pub fn relay_subscribe_eose(
+        &mut self,
+        url: &Url,
+        sub_type: &SubscriptionType,
+        filters: Vec<Filter>,
+    ) -> Result<(), Error> {
+        self.nostr
+            .relay_subscribe_eose(url, &sub_type.id(), filters)?;
+        self.active_subscriptions.push(sub_type.to_owned());
+        Ok(())
+    }
+    pub fn find_subscription(&self, id: SubscriptionId) -> Option<SubscriptionType> {
+        self.active_subscriptions
+            .iter()
+            .find(|sub| sub.id() == id)
+            .cloned()
     }
 }
 
@@ -130,22 +157,9 @@ pub enum TaskOutput {
     ImageDownloaded(ImageDownloaded),
 }
 
-// if UserConfig::query_has_logged_in(pool).await? {
-//     //TODO: exatamente igual o de baixo
-//     let relays = DbRelay::fetch(pool).await?;
-//     let last_event =
-//         DbEvent::fetch_last_kind(pool, nostr::Kind::EncryptedDirectMessage).await?;
-//     UserConfig::store_first_login(pool).await?;
-//     add_relays_and_connect(nostr, &keys, &relays, last_event)?;
-//     let _ = output.send(BackendEvent::LoginSuccess).await;
-// } else {
-//     let _ = output.send(BackendEvent::FirstLoginSuccess).await;
-// }
-
 async fn handle_relay_message(
     output: &mut futures::channel::mpsc::Sender<BackendEvent>,
     keys: &Keys,
-    nostr: &RelayPool,
     backend: &mut BackendState,
     _task_tx: &tokio::sync::mpsc::Sender<Result<TaskOutput, Error>>,
     url: Url,
@@ -153,6 +167,7 @@ async fn handle_relay_message(
 ) -> Result<(), Error> {
     let pool = &backend.db_client.pool;
     let cache_pool = &backend.db_client.cache_pool;
+    let nostr = &backend.nostr;
     match message {
         RelayMessage::Ok {
             event_id: event_hash,
@@ -227,27 +242,93 @@ async fn handle_relay_message(
             }
         }
         RelayMessage::EndOfStoredEvents(subscription_id) => {
-            if let Some(sub_type) = backend.subscriptions.get(&subscription_id) {
+            tracing::info!("EOSE {} - {}", &url, &subscription_id);
+
+            if let Some(sub_type) = backend.find_subscription(subscription_id) {
                 match sub_type {
                     SubscriptionType::ContactList => {
                         let list = DbContact::fetch(pool, cache_pool).await?;
-                        let id =
-                            SubscriptionId::new(SubscriptionType::ContactListMetadata.to_string());
-                        let filters = vec![contact_list_metadata(&list)];
-                        nostr.relay_subscribe_eose(&url, &id, filters)?;
+                        backend.relay_subscribe_eose(
+                            &url,
+                            &SubscriptionType::ContactListMetadata,
+                            contact_list_metadata(&list),
+                        )?;
                     }
-                    // SubscriptionType::Messages => todo!(),
-                    // SubscriptionType::ContactListMetadata => todo!(),
-                    // SubscriptionType::Channel => todo!(),
-                    // SubscriptionType::ChannelMetadata => todo!(),
+                    SubscriptionType::SearchChannels => {
+                        // send search channels metadata now
+                        let _ = output
+                            .send(BackendEvent::EOSESearchChannels(url.to_owned()))
+                            .await;
+                    }
+                    SubscriptionType::SearchChannelsDetails(channel_id) => {
+                        let _ = output
+                            .send(BackendEvent::EOSESearchChannelsDetails(
+                                url.to_owned(),
+                                channel_id,
+                            ))
+                            .await;
+
+                        if let Some(search_result) = backend.search_channel_details.pop_front() {
+                            if search_result.id == channel_id {
+                                if let Some(result) = backend.search_channel_details.pop_front() {
+                                    tracing::info!("Search Channels Details - {}", result.id);
+                                    backend.relay_subscribe_eose(
+                                        &url,
+                                        &SubscriptionType::SearchChannelsDetails(result.id),
+                                        channel_details_filter(result.id.to_owned()),
+                                    )?;
+                                    let _ = output
+                                        .send(BackendEvent::LoadingChannelDetails(url, result.id))
+                                        .await;
+                                }
+                            }
+                        }
+                    }
                     _other => (),
                 }
             }
         }
         RelayMessage::Event {
-            subscription_id: _,
+            subscription_id,
             event: ns_event,
         } => {
+            if let Some(sub_type) = backend.find_subscription(subscription_id) {
+                match sub_type {
+                    SubscriptionType::SearchChannels => {
+                        let result = ChannelResult::from_ns_event(url.to_owned(), *ns_event)?;
+
+                        if backend.search_channel_details.is_empty() {
+                            backend.relay_subscribe_eose(
+                                &url,
+                                &SubscriptionType::SearchChannelsDetails(result.id),
+                                channel_details_filter(result.id.to_owned()),
+                            )?;
+                            let _ = output
+                                .send(BackendEvent::LoadingChannelDetails(url, result.id))
+                                .await;
+                        }
+                        backend.search_channel_details.push_back(result.clone());
+
+                        let _ = output.send(BackendEvent::SearchChannelResult(result)).await;
+
+                        return Ok(());
+                    }
+                    SubscriptionType::SearchChannelsDetails(channel_id) => {
+                        if let Kind::ChannelMetadata = ns_event.kind {
+                            let _ = output
+                                .send(BackendEvent::SearchChannelMetaUpdate(channel_id, ns_event))
+                                .await;
+                        } else if let Kind::ChannelMessage = ns_event.kind {
+                            let _ = output
+                                .send(BackendEvent::SearchChannelMessage(channel_id, ns_event))
+                                .await;
+                        }
+                        return Ok(());
+                    }
+                    _ => (),
+                }
+            }
+
             match ns_event.kind {
                 nostr::Kind::ContactList => {
                     // contact_list is validating differently
@@ -270,6 +351,9 @@ async fn handle_relay_message(
                             }
                             nostr::Kind::ChannelMetadata => {
                                 handle_channel_update(output, cache_pool, &db_event).await?;
+                            }
+                            nostr::Kind::ChannelMessage => {
+                                handle_channel_message(output, cache_pool, &db_event).await?;
                             }
                             _other_kind => {
                                 let _ = output
@@ -304,9 +388,10 @@ async fn handle_relay_message(
 async fn get_clients(keys: &Keys) -> Result<ClientState, Error> {
     let db_client = Database::new(&keys.public_key().to_string()).await?;
     let (tasks_tx, tasks_rx) = tokio::sync::mpsc::channel(100);
-    let nostr = NostrState::new(&keys);
     let req_client = reqwest::Client::new();
-    let backend = BackendState::new(db_client, req_client);
+    let nostr = RelayPool::new();
+    let notifications = nostr.notifications();
+    let backend = BackendState::new(db_client, req_client, nostr);
 
     spawn_ntp_request(tasks_tx.clone());
 
@@ -315,7 +400,7 @@ async fn get_clients(keys: &Keys) -> Result<ClientState, Error> {
         tasks_tx,
         keys: keys.to_owned(),
         backend,
-        nostr,
+        notifications,
     })
 }
 
@@ -383,38 +468,34 @@ pub fn backend_connect() -> Subscription<BackendEvent> {
                             tasks_rx,
                             tasks_tx,
                             backend,
-                            nostr,
                             keys,
+                            notifications,
                         } => {
                             tokio::select! {
                                 message = receiver.recv() => {
                                     tracing::debug!("Received message from frontend");
                                     if let Some(message) = message {
                                         if let ToBackend::Logout = message {
-                                            backend.logout().await;
-                                            let _ = nostr.logout().await;
-
+                                            let _ = backend.logout().await;
                                             let _ = output.send(BackendEvent::LogoutSuccess).await;
                                             state = State::Start;
                                             client_state = ClientState::Empty;
 
                                         } else {
-                                            if let Err(e) = process_message(&mut output, &keys, &nostr.client, backend, tasks_tx, message).await {
+                                            if let Err(e) = process_message(&mut output, &keys, backend, tasks_tx, message).await {
                                                 // depending on the error, restart backend?
                                                 tracing::error!("{}", e);
                                             }
                                         }
                                     } else {
                                         tracing::info!("Front to backend channel closed");
-                                        backend.logout().await;
-                                        let _ = nostr.logout().await;
-
+                                        let _ = backend.logout().await;
                                         let _ = output.send(BackendEvent::LogoutSuccess).await;
                                         state = State::Start;
                                         client_state = ClientState::Empty;
                                     }
                                 }
-                                notification = nostr.notifications.recv() => {
+                                notification = notifications.recv() => {
                                     tracing::debug!("Received notification from nostr");
                                     if let Ok(notification) = notification{
                                         match notification {
@@ -422,7 +503,7 @@ pub fn backend_connect() -> Subscription<BackendEvent> {
                                                 tracing::debug!("Relay terminated - {}", url);
                                             }
                                             NotificationEvent::RelayMessage(url, message) => {
-                                                if let Err(e) = handle_relay_message(&mut output, &keys, &nostr.client, backend, tasks_tx, url, message).await{
+                                                if let Err(e) = handle_relay_message(&mut output, &keys, backend, tasks_tx, url, message).await{
                                                     // depending on the error, restart backend?
                                                     tracing::error!("{}", e);
                                                 }
@@ -440,7 +521,7 @@ pub fn backend_connect() -> Subscription<BackendEvent> {
                                 },
                                 task_result = tasks_rx.recv() => {
                                     if let Some(task_result) = task_result {
-                                        if let Err(e) = handle_task_result(&mut output, &keys, &nostr.client, backend, task_result).await{
+                                        if let Err(e) = handle_task_result(&mut output, &keys, backend, task_result).await{
                                             // depending on the error, restart backend?
                                             tracing::error!("{}", e);
                                         }
@@ -459,8 +540,7 @@ pub fn backend_connect() -> Subscription<BackendEvent> {
 
 async fn handle_task_result(
     output: &mut futures::channel::mpsc::Sender<BackendEvent>,
-    keys: &Keys,
-    _nostr: &RelayPool,
+    _keys: &Keys,
     backend: &mut BackendState,
     result: Result<TaskOutput, Error>,
 ) -> Result<(), Error> {
@@ -473,35 +553,9 @@ async fn handle_task_result(
             UserConfig::update_ntp_offset(pool, ntp_time).await?;
             let _ = output.send(BackendEvent::SyncedWithNtpServer).await;
         }
-        TaskOutput::ImageDownloaded(img) => {
-            ProfileCache::image_downloaded(cache_pool, &img).await?;
-            match keys.public_key() == img.public_key {
-                true => match img.kind {
-                    ImageKind::Profile => {
-                        let _ = output
-                            .send(BackendEvent::UserProfilePictureUpdated(img.path))
-                            .await;
-                    }
-                    ImageKind::Banner => {
-                        let _ = output
-                            .send(BackendEvent::UserBannerPictureUpdated(img.path))
-                            .await;
-                    }
-                },
-                false => {
-                    if let Some(db_contact) =
-                        DbContact::fetch_one(pool, cache_pool, &img.public_key).await?
-                    {
-                        let _ = output.send(BackendEvent::ContactUpdated(db_contact)).await;
-                    } else {
-                        tracing::warn!(
-                            "Image downloaded for contact not found in database: {}",
-                            &img.public_key
-                        );
-                        return Err(Error::ContactNotFound(img.public_key));
-                    }
-                }
-            }
+        TaskOutput::ImageDownloaded(image) => {
+            ImageDownloaded::insert(cache_pool, &image).await?;
+            let _ = output.send(BackendEvent::ImageDownloaded(image)).await;
         }
         TaskOutput::LatestVersion(version) => {
             let _ = output.send(BackendEvent::LatestVersion(version)).await;
@@ -517,8 +571,10 @@ pub enum BackendEvent {
     FetchingLatestVersion,
     DownloadingImage {
         kind: ImageKind,
-        public_key: XOnlyPublicKey,
+        image_url: String,
     },
+    ImageDownloaded(ImageDownloaded),
+
     // ---  ---
     GotChatMessages((DbContact, Vec<ChatMessage>)),
     GotRelayResponses {
@@ -552,9 +608,10 @@ pub enum BackendEvent {
     // GotDbEvent(Option<DbEvent>),
     GotSingleContact((XOnlyPublicKey, Option<DbContact>)),
     GotChatInfo((DbContact, Option<ChatInfo>)),
-    ChannelCreated(ChannelCache),
     GotRelayStatusList(ns_client::RelayStatusList),
     CacheFileRemoved((ProfileCache, ImageKind)),
+
+    ChannelConfirmed(ChannelCache),
     ChannelUpdated(ChannelCache),
 
     // --- Config ---
@@ -598,6 +655,13 @@ pub enum BackendEvent {
     RFDPickError(String),
     RFDCancelPick,
     RFDSavedFile(PathBuf),
+    SearchingForChannels,
+    EOSESearchChannels(Url),
+    SearchChannelResult(ChannelResult),
+    SearchChannelMetaUpdate(nostr::EventId, Box<nostr::Event>),
+    SearchChannelMessage(nostr::EventId, Box<nostr::Event>),
+    EOSESearchChannelsDetails(Url, nostr::EventId),
+    LoadingChannelDetails(Url, nostr::EventId),
 }
 
 #[derive(Debug, Clone)]
@@ -640,19 +704,19 @@ pub enum ToBackend {
     DownloadImage {
         image_url: String,
         kind: ImageKind,
-        public_key: XOnlyPublicKey,
+        identifier: String,
     },
     FetchMoreMessages((DbContact, ChatMessage)),
     RemoveFileFromCache((ProfileCache, ImageKind)),
     ChooseFile(Option<FileFilter>),
     LoginWithSK(Keys),
     CreateAccount(BasicProfile),
+    FindChannels(String),
 }
 
 pub async fn process_message(
     output: &mut futures::channel::mpsc::Sender<BackendEvent>,
     keys: &Keys,
-    nostr: &RelayPool,
     backend: &mut BackendState,
     task_tx: &tokio::sync::mpsc::Sender<Result<TaskOutput, Error>>,
     message: ToBackend,
@@ -660,6 +724,7 @@ pub async fn process_message(
     tracing::debug!("Processing message: {:?}", message);
     let pool = &backend.db_client.pool;
     let cache_pool = &backend.db_client.cache_pool;
+    let nostr = &backend.nostr;
     match message {
         // ---- CONFIG ----
         ToBackend::LoginWithSK(_) => {
@@ -741,27 +806,41 @@ pub async fn process_message(
         }
         ToBackend::DownloadImage {
             image_url,
-            public_key,
+            identifier,
             kind,
         } => {
-            let task_tx_1 = task_tx.clone();
-            tokio::spawn(async move {
-                let result = download_image(&image_url, &public_key, kind)
-                    .await
-                    .map(TaskOutput::ImageDownloaded)
-                    .map_err(|e| e.into());
-                if let Err(e) = task_tx_1.send(result).await {
-                    tracing::error!("Error sending image downloaded event: {}", e);
+            let image_url_parsed = Url::parse(&image_url)?;
+            match ImageDownloaded::fetch(cache_pool, &image_url_parsed).await? {
+                Some(image) => {
+                    let _ = output.send(BackendEvent::ImageDownloaded(image)).await;
                 }
-            });
-            let _ = output
-                .send(BackendEvent::DownloadingImage {
-                    kind: kind.clone(),
-                    public_key: public_key.clone(),
-                })
-                .await;
+                None => {
+                    let task_tx_1 = task_tx.clone();
+                    let identifier_1 = identifier.clone();
+                    let image_url_1 = image_url.clone();
+                    tokio::spawn(async move {
+                        let result = download_image(&image_url_1, &identifier_1, kind)
+                            .await
+                            .map(TaskOutput::ImageDownloaded)
+                            .map_err(|e| e.into());
+                        if let Err(e) = task_tx_1.send(result).await {
+                            tracing::error!("Error sending image downloaded event: {}", e);
+                        }
+                    });
+                    let _ = output
+                        .send(BackendEvent::DownloadingImage { kind, image_url })
+                        .await;
+                }
+            }
         }
         // -----------
+        ToBackend::FindChannels(search_term) => {
+            backend.subscribe_eose(
+                &SubscriptionType::SearchChannels,
+                vec![channel_search_filter(&search_term)],
+            )?;
+            let _ = output.send(BackendEvent::SearchingForChannels).await;
+        }
         ToBackend::UpdateUserProfileMeta(profile_meta) => {
             let ns_event = build_profile_event(pool, keys, &profile_meta).await?;
             let pending_event = insert_pending(ns_event, pool, nostr).await?;
@@ -771,22 +850,23 @@ pub async fn process_message(
         }
         ToBackend::QueryFirstLogin => {
             if UserConfig::query_has_logged_in(pool).await? {
-                prepare_client(pool, keys, nostr).await?;
+                prepare_client(keys, backend).await?;
                 let _ = output.send(BackendEvent::FinishedPreparing).await;
             } else {
                 let _ = output.send(BackendEvent::FirstLoginSuccess).await;
             }
         }
         ToBackend::PrepareClient => {
-            prepare_client(pool, keys, nostr).await?;
+            prepare_client(keys, backend).await?;
             let _ = output.send(BackendEvent::FinishedPreparing).await;
         }
         ToBackend::RemoveFileFromCache((cache, kind)) => {
             // TODO: talvez um spawn task?
-            ProfileCache::remove_file(cache_pool, &cache, kind).await?;
-            let _ = output
-                .send(BackendEvent::CacheFileRemoved((cache, kind)))
-                .await;
+            // ProfileCache::remove_image(cache_pool, &cache, kind).await?;
+            // let _ = output
+            //     .send(BackendEvent::CacheFileRemoved((cache, kind)))
+            //     .await;
+            todo!()
         }
         ToBackend::FetchMoreMessages((db_contact, first_message)) => {
             let msgs = DbMessage::fetch_more(pool, db_contact.pubkey(), first_message).await?;
@@ -1005,71 +1085,6 @@ pub async fn process_message(
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SubscriptionType {
-    ContactList,
-    ContactListMetadata,
-    UserMetadata,
-    Messages,
-    Channel,
-    ChannelMetadata,
-}
-impl SubscriptionType {
-    pub const ALL: [SubscriptionType; 6] = [
-        SubscriptionType::ContactList,
-        SubscriptionType::ContactListMetadata,
-        SubscriptionType::UserMetadata,
-        SubscriptionType::Messages,
-        SubscriptionType::Channel,
-        SubscriptionType::ChannelMetadata,
-    ];
-}
-impl std::fmt::Display for SubscriptionType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SubscriptionType::ContactList => write!(f, "ContactList"),
-            SubscriptionType::ContactListMetadata => write!(f, "ContactListMetadata"),
-            SubscriptionType::UserMetadata => write!(f, "UserMetadata"),
-            SubscriptionType::Messages => write!(f, "Messages"),
-            SubscriptionType::Channel => write!(f, "Channel"),
-            SubscriptionType::ChannelMetadata => write!(f, "ChannelMetadata"),
-        }
-    }
-}
-pub fn contact_list_metadata(contact_list: &[DbContact]) -> Filter {
-    let all_pubkeys = contact_list
-        .iter()
-        .map(|c| c.pubkey().to_string())
-        .collect::<Vec<_>>();
-    Filter::new().authors(all_pubkeys).kind(Kind::Metadata)
-    // .since(Timestamp::from(last_timestamp_secs))
-}
-pub fn user_metadata(pubkey: XOnlyPublicKey) -> Filter {
-    Filter::new()
-        .author(pubkey.to_string())
-        .kind(Kind::Metadata)
-}
-
-fn contact_list_filter(public_key: XOnlyPublicKey, last_timestamp_secs: u64) -> Filter {
-    let user_contact_list = Filter::new()
-        .author(public_key.to_string())
-        .kind(Kind::ContactList)
-        .since(Timestamp::from(last_timestamp_secs));
-    user_contact_list
-}
-
-fn messages_filter(public_key: XOnlyPublicKey, last_timestamp_secs: u64) -> Vec<Filter> {
-    let sent_msgs = Filter::new()
-        .kind(nostr::Kind::EncryptedDirectMessage)
-        .author(public_key.to_string())
-        .since(Timestamp::from(last_timestamp_secs));
-    let recv_msgs = Filter::new()
-        .kind(nostr::Kind::EncryptedDirectMessage)
-        .pubkey(public_key)
-        .since(Timestamp::from(last_timestamp_secs));
-    vec![sent_msgs, recv_msgs]
-}
-
 async fn handle_metadata_event(
     output: &mut futures::channel::mpsc::Sender<BackendEvent>,
     cache_pool: &SqlitePool,
@@ -1081,7 +1096,7 @@ async fn handle_metadata_event(
     );
     tracing::trace!("{:?}", db_event);
 
-    let rows_changed = ProfileCache::insert_with_event(cache_pool, db_event).await?;
+    let rows_changed = ProfileCache::insert(cache_pool, db_event).await?;
 
     if rows_changed == 0 {
         tracing::debug!("Cache already up to date");
@@ -1099,10 +1114,9 @@ async fn handle_channel_creation(
     cache_pool: &SqlitePool,
     db_event: &DbEvent,
 ) -> Result<(), Error> {
-    tracing::debug!("handle_channel_creation");
     let channel_cache = ChannelCache::insert(cache_pool, db_event).await?;
     let _ = output
-        .send(BackendEvent::ChannelCreated(channel_cache))
+        .send(BackendEvent::ChannelConfirmed(channel_cache))
         .await;
     Ok(())
 }
@@ -1112,13 +1126,20 @@ async fn handle_channel_update(
     cache_pool: &SqlitePool,
     db_event: &DbEvent,
 ) -> Result<(), Error> {
-    tracing::debug!("handle_channel_update");
     ChannelCache::update(cache_pool, db_event).await?;
     let channel_cache = ChannelCache::update(cache_pool, db_event).await?;
     let _ = output
         .send(BackendEvent::ChannelUpdated(channel_cache))
         .await;
     Ok(())
+}
+
+async fn handle_channel_message(
+    output: &mut futures::channel::mpsc::Sender<BackendEvent>,
+    cache_pool: &SqlitePool,
+    db_event: &DbEvent,
+) -> Result<(), Error> {
+    todo!()
 }
 
 pub async fn handle_recommend_relay(db_event: DbEvent) -> Result<(), Error> {
@@ -1144,7 +1165,7 @@ pub async fn create_channel(_client: &RelayPool) -> Result<BackendEvent, Error> 
 }
 
 pub fn add_relays_and_connect(
-    client: &RelayPool,
+    backend: &mut BackendState,
     keys: &Keys,
     relays: &[DbRelay],
     last_event: Option<DbEvent>,
@@ -1154,7 +1175,7 @@ pub fn add_relays_and_connect(
     // Only adds to the HashMap
     for r in relays {
         let opts = ns_client::RelayOptions::new(r.read, r.write);
-        match client.add_relay_with_opts(&r.url.to_string(), opts) {
+        match backend.nostr.add_relay_with_opts(&r.url.to_string(), opts) {
             Ok(_) => tracing::debug!("Nostr Client Added Relay: {}", &r.url),
             Err(e) => tracing::error!("{}", e),
         }
@@ -1169,37 +1190,29 @@ pub fn add_relays_and_connect(
         .unwrap_or(0);
     tracing::info!("last event timestamp: {}", last_timestamp_secs);
 
-    let contact_list_sub_id = SubscriptionId::new(SubscriptionType::ContactList.to_string());
-    client.subscribe_eose(
-        &contact_list_sub_id,
+    backend.subscribe_eose(
+        &SubscriptionType::ContactList,
         vec![contact_list_filter(keys.public_key(), last_timestamp_secs)],
     )?;
-    let user_metadata_id = SubscriptionId::new(SubscriptionType::UserMetadata.to_string());
-    client.subscribe_eose(&user_metadata_id, vec![user_metadata(keys.public_key())])?;
-    let messages_sub_id = SubscriptionId::new(SubscriptionType::Messages.to_string());
-    client.subscribe_id(
-        &messages_sub_id,
+    backend.subscribe_eose(
+        &SubscriptionType::UserMetadata,
+        vec![user_metadata(keys.public_key())],
+    )?;
+    backend.subscribe_id(
+        &SubscriptionType::Messages,
         messages_filter(keys.public_key(), last_timestamp_secs),
     )?;
-    // client.subscribe_eose(id, channel_filter)?;
 
     Ok(())
 }
-fn channel_search_filter() -> Vec<Filter> {
-    tracing::trace!("channel_search_filter");
 
-    let channel_filter = Filter::new()
-        .kinds(vec![Kind::ChannelCreation, Kind::ChannelMetadata])
-        .limit(CHANNEL_SEARCH_LIMIT);
-
-    vec![channel_filter]
-}
-
-async fn prepare_client(pool: &SqlitePool, keys: &Keys, nostr: &RelayPool) -> Result<(), Error> {
-    let relays = DbRelay::fetch(pool).await?;
-    let last_event = DbEvent::fetch_last_kind(pool, nostr::Kind::EncryptedDirectMessage).await?;
-    UserConfig::store_first_login(pool).await?;
-    add_relays_and_connect(nostr, &keys, &relays, last_event)?;
+async fn prepare_client(keys: &Keys, backend: &mut BackendState) -> Result<(), Error> {
+    let relays = DbRelay::fetch(&backend.db_client.pool).await?;
+    let last_event =
+        DbEvent::fetch_last_kind(&backend.db_client.pool, nostr::Kind::EncryptedDirectMessage)
+            .await?;
+    UserConfig::store_first_login(&backend.db_client.pool).await?;
+    add_relays_and_connect(backend, &keys, &relays, last_event)?;
     Ok(())
 }
 
@@ -1247,5 +1260,4 @@ async fn export_contacts(keys: &Keys, pool: &SqlitePool) -> Result<BackendEvent,
     save_file(&event, "json").await
 }
 
-const CHANNEL_SEARCH_LIMIT: usize = 100;
 const BACKEND_CHANNEL_SIZE: usize = 100;

@@ -1,5 +1,7 @@
 #![allow(dead_code)]
-use crate::{components::chat_contact::ChatContact, db::DbContact};
+use crate::{
+    components::chat_contact::ChatContact, db::DbContact, net::ImageKind, types::ChannelMetadata,
+};
 use chrono::{DateTime, Local, NaiveDateTime, Offset};
 use iced::widget::image::Handle;
 use image::{ImageBuffer, Luma, Rgba};
@@ -151,6 +153,12 @@ pub fn unchecked_url_or_err(url: &str, index: &str) -> Result<UncheckedUrl, sqlx
 }
 pub fn profile_meta_or_err(json: &str, index: &str) -> Result<nostr::Metadata, sqlx::Error> {
     nostr::Metadata::from_json(json).map_err(|e| handle_decode_error(e, index))
+}
+pub fn channel_meta_or_err(json: &str, index: &str) -> Result<ChannelMetadata, sqlx::Error> {
+    ChannelMetadata::from_json(json).map_err(|e| handle_decode_error(e, index))
+}
+pub fn image_kind_or_err(kind: i32, index: &str) -> Result<ImageKind, sqlx::Error> {
+    ImageKind::from_i32(kind).map_err(|e| handle_decode_error(e, index))
 }
 
 pub fn chat_matches_search(chat: &ChatContact, search: &str) -> bool {

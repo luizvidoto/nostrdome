@@ -22,7 +22,16 @@ pub enum Error {
     FromNostrClientError(#[from] ns_client::Error),
 
     #[error("{0}")]
+    FromUtilsError(#[from] crate::utils::Error),
+
+    #[error("{0}")]
+    FromChannelMetadataError(#[from] crate::types::channel_metadata::Error),
+
+    #[error("{0}")]
     FromChatMessageError(#[from] crate::types::chat_message::Error),
+
+    #[error("{0}")]
+    FromImageCacheError(#[from] crate::db::image_cache::Error),
 
     #[error("{0}")]
     FromChannelCacheError(#[from] crate::db::channel_cache::Error),
@@ -83,4 +92,7 @@ pub enum Error {
 
     #[error("Failed to insert event")]
     FailedToInsert,
+
+    #[error("{0}")]
+    FromUrlParseError(#[from] url::ParseError),
 }

@@ -8,8 +8,7 @@ CREATE TABLE IF NOT EXISTS channel_cache (
     -- UNIX milliseconds
     updated_at INTEGER,
     -- METADATA JSON CONTENT (name, about, picture)
-    metadata TEXT NOT NULL,
-    image_path TEXT
+    metadata TEXT NOT NULL
 );
 
 -- Channel Cache Indexes

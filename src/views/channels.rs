@@ -32,7 +32,7 @@ impl State {
         let mut command = Command::none();
         let mut router_message = None;
 
-        if let BackendEvent::ChannelCreated(cache) = event {
+        if let BackendEvent::ChannelConfirmed(cache) = event {
             println!("*** CHANNEL CREATED ***");
             println!("{}", cache.channel_id);
         }

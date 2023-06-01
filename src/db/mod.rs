@@ -4,6 +4,7 @@ pub(crate) mod channel_cache;
 pub(crate) mod contact;
 pub(crate) mod database;
 pub(crate) mod event;
+pub(crate) mod image_cache;
 pub(crate) mod message;
 pub(crate) mod profile_cache;
 pub(crate) mod relay;
@@ -14,6 +15,7 @@ pub(crate) use channel_cache::ChannelCache;
 pub(crate) use contact::DbContact;
 pub(crate) use database::Database;
 pub(crate) use event::DbEvent;
+pub(crate) use image_cache::ImageDownloaded;
 pub(crate) use message::{DbMessage, MessageStatus, TagInfo};
 pub(crate) use profile_cache::ProfileCache;
 pub(crate) use relay::DbRelay;
@@ -22,6 +24,9 @@ pub(crate) use user_config::UserConfig;
 
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("{0}")]
+    FromImageCacheError(#[from] image_cache::Error),
+
     #[error("{0}")]
     ChannelCacheError(#[from] channel_cache::Error),
 

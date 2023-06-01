@@ -67,16 +67,38 @@ impl DbRelayResponse {
 
         Ok(responses)
     }
-    pub async fn insert(pool: &SqlitePool, response: &DbRelayResponse) -> Result<i64, Error> {
-        tracing::debug!("Inserting relay response: {:?}", response);
+    pub async fn fetch_one(
+        pool: &SqlitePool,
+        response: &DbRelayResponse,
+    ) -> Result<Option<DbRelayResponse>, Error> {
+        let sql = r#"
+            SELECT *
+            FROM relay_response
+            WHERE event_id = ? AND relay_url = ?
+        "#;
+
+        let db_response = sqlx::query_as::<_, DbRelayResponse>(sql)
+            .bind(response.event_id)
+            .bind(&response.relay_url.to_string())
+            .fetch_optional(pool)
+            .await?;
+
+        Ok(db_response)
+    }
+    async fn insert(pool: &SqlitePool, response: &DbRelayResponse) -> Result<(), Error> {
+        tracing::trace!("Inserting relay response: {:?}", response);
         let (status, error_message) = response.status.to_bool();
+
+        if let Some(_) = Self::fetch_one(pool, &response).await? {
+            return Ok(());
+        }
 
         let sql = r#"
             INSERT INTO relay_response (event_id, event_hash, relay_url, status, error_message)
             VALUES (?, ?, ?, ?, ?)
         "#;
 
-        let output = sqlx::query(sql)
+        sqlx::query(sql)
             .bind(response.event_id)
             .bind(&response.event_hash.to_string())
             .bind(&response.relay_url.to_string())
@@ -85,7 +107,7 @@ impl DbRelayResponse {
             .execute(pool)
             .await?;
 
-        Ok(output.last_insert_rowid())
+        Ok(())
     }
 
     pub async fn insert_ok(

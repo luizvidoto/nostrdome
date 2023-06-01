@@ -1,19 +1,14 @@
-use std::path::PathBuf;
-
-use crate::{
-    net::{image_filename, reqwest_client::ImageDownloaded, ImageKind, ImageSize},
-    utils::{
-        event_hash_or_err, millis_to_naive_or_err, profile_meta_or_err, public_key_or_err,
-        url_or_err,
-    },
+use crate::utils::{
+    event_hash_or_err, millis_to_naive_or_err, profile_meta_or_err, public_key_or_err, url_or_err,
 };
 use chrono::NaiveDateTime;
 use nostr::{secp256k1::XOnlyPublicKey, EventId};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use thiserror::Error;
+use url::Url;
 
-use super::DbEvent;
+use super::{DbEvent, ImageDownloaded};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -26,11 +21,11 @@ pub enum Error {
     #[error("Event need to be confirmed")]
     NotConfirmedEvent(EventId),
 
-    #[error("Not found path for kind: {0:?}")]
-    NoPathForKind(ImageKind),
-
     #[error("I/O Error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("{0}")]
+    FromImageCacheError(#[from] crate::db::image_cache::Error),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,8 +35,8 @@ pub struct ProfileCache {
     pub event_hash: nostr::EventId,
     pub from_relay: nostr::Url,
     pub metadata: nostr::Metadata,
-    pub profile_image_path: Option<PathBuf>,
-    pub banner_image_path: Option<PathBuf>,
+    pub profile_pic_cache: Option<ImageDownloaded>,
+    pub banner_pic_cache: Option<ImageDownloaded>,
 }
 impl ProfileCache {
     pub async fn fetch_by_public_key(
@@ -49,32 +44,30 @@ impl ProfileCache {
         public_key: &XOnlyPublicKey,
     ) -> Result<Option<ProfileCache>, Error> {
         let query = "SELECT * FROM profile_meta_cache WHERE public_key = ?;";
-        let result = sqlx::query_as::<_, ProfileCache>(query)
+        let mut result = sqlx::query_as::<_, ProfileCache>(query)
             .bind(&public_key.to_string())
             .fetch_optional(cache_pool)
             .await?;
+
+        if let Some(profile_cache) = &mut result {
+            if let Some(pic_url) = &profile_cache.metadata.picture {
+                if let Ok(pic_url) = Url::parse(pic_url) {
+                    profile_cache.profile_pic_cache =
+                        ImageDownloaded::fetch(cache_pool, &pic_url).await?;
+                }
+            }
+            if let Some(banner_url) = &profile_cache.metadata.banner {
+                if let Ok(banner_url) = Url::parse(banner_url) {
+                    profile_cache.banner_pic_cache =
+                        ImageDownloaded::fetch(cache_pool, &banner_url).await?;
+                }
+            }
+        }
+
         Ok(result)
     }
 
-    // if let Some(profile_cache) = ProfileCache::fetch_by_public_key(cache_pool, public_key).await? {
-    //     if event_date < &profile_cache.updated_at {
-    //         if let Some(path_of_kind) = profile_cache.get_path(kind) {
-    //             return Ok(path_of_kind);
-    //         }
-    //     }
-    //     if let Some(url_of_kind) = profile_cache.get_url(kind) {
-    //         if image_url == url_of_kind {
-    //             if let Some(path_of_kind) = profile_cache.get_path(kind) {
-    //                 return Ok(path_of_kind);
-    //             }
-    //         }
-    //     }
-    // }
-
-    pub async fn insert_with_event(
-        cache_pool: &SqlitePool,
-        db_event: &DbEvent,
-    ) -> Result<u64, Error> {
+    pub async fn insert(cache_pool: &SqlitePool, db_event: &DbEvent) -> Result<u64, Error> {
         let metadata = nostr::Metadata::from_json(&db_event.content)
             .map_err(|_| Error::JsonToMetadata(db_event.content.clone()))?;
         let public_key = &db_event.pubkey;
@@ -89,14 +82,14 @@ impl ProfileCache {
 
         if let Some(last_cache) = Self::fetch_by_public_key(cache_pool, public_key).await? {
             if &last_cache.event_hash == event_hash {
-                tracing::info!(
+                tracing::debug!(
                     "Skipping update. Same event id for pubkey: {}",
                     public_key.to_string()
                 );
                 return Ok(0);
             }
             if last_cache.updated_at > *event_date {
-                tracing::warn!(
+                tracing::debug!(
                     "Skipping update. Outdated event for pubkey: {} - cache: {:?} - event: {:?}",
                     public_key.to_string(),
                     last_cache.updated_at,
@@ -144,66 +137,6 @@ impl ProfileCache {
 
         Ok(rows_affected)
     }
-
-    pub(crate) async fn image_downloaded(
-        cache_pool: &SqlitePool,
-        img: &ImageDownloaded,
-    ) -> Result<(), Error> {
-        let kind_str = match img.kind {
-            ImageKind::Profile => "profile_image_path",
-            ImageKind::Banner => "banner_image_path",
-        };
-        let update_query = format!(
-            r#"
-            UPDATE profile_meta_cache 
-            SET {}=?
-            WHERE public_key = ?
-        "#,
-            kind_str
-        );
-        sqlx::query(&update_query)
-            .bind(&img.path.to_string_lossy())
-            .bind(&img.public_key.to_string())
-            .execute(cache_pool)
-            .await?;
-        Ok(())
-    }
-
-    pub(crate) async fn remove_file(
-        cache_pool: &SqlitePool,
-        cache: &ProfileCache,
-        kind: ImageKind,
-    ) -> Result<(), Error> {
-        let path = cache.get_path(kind).ok_or(Error::NoPathForKind(kind))?;
-        if path.exists() {
-            remove_all_images(&path, kind).await?;
-        }
-        let kind_str = match kind {
-            ImageKind::Profile => "profile_image_path",
-            ImageKind::Banner => "banner_image_path",
-        };
-        let update_query = format!(
-            r#"
-            UPDATE profile_meta_cache 
-            SET {}=?
-            WHERE public_key=?
-        "#,
-            kind_str
-        );
-        sqlx::query(&update_query)
-            .bind(&"".to_string())
-            .bind(&cache.public_key.to_string())
-            .execute(cache_pool)
-            .await?;
-        Ok(())
-    }
-
-    pub(crate) fn get_path(&self, kind: ImageKind) -> Option<PathBuf> {
-        match kind {
-            ImageKind::Profile => self.profile_image_path.clone(),
-            ImageKind::Banner => self.banner_image_path.clone(),
-        }
-    }
 }
 
 impl sqlx::FromRow<'_, SqliteRow> for ProfileCache {
@@ -223,31 +156,14 @@ impl sqlx::FromRow<'_, SqliteRow> for ProfileCache {
         let updated_at =
             millis_to_naive_or_err(row.try_get::<i64, &str>("updated_at")?, "updated_at")?;
 
-        let profile_image_path: Option<String> = row.get("profile_image_path");
-        let profile_image_path = profile_image_path.map(|path| PathBuf::from(path));
-
-        let banner_image_path: Option<String> = row.get("banner_image_path");
-        let banner_image_path = banner_image_path.map(|path| PathBuf::from(path));
-
         Ok(Self {
             public_key,
             updated_at,
             event_hash,
             metadata,
             from_relay,
-            profile_image_path,
-            banner_image_path,
+            profile_pic_cache: None,
+            banner_pic_cache: None,
         })
     }
-}
-
-async fn remove_all_images(path: &PathBuf, kind: ImageKind) -> Result<(), Error> {
-    tokio::fs::remove_file(path).await?;
-
-    let med_path = image_filename(kind, ImageSize::Medium, "png");
-    tokio::fs::remove_file(med_path).await?;
-
-    let sm_path = image_filename(kind, ImageSize::Small, "png");
-    tokio::fs::remove_file(sm_path).await?;
-    Ok(())
 }

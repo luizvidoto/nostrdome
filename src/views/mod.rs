@@ -9,6 +9,7 @@ use crate::{
 
 mod channels;
 mod chat;
+mod find_channels;
 pub(crate) mod home;
 pub(crate) mod login;
 pub(crate) mod modal;

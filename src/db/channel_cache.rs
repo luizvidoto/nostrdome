@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use thiserror::Error;
 
 use chrono::NaiveDateTime;
@@ -6,8 +5,9 @@ use nostr::secp256k1::XOnlyPublicKey;
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
-use crate::utils::{
-    event_hash_or_err, millis_to_naive_or_err, profile_meta_or_err, public_key_or_err,
+use crate::{
+    types::ChannelMetadata,
+    utils::{channel_meta_or_err, event_hash_or_err, millis_to_naive_or_err, public_key_or_err},
 };
 
 #[derive(Error, Debug)]
@@ -40,8 +40,7 @@ pub struct ChannelCache {
     pub created_at: NaiveDateTime,
     pub updated_event_hash: Option<nostr::EventId>,
     pub updated_at: Option<NaiveDateTime>,
-    pub metadata: nostr::Metadata,
-    pub image_path: Option<PathBuf>,
+    pub metadata: ChannelMetadata,
 }
 impl ChannelCache {
     pub async fn fetch_by_creator(
@@ -72,7 +71,6 @@ impl ChannelCache {
         cache_pool: &SqlitePool,
         db_event: &DbEvent,
     ) -> Result<ChannelCache, Error> {
-        // need to be kind 40
         let metadata = nostr::Metadata::from_json(&db_event.content)
             .map_err(|_| Error::JsonToMetadata(db_event.content.clone()))?;
         let channel_id = &db_event.event_hash;
@@ -80,6 +78,10 @@ impl ChannelCache {
         let created_at = &db_event
             .remote_creation()
             .ok_or(Error::NotConfirmedEvent(channel_id.to_owned()))?;
+
+        if let Some(channel_cache) = Self::fetch_by_channel_id(cache_pool, channel_id).await? {
+            return Ok(channel_cache);
+        }
 
         let insert_query = r#"
             INSERT INTO channel_cache
@@ -121,20 +123,11 @@ impl ChannelCache {
             .remote_creation()
             .ok_or(Error::NotConfirmedEvent(updated_event_hash.clone()))?;
 
-        let image_path_update = if metadata.picture != channel_cache.metadata.picture {
-            r#", image_path='' "#
-        } else {
-            ""
-        };
-
-        let update_query = format!(
-            r#"
-                UPDATE channel_cache
-                SET metadata=?, updated_event_hash=?, updated_at=? {}
-                WHERE channel_id = ?
-            "#,
-            image_path_update
-        );
+        let update_query = r#"
+            UPDATE channel_cache
+            SET metadata=?, updated_event_hash=?, updated_at=?
+            WHERE channel_id = ?
+        "#;
 
         sqlx::query(&update_query)
             .bind(metadata.as_json())
@@ -150,31 +143,12 @@ impl ChannelCache {
 
         Ok(channel_cache)
     }
-
-    pub(crate) async fn update_local_path(
-        cache_pool: &SqlitePool,
-        public_key: &XOnlyPublicKey,
-        path: &PathBuf,
-    ) -> Result<(), Error> {
-        todo!()
-    }
-
-    pub(crate) async fn remove_file(
-        cache_pool: &SqlitePool,
-        cache: &ChannelCache,
-    ) -> Result<(), Error> {
-        todo!()
-    }
-
-    pub(crate) fn get_path(&self) -> Option<PathBuf> {
-        todo!()
-    }
 }
 
 impl sqlx::FromRow<'_, SqliteRow> for ChannelCache {
     fn from_row(row: &'_ SqliteRow) -> Result<Self, sqlx::Error> {
         let metadata: String = row.try_get("metadata")?;
-        let metadata = profile_meta_or_err(&metadata, "metadata")?;
+        let metadata = channel_meta_or_err(&metadata, "metadata")?;
 
         let channel_id: String = row.try_get("creation_event_hash")?;
         let channel_id = event_hash_or_err(&channel_id, "creation_event_hash")?;
@@ -195,9 +169,6 @@ impl sqlx::FromRow<'_, SqliteRow> for ChannelCache {
             .map(|date| millis_to_naive_or_err(date, "updated_at"))
             .transpose()?;
 
-        let image_path: Option<String> = row.get("image_path");
-        let image_path = image_path.map(|path| PathBuf::from(path));
-
         Ok(Self {
             metadata,
             created_at,
@@ -205,21 +176,9 @@ impl sqlx::FromRow<'_, SqliteRow> for ChannelCache {
             channel_id,
             creator_pubkey,
             updated_event_hash,
-            image_path,
         })
     }
 }
-
-// async fn remove_all_images(path: &PathBuf, kind: ImageKind) -> Result<(), Error> {
-//     tokio::fs::remove_file(path).await?;
-
-//     let med_path = image_filename(kind, ImageSize::Medium, "png");
-//     tokio::fs::remove_file(med_path).await?;
-
-//     let sm_path = image_filename(kind, ImageSize::Small, "png");
-//     tokio::fs::remove_file(sm_path).await?;
-//     Ok(())
-// }
 
 fn channel_id_from_tags(tags: &[nostr::Tag]) -> Option<nostr::EventId> {
     tags.iter().find_map(|tag| {

@@ -164,6 +164,12 @@ impl DbContact {
     pub fn get_profile_cache(&self) -> Option<ProfileCache> {
         self.profile_cache.clone()
     }
+    pub fn get_profile_pic(&self) -> Option<String> {
+        self.profile_cache
+            .as_ref()
+            .map(|profile| profile.metadata.picture.clone())
+            .flatten()
+    }
     pub fn get_profile_name(&self) -> Option<String> {
         if let Some(profile) = &self.profile_cache {
             if let Some(name) = &profile.metadata.name {
@@ -236,30 +242,25 @@ impl DbContact {
     pub fn profile_image(&self, size: ImageSize, conn: &mut BackEndConnection) -> Handle {
         if let Some(cache) = &self.profile_cache {
             let kind = ImageKind::Profile;
-            match (cache.get_path(kind), &cache.metadata.picture) {
-                (Some(filename), Some(_image_url)) => {
-                    let path = sized_image(&filename, kind, size);
-                    return Handle::from_path(path);
-                }
-                (None, Some(image_url)) => {
+            if let Some(img_cache) = &cache.profile_pic_cache {
+                let path = sized_image(&img_cache.path, kind, size);
+                return Handle::from_path(path);
+            } else {
+                if let Some(image_url) = &cache.metadata.picture {
                     tracing::info!("Download image. url: {}", image_url);
                     conn.send(net::ToBackend::DownloadImage {
                         image_url: image_url.to_owned(),
                         kind,
-                        public_key: self.pubkey.clone(),
+                        identifier: self.pubkey.to_string(),
                     });
-                }
-                (Some(_filename), None) => {
-                    tracing::debug!("Contact with image and no url");
-                    conn.send(net::ToBackend::RemoveFileFromCache((cache.clone(), kind)))
-                }
-                (None, None) => {
-                    tracing::debug!("Contact don't have profile image");
+                } else {
+                    tracing::info!("Contact don't have profile image");
                 }
             }
         } else {
-            tracing::debug!("no profile cache for contact: {}", self.pubkey.to_string());
+            tracing::info!("no profile cache for contact: {}", self.pubkey.to_string());
         }
+
         Handle::from_memory(default_profile_image(size))
     }
 
