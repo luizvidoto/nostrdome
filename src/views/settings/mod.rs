@@ -239,7 +239,8 @@ impl Settings {
             }
             Message::BackupMessage(msg) => {
                 if let MenuState::Backup { state } = &mut self.menu_state {
-                    state.update(msg, conn);
+                    let cmd = state.update(msg, conn);
+                    commands.push(cmd.map(Message::BackupMessage));
                 }
             }
             Message::ContactsMessage(msg) => {

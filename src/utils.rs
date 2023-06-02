@@ -79,18 +79,6 @@ where
     Ok(contents)
 }
 
-pub fn format_pubkey(pubkey: &str) -> String {
-    let prefix = &pubkey[0..4];
-    let suffix = &pubkey[pubkey.len().saturating_sub(4)..];
-    format!("{}..{}", prefix, suffix)
-}
-
-pub fn format_btc_address(pubkey: &str) -> String {
-    let prefix = &pubkey[0..8];
-    let suffix = &pubkey[pubkey.len().saturating_sub(8)..];
-    format!("{}..{}", prefix, suffix)
-}
-
 /// Convert a i64 representing milliseconds since UNIX epoch to an Option<NaiveDateTime>.
 ///
 /// # Arguments
@@ -233,4 +221,41 @@ pub fn qr_code_handle(code: &str) -> Result<Handle, Error> {
     let bytes = rgba_image.into_raw();
 
     Ok(Handle::from_pixels(width, height, bytes)) // Pass the owned bytes
+}
+
+/// Hides the middle part of a string with "..."
+pub fn hide_string(string: &str, open: usize) -> String {
+    let chars: Vec<char> = string.chars().collect();
+    let len = chars.len();
+
+    // If open value is greater than half of the string length, return the entire string
+    if open >= len / 2 {
+        return string.to_string();
+    }
+
+    let prefix: String = chars.iter().take(open).collect();
+    let suffix: String = chars.iter().rev().take(open).collect();
+
+    format!("{}...{}", prefix, suffix.chars().rev().collect::<String>())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hide_string() {
+        // the string total chars is 13
+        // 0 from each side turns into 0 chars, hide the entire string
+        assert_eq!(hide_string("Hello, world!", 0), "...");
+
+        // 2 from each side turns into 4 chars, hide 9 chars
+        assert_eq!(hide_string("Hello, world!", 2), "He...d!");
+
+        // 5 from each side turns into 10 chars, hide 3 chars
+        assert_eq!(hide_string("Hello, world!", 5), "Hello...orld!");
+
+        // 8 from each side turns into 16 chars, open the entire string
+        assert_eq!(hide_string("Hello, world!", 8), "Hello, world!");
+    }
 }

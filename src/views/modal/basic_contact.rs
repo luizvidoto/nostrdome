@@ -6,7 +6,7 @@ use crate::consts::{MEDIUM_PROFILE_IMG_HEIGHT, MEDIUM_PROFILE_IMG_WIDTH, YMD_FOR
 use crate::db::DbContact;
 use crate::icon::{copy_icon, edit_icon};
 use crate::net::{self, BackEndConnection, BackendEvent, ImageSize};
-use crate::utils::from_naive_utc_to_local;
+use crate::utils::{from_naive_utc_to_local, hide_string};
 use iced::widget::{button, column, container, image, row, text, tooltip, Space};
 use iced::{alignment, clipboard};
 use iced::{Alignment, Command, Length};
@@ -38,36 +38,40 @@ pub enum CMessage<M: Clone + Debug> {
 #[derive(Debug, Clone)]
 pub struct ContactDetails {
     db_contact: Option<DbContact>,
-    modal_petname_input: String,
-    modal_pubkey_input: String,
-    modal_rec_relay_input: String,
+    petname_input: String,
+    pubkey_input: String,
+    rec_relay_input: String,
     mode: Mode,
     is_pub_invalid: bool,
     is_relay_invalid: bool,
     profile_img_handle: Option<image::Handle>,
+    pubkey_hidden: String,
 }
 impl ContactDetails {
     pub(crate) fn new() -> Self {
         Self {
             db_contact: None,
-            modal_petname_input: "".into(),
-            modal_pubkey_input: "".into(),
-            modal_rec_relay_input: "".into(),
+            petname_input: "".into(),
+            pubkey_input: "".into(),
+            rec_relay_input: "".into(),
             mode: Mode::Add,
             is_pub_invalid: false,
             is_relay_invalid: false,
             profile_img_handle: None,
+            pubkey_hidden: "".into(),
         }
     }
     pub(crate) fn edit(db_contact: &DbContact, conn: &mut BackEndConnection) -> Self {
+        let pubkey_input = db_contact
+            .pubkey()
+            .to_bech32()
+            .unwrap_or(db_contact.pubkey().to_string());
         Self {
+            pubkey_hidden: hide_string(&pubkey_input, 16),
             db_contact: Some(db_contact.to_owned()),
-            modal_petname_input: db_contact.get_petname().unwrap_or_else(|| "".into()),
-            modal_pubkey_input: db_contact
-                .pubkey()
-                .to_bech32()
-                .unwrap_or(db_contact.pubkey().to_string()),
-            modal_rec_relay_input: db_contact
+            petname_input: db_contact.get_petname().unwrap_or_else(|| "".into()),
+            pubkey_input,
+            rec_relay_input: db_contact
                 .get_relay_url()
                 .map(|url| url.to_string())
                 .unwrap_or("".into()),
@@ -96,14 +100,14 @@ impl ContactDetails {
                 Mode::Add | Mode::Edit => {
                     let petname_input = TextInputGroup::new(
                         "Contact Name",
-                        &self.modal_petname_input,
+                        &self.petname_input,
                         CMessage::PetNameInputChange,
                     )
                     .placeholder("");
 
                     let mut pubkey_input = TextInputGroup::new(
                         "Contact PubKey",
-                        &self.modal_pubkey_input,
+                        &self.pubkey_input,
                         CMessage::PubKeyInputChange,
                     )
                     .placeholder("");
@@ -118,7 +122,7 @@ impl ContactDetails {
 
                     let mut rec_relay_input = TextInputGroup::new(
                         "Recommended Relay",
-                        &self.modal_rec_relay_input,
+                        &self.rec_relay_input,
                         CMessage::RecRelayInputChange,
                     )
                     .placeholder("ws://my-relay.com");
@@ -136,15 +140,15 @@ impl ContactDetails {
                     .into()
                 }
                 Mode::View => {
-                    let petname_text: &str = if self.modal_petname_input.is_empty() {
+                    let petname_text: &str = if self.petname_input.is_empty() {
                         "No name"
                     } else {
-                        &self.modal_petname_input
+                        &self.petname_input
                     };
-                    let rec_relay_text: &str = if self.modal_rec_relay_input.is_empty() {
+                    let rec_relay_text: &str = if self.rec_relay_input.is_empty() {
                         "No relay set"
                     } else {
-                        &self.modal_rec_relay_input
+                        &self.rec_relay_input
                     };
                     let petname_group = column![
                         text("Contact Name"),
@@ -167,7 +171,7 @@ impl ContactDetails {
                         text("Contact PubKey"),
                         container(
                             row![
-                                container(text(&self.modal_pubkey_input)).width(Length::Fill),
+                                container(text(&self.pubkey_hidden)).width(Length::Fill),
                                 copy_btn
                             ]
                             .align_items(Alignment::Center)
@@ -333,7 +337,7 @@ impl ContactDetails {
                 return (command, true);
             }
             CMessage::CopyPubkey => {
-                command = clipboard::write(self.modal_pubkey_input.to_owned());
+                command = clipboard::write(self.pubkey_input.to_owned());
             }
             CMessage::EditMode => {
                 if let Mode::View = self.mode {
@@ -341,14 +345,14 @@ impl ContactDetails {
                 }
             }
             CMessage::PetNameInputChange(text) => {
-                self.modal_petname_input = text;
+                self.petname_input = text;
             }
             CMessage::PubKeyInputChange(text) => {
-                self.modal_pubkey_input = text;
+                self.pubkey_input = text;
                 self.is_pub_invalid = false;
             }
             CMessage::RecRelayInputChange(text) => {
-                self.modal_rec_relay_input = text;
+                self.rec_relay_input = text;
                 self.is_relay_invalid = false;
             }
             CMessage::SubmitContact => return (command, self.handle_submit_contact(conn)),
@@ -364,13 +368,13 @@ impl ContactDetails {
         let submit_result = match &self.db_contact {
             Some(db_contact) => DbContact::edit_contact(
                 db_contact.to_owned(),
-                &self.modal_petname_input,
-                &self.modal_rec_relay_input,
+                &self.petname_input,
+                &self.rec_relay_input,
             ),
             None => DbContact::new_from_submit(
-                &self.modal_pubkey_input,
-                &self.modal_petname_input,
-                &self.modal_rec_relay_input,
+                &self.pubkey_input,
+                &self.petname_input,
+                &self.rec_relay_input,
             ),
         };
 

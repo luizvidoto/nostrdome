@@ -4,7 +4,7 @@ use iced::Length;
 use crate::db::DbContact;
 use crate::icon::{delete_icon, edit_icon, reply_icon};
 use crate::style;
-use crate::utils::format_pubkey;
+use crate::utils::hide_string;
 use crate::widget::Element;
 
 #[derive(Debug, Clone)]
@@ -59,7 +59,7 @@ impl ContactRow {
     }
     pub fn view(&self) -> Element<'static, Message> {
         row![
-            container(text(format_pubkey(&self.contact.pubkey().to_string())))
+            container(text(hide_string(&self.contact.pubkey().to_string(), 4)))
                 .width(Length::Fixed(PUBKEY_CELL_WIDTH)),
             container(text(&self.contact.get_petname().unwrap_or("".into())))
                 .width(Length::Fixed(NAME_CELL_WIDTH_MIN))

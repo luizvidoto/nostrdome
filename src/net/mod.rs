@@ -618,6 +618,7 @@ pub enum BackendEvent {
     ImageDownloaded(ImageDownloaded),
 
     // ---  ---
+    GotKeys(Keys),
     GotChatMessages((DbContact, Vec<ChatMessage>)),
     GotRelayResponses {
         chat_message: ChatMessage,
@@ -754,6 +755,7 @@ pub enum ToBackend {
     LoginWithSK(Keys),
     CreateAccount(BasicProfile),
     FindChannels(String),
+    FetchKeys,
 }
 
 pub async fn process_message(
@@ -873,6 +875,9 @@ pub async fn process_message(
             }
         },
         // -----------
+        ToBackend::FetchKeys => {
+            let _ = output.send(BackendEvent::GotKeys(keys.to_owned())).await;
+        }
         ToBackend::FindChannels(search_term) => {
             backend.subscribe_eose(
                 &SubscriptionType::SearchChannels,
@@ -1221,28 +1226,28 @@ pub fn add_relays_and_connect(
         }
     }
 
-    let last_timestamp_secs: u64 = last_event
+    let last_event_tt: u64 = last_event
         .map(|e| {
             // syncronization problems with different machines
             let earlier_time = e.local_creation - chrono::Duration::minutes(10);
             (earlier_time.timestamp_millis() / 1000) as u64
         })
         .unwrap_or(0);
-    tracing::info!("last event timestamp: {}", last_timestamp_secs);
+    tracing::info!("last event timestamp: {}", last_event_tt);
 
     backend.subscribe_eose(
         &SubscriptionType::ContactList,
-        vec![contact_list_filter(keys.public_key(), last_timestamp_secs)],
+        vec![contact_list_filter(keys.public_key(), last_event_tt)],
         None,
     )?;
     backend.subscribe_eose(
         &SubscriptionType::UserMetadata,
-        vec![user_metadata(keys.public_key())],
+        vec![user_metadata(keys.public_key(), last_event_tt)],
         None,
     )?;
     backend.subscribe_id(
         &SubscriptionType::Messages,
-        messages_filter(keys.public_key(), last_timestamp_secs),
+        messages_filter(keys.public_key(), last_event_tt),
         None,
     )?;
 

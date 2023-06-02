@@ -1,27 +1,27 @@
-pub mod chat_contact;
-pub mod relay_row;
-pub mod text;
-pub mod text_input_group;
 use iced::widget::column;
-pub use relay_row::RelayRow;
-pub mod contact_row;
-pub use contact_row::ContactRow;
 
 pub mod async_file_importer;
-pub use async_file_importer::AsyncFileImporter;
-
+pub mod chat_contact;
 mod common_scrollable;
-pub use common_scrollable::common_scrollable;
+pub mod contact_row;
+mod copy_btn;
 mod custom_widgets;
-pub use custom_widgets::{floating_element, FloatingElement, MouseArea, Responsive};
-
+pub mod relay_row;
 pub mod status_bar;
-pub use status_bar::StatusBar;
+pub mod text;
+pub mod text_input_group;
 
 use crate::style;
 use crate::widget::Element;
+pub use async_file_importer::AsyncFileImporter;
+pub use common_scrollable::common_scrollable;
+pub use contact_row::ContactRow;
+pub use copy_btn::copy_btn;
+pub use custom_widgets::{floating_element, FloatingElement, MouseArea, Responsive};
 use iced::widget::container;
 use iced::Length;
+pub use relay_row::RelayRow;
+pub use status_bar::StatusBar;
 use text::title;
 
 pub fn inform_card<'a, Message: 'a>(

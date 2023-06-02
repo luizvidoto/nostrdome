@@ -1,13 +1,12 @@
 use crate::{
-    components::{common_scrollable, text::title},
+    components::{common_scrollable, copy_btn, text::title},
     consts::{BITCOIN_ADDRESS, GITHUB_REPO, LIGHTNING_ADDRESS, NOSTRTALK_VERSION, TT_LINK},
-    icon::copy_icon,
     net::BackendEvent,
     style,
-    utils::{format_btc_address, qr_code_handle},
+    utils::{hide_string, qr_code_handle},
     widget::Element,
 };
-use iced::widget::{button, column, container, image as iced_image, row, text, tooltip, Rule};
+use iced::widget::{button, column, container, image as iced_image, row, text, Rule};
 use iced::{clipboard, widget::image::Handle};
 use iced::{Alignment, Command, Length};
 
@@ -129,23 +128,17 @@ fn make_donation_qrcode<'a>(
     };
 
     let qrcode_txt = container(
-        text(format_btc_address(qr_code_str))
+        text(hide_string(qr_code_str, 8))
             .size(18)
             .style(style::Text::Placeholder),
     );
     //quando clica no botao, aparece uma tooltip falando "copied!"
-    let copy_btn = tooltip(
-        button(copy_icon())
-            .on_press(Message::CopyQrCode(qr_code_str.to_owned()))
-            .style(style::Button::Primary),
-        "Copy",
-        tooltip::Position::Top,
-    )
-    .style(style::Container::TooltipBg);
-
-    let qrcode_txt_group = row![qrcode_txt, copy_btn]
-        .align_items(Alignment::Center)
-        .spacing(5);
+    let qrcode_txt_group = row![
+        qrcode_txt,
+        copy_btn("Copy", Message::CopyQrCode(qr_code_str.to_owned()))
+    ]
+    .align_items(Alignment::Center)
+    .spacing(5);
 
     let content = column![name, qrcode_image, qrcode_txt_group]
         .spacing(5)

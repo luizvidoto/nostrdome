@@ -12,29 +12,30 @@ pub fn contact_list_metadata(contact_list: &[DbContact]) -> Vec<Filter> {
         })
         .collect::<Vec<_>>()
 }
-pub fn user_metadata(pubkey: XOnlyPublicKey) -> Filter {
+pub fn user_metadata(pubkey: XOnlyPublicKey, last_event_tt: u64) -> Filter {
     Filter::new()
         .author(pubkey.to_string())
         .kind(Kind::Metadata)
+        .since(Timestamp::from(last_event_tt))
 }
 
-pub fn contact_list_filter(public_key: XOnlyPublicKey, last_timestamp_secs: u64) -> Filter {
+pub fn contact_list_filter(public_key: XOnlyPublicKey, last_event_tt: u64) -> Filter {
     let user_contact_list = Filter::new()
         .author(public_key.to_string())
         .kind(Kind::ContactList)
-        .since(Timestamp::from(last_timestamp_secs));
+        .since(Timestamp::from(last_event_tt));
     user_contact_list
 }
 
-pub fn messages_filter(public_key: XOnlyPublicKey, last_timestamp_secs: u64) -> Vec<Filter> {
+pub fn messages_filter(public_key: XOnlyPublicKey, last_event_tt: u64) -> Vec<Filter> {
     let sent_msgs = Filter::new()
         .kind(nostr::Kind::EncryptedDirectMessage)
         .author(public_key.to_string())
-        .since(Timestamp::from(last_timestamp_secs));
+        .since(Timestamp::from(last_event_tt));
     let recv_msgs = Filter::new()
         .kind(nostr::Kind::EncryptedDirectMessage)
         .pubkey(public_key)
-        .since(Timestamp::from(last_timestamp_secs));
+        .since(Timestamp::from(last_event_tt));
     vec![sent_msgs, recv_msgs]
 }
 
