@@ -54,7 +54,6 @@ pub enum Message {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone)]
 pub enum State {
     ChooseAccount,
     CreateAccount {

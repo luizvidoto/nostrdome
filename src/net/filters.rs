@@ -2,15 +2,17 @@ use nostr::{secp256k1::XOnlyPublicKey, Filter, Kind, Timestamp};
 
 use crate::db::DbContact;
 
-pub fn contact_list_metadata(contact_list: &[DbContact]) -> Vec<Filter> {
-    contact_list
+pub fn contact_list_metadata(contact_list: &[DbContact]) -> Option<Filter> {
+    if contact_list.is_empty() {
+        return None;
+    }
+
+    let all_pubkeys = contact_list
         .iter()
-        .map(|c| {
-            Filter::new()
-                .author(c.pubkey().to_string())
-                .kind(Kind::Metadata)
-        })
-        .collect::<Vec<_>>()
+        .map(|c| c.pubkey().to_string())
+        .collect::<Vec<_>>();
+
+    Some(Filter::new().authors(all_pubkeys).kind(Kind::Metadata))
 }
 pub fn user_metadata(pubkey: XOnlyPublicKey, last_event_tt: u64) -> Filter {
     Filter::new()
@@ -24,6 +26,7 @@ pub fn contact_list_filter(public_key: XOnlyPublicKey, last_event_tt: u64) -> Fi
         .author(public_key.to_string())
         .kind(Kind::ContactList)
         .since(Timestamp::from(last_event_tt));
+
     user_contact_list
 }
 
@@ -36,6 +39,7 @@ pub fn messages_filter(public_key: XOnlyPublicKey, last_event_tt: u64) -> Vec<Fi
         .kind(nostr::Kind::EncryptedDirectMessage)
         .pubkey(public_key)
         .since(Timestamp::from(last_event_tt));
+
     vec![sent_msgs, recv_msgs]
 }
 
@@ -53,15 +57,15 @@ pub fn channel_search_filter(channel_id: &str) -> Filter {
     channel_filter
 }
 
-pub fn channel_details_filter(channel_id: nostr::EventId) -> Vec<Filter> {
+pub fn channel_details_filter(channel_id: &nostr::EventId) -> Vec<Filter> {
     vec![
         Filter::new()
             .kind(Kind::ChannelMetadata)
-            .event(channel_id)
+            .event(channel_id.to_owned())
             .limit(10),
         Filter::new()
             .kind(Kind::ChannelMessage)
-            .event(channel_id)
+            .event(channel_id.to_owned())
             .limit(CHANNEL_DETAILS_LIMIT),
     ]
 }

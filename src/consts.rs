@@ -26,8 +26,8 @@ pub const fn default_profile_image(size: ImageSize) -> &'static [u8] {
     }
 }
 
-pub(crate) const SMALL_CHANNEL_IMG_WIDTH: u16 = 100;
-pub(crate) const SMALL_CHANNEL_IMG_HEIGHT: u16 = 55;
+pub(crate) const _SMALL_CHANNEL_IMG_WIDTH: u16 = 100;
+pub(crate) const _SMALL_CHANNEL_IMG_HEIGHT: u16 = 55;
 pub(crate) const MEDIUM_CHANNEL_IMG_WIDTH: u16 = 220;
 pub(crate) const MEDIUM_CHANNEL_IMG_HEIGHT: u16 = 120;
 
@@ -70,3 +70,5 @@ pub(crate) const RELAY_SUGGESTIONS: [&'static str; 18] = [
     "wss://relay.nostr.ro",
     "wss://nostr.swiss-enigma.ch",
 ];
+
+pub(crate) const NIPS_LIST_MARKDOWN: &'static str = include_str!("../assets/nips.md");

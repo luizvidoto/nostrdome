@@ -1,15 +1,34 @@
-use nostr::{EventId, SubscriptionId};
+use nostr::SubscriptionId;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PrefixedId(String);
+impl PrefixedId {
+    pub fn new(id: &str) -> Self {
+        if id.len() >= 8 {
+            Self(id[0..8].to_owned())
+        } else {
+            Self(id.to_owned())
+        }
+    }
+}
+impl std::fmt::Display for PrefixedId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", &self.0)
+    }
+}
+#[derive(Clone)]
 pub enum SubscriptionType {
     ContactList,
     ContactListMetadata,
     UserMetadata,
     Messages,
     SearchChannels,
-    SearchChannelsDetails(EventId),
+    SearchChannelsDetails(PrefixedId),
 }
 impl SubscriptionType {
+    pub fn src_channel_details(channel_id: &nostr::EventId) -> Self {
+        Self::SearchChannelsDetails(PrefixedId::new(&channel_id.to_hex()))
+    }
     pub fn from_id(id: &SubscriptionId) -> Option<Self> {
         let str = id.to_string();
         match str.as_str() {
@@ -21,10 +40,9 @@ impl SubscriptionType {
             _ => {
                 if str.starts_with("SrcChannelDts_") {
                     let (_, hex) = str.split_at("SrcChannelDts_".len());
-                    match EventId::from_hex(hex) {
-                        Ok(event_id) => Some(SubscriptionType::SearchChannelsDetails(event_id)),
-                        Err(_) => None,
-                    }
+                    Some(SubscriptionType::SearchChannelsDetails(PrefixedId(
+                        hex.to_owned(),
+                    )))
                 } else {
                     None
                 }
@@ -41,8 +59,8 @@ impl std::fmt::Display for SubscriptionType {
             SubscriptionType::UserMetadata => write!(f, "UserMetadata"),
             SubscriptionType::Messages => write!(f, "Messages"),
             SubscriptionType::SearchChannels => write!(f, "SearchChannels"),
-            SubscriptionType::SearchChannelsDetails(channel_id) => {
-                write!(f, "SrcChannelDts_{}", &channel_id.to_hex()[0..8])
+            SubscriptionType::SearchChannelsDetails(prefixed) => {
+                write!(f, "SrcChannelDts_{}", &prefixed)
             }
         }
     }
@@ -51,7 +69,7 @@ impl SubscriptionType {
     pub fn id(&self) -> SubscriptionId {
         match self {
             SubscriptionType::SearchChannelsDetails(channel_id) => {
-                SubscriptionId::new(format!("SrcChannelDts_{}", &channel_id.to_hex()[0..8]))
+                SubscriptionId::new(format!("SrcChannelDts_{}", &channel_id))
             }
             other => SubscriptionId::new(other.to_string()),
         }

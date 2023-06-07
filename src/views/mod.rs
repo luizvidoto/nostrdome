@@ -7,7 +7,6 @@ use crate::{
     widget::Element,
 };
 
-mod channels;
 mod chat;
 mod find_channels;
 pub(crate) mod home;
@@ -38,7 +37,6 @@ impl<M> RouterCommand<M> {
     }
 }
 
-#[derive(Debug, Clone)]
 pub enum RouterMessage {
     GoToSettingsContacts,
     GoToChat,
@@ -192,35 +190,33 @@ impl ViewState {
         conn: &mut BackEndConnection,
     ) -> (Command<Message>, Option<RouterMessage>) {
         let mut commands = vec![];
-        let mut router_message = None;
-
-        match self {
+        let router_message = match self {
             ViewState::Logout { state } => {
                 let (cmd, msg) = state.backend_event(event, conn);
-                router_message = msg;
                 commands.push(cmd);
+                msg
             }
             ViewState::Home { state } => {
                 let (cmd, msg) = state.backend_event(event, conn).batch();
-                router_message = msg;
                 commands.push(cmd.map(Message::HomeMsg));
+                msg
             }
             ViewState::Settings { state } => {
                 let (cmds, msg) = state.backend_event(event, conn).batch();
-                router_message = msg;
                 commands.push(cmds.map(Message::SettingsMsg));
+                msg
             }
             ViewState::Welcome { state } => {
                 let (cmd, msg) = state.backend_event(event, conn);
-                router_message = msg;
                 commands.push(cmd.map(Message::WelcomeMsg));
+                msg
             }
             ViewState::Login { state } => {
                 let (cmd, msg) = state.backend_event(event, conn);
-                router_message = msg;
                 commands.push(cmd.map(Message::LoginMsg));
+                msg
             }
-        }
+        };
 
         (Command::batch(commands), router_message)
     }
@@ -321,7 +317,6 @@ mod logout {
 
     use super::RouterMessage;
 
-    #[derive(Debug, Clone)]
     pub struct State {}
     impl State {
         pub fn new() -> Self {

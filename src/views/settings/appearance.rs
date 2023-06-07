@@ -7,7 +7,6 @@ pub enum Message {
     ChangeTheme(style::Theme),
 }
 
-#[derive(Debug, Clone)]
 pub struct State {
     selected_theme: Option<style::Theme>,
 }

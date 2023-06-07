@@ -2,24 +2,24 @@ use std::time::Duration;
 
 use iced::alignment::{self, Horizontal};
 use iced::widget::{button, column, container, row, text, text_input, tooltip, Space};
-use iced::{Command, Length, Subscription};
+use iced::{Length, Subscription};
 use iced_aw::{Card, Modal};
 use nostr::Url;
 
 use crate::components::text::title;
 use crate::components::text_input_group::TextInputGroup;
 use crate::components::{common_scrollable, relay_row, RelayRow};
-use crate::db::DbRelay;
 use crate::icon::plus_icon;
 use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
 use crate::utils::url_matches_search;
 use crate::widget::Element;
 
+use super::SettingsRouterMessage;
+
 #[derive(Debug, Clone)]
 pub enum Message {
-    RelayMessage(relay_row::MessageWrapper),
-    BackEndEvent(BackendEvent),
+    RelayRowMessage(relay_row::MessageWrapper),
     OpenAddRelayModal,
     CancelButtonPressed,
     OkButtonPressed,
@@ -29,7 +29,6 @@ pub enum Message {
     Tick,
 }
 
-#[derive(Debug, Clone)]
 pub struct State {
     relays: Vec<RelayRow>,
     show_modal: bool,
@@ -39,12 +38,6 @@ pub struct State {
 }
 impl State {
     pub fn subscription(&self) -> Subscription<Message> {
-        // let relay_subs: Vec<_> = self
-        //     .relays
-        //     .iter()
-        //     .map(|r| r.subscription().map(Message::RelayMessage))
-        //     .collect();
-        // iced::Subscription::batch(relay_subs)
         iced::time::every(Duration::from_millis(TICK_INTERVAL_MILLIS)).map(|_| Message::Tick)
     }
     pub fn new(conn: &mut BackEndConnection) -> Self {
@@ -58,11 +51,48 @@ impl State {
         }
     }
 
-    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Command<Message> {
+    pub fn backend_event(&mut self, event: BackendEvent, conn: &mut BackEndConnection) {
+        match event {
+            BackendEvent::RelayUpdated(db_relay) => {
+                if let Some(row) = self
+                    .relays
+                    .iter_mut()
+                    .find(|row| row.db_relay.url == db_relay.url)
+                {
+                    let _ = row.update(relay_row::Message::RelayUpdated(db_relay), conn);
+                } else {
+                    tracing::warn!("Got information for unknown relay: {}", db_relay.url);
+                }
+            }
+            BackendEvent::RelayCreated(db_relay) => {
+                // conn.send(net::ToBackend::RequestEventsOf(db_relay.clone()));
+                self.relays
+                    .push(RelayRow::new(self.relays.len() as i32, db_relay, conn))
+            }
+            BackendEvent::RelayDeleted(url) => {
+                self.relays.retain(|r| r.db_relay.url != url);
+            }
+            BackendEvent::GotRelays(mut db_relays) => {
+                db_relays.sort_by(|a, b| a.url.cmp(&b.url));
+                self.relays = db_relays
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, db_relay)| RelayRow::new(idx as i32, db_relay, conn))
+                    .collect();
+            }
+            _ => (),
+        }
+    }
+
+    pub fn update(
+        &mut self,
+        message: Message,
+        conn: &mut BackEndConnection,
+    ) -> Option<SettingsRouterMessage> {
         match message {
             Message::Tick => {
                 if !self.relays.is_empty() {
-                    conn.send(net::ToBackend::GetRelayStatusList);
+                    conn.send(net::ToBackend::GetRelayInformation);
                 }
             }
             Message::SearchInputChange(text) => {
@@ -81,8 +111,7 @@ impl State {
                     self.is_invalid = false;
                     self.show_modal = false;
                     self.add_relay_input = "".into();
-                    let db_relay = DbRelay::new(url);
-                    conn.send(net::ToBackend::AddRelay(db_relay));
+                    conn.send(net::ToBackend::AddRelay(url));
                 }
                 Err(e) => {
                     tracing::error!("{}", e);
@@ -91,46 +120,19 @@ impl State {
             },
             Message::OpenAddRelayModal => self.show_modal = true,
 
-            Message::RelayMessage(msg) => {
-                if let Some(row) = self.relays.iter_mut().find(|r| r.id == msg.from) {
-                    let _ = row.update(msg.message, conn);
-                }
-            }
-
-            Message::BackEndEvent(ev) => match ev {
-                BackendEvent::GotRelayStatusList(list) => {
-                    for (url, status) in list {
-                        if let Some(row) = self.relays.iter_mut().find(|r| r.db_relay.url == url) {
-                            let _ = row.update(relay_row::Message::UpdateRelayStatus(status), conn);
-                        } else {
-                            tracing::warn!("Got status for unknown relay: {}", url);
-                        }
-                    }
-                }
-                BackendEvent::RelayCreated(db_relay) => {
-                    // conn.send(net::ToBackend::RequestEventsOf(db_relay.clone()));
-                    self.relays
-                        .push(RelayRow::new(self.relays.len() as i32, db_relay, conn))
-                }
-                BackendEvent::RelayDeleted(db_relay) => {
-                    self.relays.retain(|r| r.db_relay.url != db_relay.url);
-                }
-                BackendEvent::GotRelays(mut db_relays) => {
-                    db_relays.sort_by(|a, b| a.url.cmp(&b.url));
-                    self.relays = db_relays
-                        .into_iter()
-                        .enumerate()
-                        .map(|(idx, db_relay)| RelayRow::new(idx as i32, db_relay, conn))
-                        .collect();
+            Message::RelayRowMessage(msg) => match msg.message {
+                relay_row::Message::OpenRelayDocument(db_relay) => {
+                    return Some(SettingsRouterMessage::OpenRelayDocument(db_relay));
                 }
                 other => {
-                    self.relays
-                        .iter_mut()
-                        .for_each(|r| r.backend_event(other.clone(), conn));
+                    if let Some(row) = self.relays.iter_mut().find(|r| r.id == msg.from) {
+                        let _ = row.update(other, conn);
+                    }
                 }
             },
         }
-        Command::none()
+
+        None
     }
 
     pub fn view(&self) -> Element<Message> {
@@ -156,14 +158,14 @@ impl State {
 
         let table_header = column![RelayRow::view_header().map(|mut message| {
             message.from = -1;
-            Message::RelayMessage(message)
+            Message::RelayRowMessage(message)
         })];
         let relay_rows = self
             .relays
             .iter()
             .filter(|row| url_matches_search(&row.db_relay.url, &self.search_input))
             .fold(column![].spacing(4), |col, relay| {
-                col.push(relay.view().map(Message::RelayMessage))
+                col.push(relay.view().map(Message::RelayRowMessage))
             });
         let relays_ct = container(table_header.push(common_scrollable(relay_rows)));
 

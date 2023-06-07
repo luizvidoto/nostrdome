@@ -17,7 +17,6 @@ pub enum Message {
     GoToChat,
 }
 
-#[derive(Debug, Clone)]
 pub struct State {}
 impl State {
     pub fn new() -> Self {
@@ -29,8 +28,8 @@ impl State {
         event: BackendEvent,
         _conn: &mut BackEndConnection,
     ) -> (Command<Message>, Option<RouterMessage>) {
-        let mut command = Command::none();
-        let mut router_message = None;
+        let command = Command::none();
+        let router_message = None;
 
         if let BackendEvent::ChannelConfirmed(cache) = event {
             println!("*** CHANNEL CREATED ***");

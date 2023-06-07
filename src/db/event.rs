@@ -1,15 +1,17 @@
-use chrono::{NaiveDateTime, Utc};
+use chrono::NaiveDateTime;
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use std::str::FromStr;
 use thiserror::Error;
+use url::Url;
 
-use crate::utils::{handle_decode_error, millis_to_naive_or_err, ns_event_to_naive, url_or_err};
+use crate::{
+    db::DbRelayResponse,
+    utils::{handle_decode_error, millis_to_naive_or_err, ns_event_to_millis, url_or_err},
+};
 use nostr::{
     secp256k1::{schnorr::Signature, XOnlyPublicKey},
     EventId, Kind, Tag, Timestamp,
 };
-
-use super::UserConfig;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -36,17 +38,18 @@ pub enum Error {
 
     #[error("Out-of-range number of seconds when parsing timestamp")]
     TimestampError,
+
+    #[error("{0}")]
+    FromDbRelayResponseError(#[from] crate::db::relay_response::Error),
 }
 
 #[derive(Debug, Clone)]
 pub struct DbEvent {
-    event_id: Option<i64>,
+    pub event_id: i64,
     pub event_hash: EventId,
     pub pubkey: XOnlyPublicKey,
-    pub local_creation: NaiveDateTime, // this is the time when the event was created at the app
-    pub received_at: Option<NaiveDateTime>, // this is the time when the event was received at the app
-    remote_creation: Option<NaiveDateTime>, // this is the time that the relay says the event was created at
-    pub relay_url: Option<nostr::Url>,
+    pub created_at: NaiveDateTime,
+    pub relay_url: nostr::Url,
     pub tags: Vec<nostr::Tag>,
     pub kind: Kind,
     pub content: String,
@@ -60,11 +63,7 @@ impl DbEvent {
         Ok(nostr::Event {
             id: self.event_hash,
             pubkey: self.pubkey,
-            created_at: Timestamp::from(
-                self.remote_creation
-                    .ok_or(Error::EventNotInDatabase(self.event_hash.clone()))?
-                    .timestamp() as u64,
-            ),
+            created_at: Timestamp::from(self.created_at.timestamp() as u64),
             tags: self.tags.to_owned(),
             kind: self.kind,
             content: self.content.to_owned(),
@@ -72,62 +71,9 @@ impl DbEvent {
         })
     }
 
-    // when the app creates the event, there is no relay_url
-    // when it receives from a relay there is
-    fn from_event(event: nostr::Event, relay_url: Option<&nostr::Url>) -> Result<Self, Error> {
-        let (received_at, remote_creation, relay_url) = if let Some(relay_url) = relay_url {
-            // the difference between remote creation and confirmed at
-            (
-                Some(Utc::now().naive_utc()),
-                Some(ns_event_to_naive(event.created_at)?),
-                Some(relay_url),
-            )
-        } else {
-            (None, None, None)
-        };
-
-        Ok(Self {
-            event_id: None,
-            event_hash: event.id,
-            pubkey: event.pubkey,
-            received_at: received_at,
-            local_creation: Utc::now().naive_utc(),
-            remote_creation,
-            relay_url: relay_url.cloned(),
-            tags: event.tags,
-            kind: event.kind,
-            content: event.content,
-            sig: event.sig,
-        })
-    }
-
-    pub fn confirmed_event(event: nostr::Event, relay_url: &nostr::Url) -> Result<Self, Error> {
-        Ok(Self::from_event(event, Some(relay_url))?)
-    }
-
-    // pending event is not confirmed yet
-    pub fn pending_event(event: nostr::Event) -> Result<Self, Error> {
-        Ok(Self::from_event(event, None)?)
-    }
-
-    pub fn remote_creation(&self) -> Option<NaiveDateTime> {
-        self.remote_creation
-    }
-
-    pub fn event_id(&self) -> Result<i64, Error> {
-        self.event_id
-            .ok_or(Error::EventNotInDatabase(self.event_hash.clone()))
-    }
-
-    pub fn with_id(mut self, id: i64) -> Self {
-        self.event_id = Some(id);
-        self
-    }
-
     pub async fn fetch(pool: &SqlitePool) -> Result<Vec<DbEvent>, Error> {
         let sql = Self::FETCH_QUERY.to_owned();
         let output = sqlx::query_as::<_, DbEvent>(&sql).fetch_all(pool).await?;
-
         Ok(output)
     }
     pub async fn fetch_kind(pool: &SqlitePool, kind: nostr::Kind) -> Result<Vec<DbEvent>, Error> {
@@ -136,11 +82,18 @@ impl DbEvent {
             .bind(kind.as_u32())
             .fetch_all(pool)
             .await?;
-
         Ok(output)
     }
 
-    pub async fn fetch_one(
+    pub async fn fetch_id(pool: &SqlitePool, event_id: i64) -> Result<Option<DbEvent>, Error> {
+        let sql = format!("{} WHERE event_id = ?", Self::FETCH_QUERY);
+        Ok(sqlx::query_as::<_, DbEvent>(&sql)
+            .bind(event_id)
+            .fetch_optional(pool)
+            .await?)
+    }
+
+    pub async fn fetch_hash(
         pool: &SqlitePool,
         event_hash: &EventId,
     ) -> Result<Option<DbEvent>, Error> {
@@ -152,7 +105,7 @@ impl DbEvent {
     }
 
     pub async fn has_event(pool: &SqlitePool, event_hash: &EventId) -> Result<bool, Error> {
-        Ok(Self::fetch_one(pool, event_hash).await?.is_some())
+        Ok(Self::fetch_hash(pool, event_hash).await?.is_some())
     }
 
     //fetch last event from db
@@ -193,93 +146,43 @@ impl DbEvent {
             .await?)
     }
 
-    // maybe create insert confirmed and insert pending?
-    pub async fn insert(pool: &SqlitePool, db_event: &DbEvent) -> Result<(i64, u8), Error> {
-        if let Some(db_event) = Self::fetch_one(pool, &db_event.event_hash).await? {
-            // ignore err
-            // return Err(Error::EventAlreadyInDatabase(db_event.event_hash.clone()));
-            return Ok((db_event.event_id()?, 0));
+    pub async fn insert(
+        pool: &SqlitePool,
+        relay_url: &Url,
+        ns_event: &nostr::Event,
+    ) -> Result<Option<DbEvent>, Error> {
+        if Self::has_event(pool, &ns_event.id).await? {
+            return Ok(None);
         }
 
-        tracing::debug!("inserting event id: {}", db_event.event_hash);
-        tracing::trace!("inserting event {:?}", db_event);
+        tracing::debug!("inserting event id: {}", ns_event.id);
+        tracing::trace!("inserting event {:?}", ns_event);
         let sql = r#"
-            INSERT INTO 
-                event (event_hash, pubkey, kind, content, sig, tags, 
-                relay_url, local_creation, remote_creation, received_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            INSERT INTO event
+                (event_hash, pubkey, kind, content, sig, 
+                    tags, relay_url, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
         "#;
 
         let inserted = sqlx::query(sql)
-            .bind(&db_event.event_hash.to_string())
-            .bind(&db_event.pubkey.to_string())
-            .bind(&db_event.kind.as_u32())
-            .bind(&db_event.content)
-            .bind(&db_event.sig.to_string())
-            .bind(&serde_json::to_string(&db_event.tags)?)
-            .bind(&db_event.relay_url.as_ref().map(|url| url.to_string()))
-            .bind(&db_event.local_creation.timestamp_millis())
-            .bind(
-                &db_event
-                    .remote_creation
-                    .as_ref()
-                    .map(|date| date.timestamp_millis()),
-            )
-            .bind(
-                &db_event
-                    .received_at
-                    .as_ref()
-                    .map(|date| date.timestamp_millis()),
-            )
-            .execute(pool)
-            .await?;
-
-        Ok((
-            inserted.last_insert_rowid() as i64,
-            inserted.rows_affected() as u8,
-        ))
-    }
-
-    pub async fn confirm_event(
-        pool: &SqlitePool,
-        relay_url: &nostr::Url,
-        mut db_event: DbEvent,
-    ) -> Result<DbEvent, Error> {
-        tracing::info!("Confirming event");
-        tracing::debug!("{:?}", &db_event);
-        let now_utc = UserConfig::get_corrected_time(pool)
-            .await
-            .unwrap_or(Utc::now().naive_utc());
-
-        let sql = r#"
-            UPDATE event 
-            SET received_at=?, remote_creation=?, relay_url=? 
-            WHERE event_id=?
-        "#;
-
-        let event_id = db_event.event_id()?;
-        db_event.received_at = Some(now_utc);
-        db_event.remote_creation = Some(db_event.local_creation.clone());
-        db_event.relay_url = Some(relay_url.clone());
-
-        sqlx::query(sql)
-            .bind(
-                &db_event
-                    .received_at
-                    .as_ref()
-                    .map(|date| date.timestamp_millis()),
-            )
-            .bind(
-                &db_event
-                    .remote_creation
-                    .as_ref()
-                    .map(|date| date.timestamp_millis()),
-            )
+            .bind(&ns_event.id.to_string())
+            .bind(&ns_event.pubkey.to_string())
+            .bind(&ns_event.kind.as_u32())
+            .bind(&ns_event.content)
+            .bind(&ns_event.sig.to_string())
+            .bind(&serde_json::to_string(&ns_event.tags)?)
             .bind(&relay_url.to_string())
-            .bind(&event_id)
+            .bind(&ns_event_to_millis(ns_event.created_at))
             .execute(pool)
             .await?;
-        Ok(db_event)
+
+        let db_event = Self::fetch_id(pool, inserted.last_insert_rowid())
+            .await?
+            .ok_or(Error::EventNotInDatabase(ns_event.id.to_owned()))?;
+
+        DbRelayResponse::insert_ok(pool, relay_url, &db_event).await?;
+
+        Ok(Some(db_event))
     }
 
     pub async fn delete(pool: &SqlitePool, event_id: i64) -> Result<(), Error> {
@@ -305,11 +208,6 @@ impl sqlx::FromRow<'_, SqliteRow> for DbEvent {
         let kind = row.try_get::<u32, &str>("kind")?;
         let kind = Kind::from(kind as u64);
 
-        let local_creation = row.try_get::<i64, &str>("local_creation")?;
-        let local_creation = NaiveDateTime::from_timestamp_millis(local_creation).ok_or(
-            handle_decode_error(Box::new(Error::TimestampError), "local_creation"),
-        )?;
-
         let sig = row.try_get::<String, &str>("sig")?;
         let sig = Signature::from_str(&sig).map_err(|e| handle_decode_error(e, "sig"))?;
 
@@ -326,29 +224,18 @@ impl sqlx::FromRow<'_, SqliteRow> for DbEvent {
             tags
         };
 
-        let relay_url = row
-            .get::<Option<String>, &str>("relay_url")
-            .map(|s| url_or_err(&s, "relay_url"))
-            .transpose()?;
+        let relay_url: String = row.try_get("relay_url")?;
+        let relay_url = url_or_err(&relay_url, "relay_url")?;
 
-        let remote_creation = row
-            .get::<Option<i64>, &str>("remote_creation")
-            .map(|n| millis_to_naive_or_err(n, "remote_creation"))
-            .transpose()?;
-
-        let received_at = row
-            .get::<Option<i64>, &str>("received_at")
-            .map(|n| millis_to_naive_or_err(n, "received_at"))
-            .transpose()?;
+        let created_at: i64 = row.try_get("created_at")?;
+        let created_at = millis_to_naive_or_err(created_at, "created_at")?;
 
         Ok(DbEvent {
-            event_id: Some(row.try_get::<i64, &str>("event_id")?),
+            event_id: row.try_get::<i64, &str>("event_id")?,
+            created_at,
             event_hash,
             pubkey,
-            local_creation,
             relay_url,
-            received_at: received_at,
-            remote_creation,
             kind,
             tags,
             content: row.try_get::<String, &str>("content")?,

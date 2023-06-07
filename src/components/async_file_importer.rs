@@ -20,7 +20,6 @@ pub struct FileFilter {
     pub name: String,
     pub extensions: Vec<String>,
 }
-#[derive(Debug, Clone)]
 pub struct AsyncFileImporter {
     placeholder: String,
     file_input: PathBuf,

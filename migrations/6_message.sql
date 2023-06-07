@@ -4,29 +4,19 @@ CREATE TABLE message (
     content TEXT NOT NULL,
     -- what chat it belongs to
     contact_pubkey TEXT NOT NULL,
-    -- who sent it
-    from_pubkey TEXT NOT NULL,
-    -- who it's going to
-    to_pubkey TEXT NOT NULL,
-    -- database event_id
-    event_id INTEGER NOT NULL REFERENCES event(event_id) ON UPDATE CASCADE ON DELETE CASCADE,
-    event_hash BLOB NOT NULL,
+    -- bool
+    is_users INTEGER NOT NULL,
     -- UNIX timestamp as integer milliseconds
     created_at INTEGER NOT NULL,
-    confirmed_at INTEGER,
     status INTEGER NOT NULL,
+    event_hash BLOB NOT NULL,
+    -- only confirmed has values below
+    event_id INTEGER,
+    confirmed_at INTEGER,
     relay_url TEXT
 );
 
 -- -- Message Indexes
-CREATE INDEX IF NOT EXISTS msg_id_event_id_index ON message(msg_id, event_id);
+CREATE UNIQUE INDEX IF NOT EXISTS event_hash_index ON message(event_hash);
 
 CREATE INDEX IF NOT EXISTS contact_pubkey_index ON message(contact_pubkey);
-
-CREATE INDEX IF NOT EXISTS from_pubkey_to_pubkey_index ON message(from_pubkey, to_pubkey);
-
-CREATE INDEX IF NOT EXISTS created_at_index ON message(created_at);
-
-CREATE INDEX IF NOT EXISTS msg_id_created_at_index ON message(msg_id, created_at);
-
-CREATE INDEX IF NOT EXISTS msg_id_relay_url_index ON message(msg_id, relay_url);

@@ -1,7 +1,7 @@
 use crate::Error;
 use chrono::NaiveDateTime;
 use rand::Rng;
-use sntpc::{NtpContext, NtpResult, NtpTimestampGenerator, NtpUdpSocket, Result as SntpcR};
+use sntpc::{NtpContext, NtpTimestampGenerator, NtpUdpSocket, Result as SntpcR};
 use std::{
     net::{SocketAddr, ToSocketAddrs, UdpSocket},
     time::Duration,
@@ -12,9 +12,6 @@ use super::TaskOutput;
 
 #[derive(Error, Debug)]
 pub enum NtpError {
-    #[error("Sntpc Error: {0:?}")]
-    FromMySntpcError(sntpc::Error),
-
     #[error("Sntpc Error: Unable to bind to any port")]
     NtpUnableToBindPort,
 
@@ -133,21 +130,6 @@ pub fn spawn_ntp_request(sender: tokio::sync::mpsc::Sender<Result<TaskOutput, Er
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
     });
-}
-
-async fn ntp_request(ntp_addrs: &[(String, SocketAddr)]) -> Result<Option<NtpResult>, NtpError> {
-    for addr in ntp_addrs {
-        let socket = bind_to_random_port().map_err(|_| NtpError::NtpUnableToBindPort)?;
-        socket
-            .set_read_timeout(Some(Duration::from_secs(10)))
-            .map_err(|_| NtpError::NtpUnableToSetReadTimeout)?;
-        let sock_wrapper = UdpSocketWrapper(socket);
-        let ntp_context = NtpContext::new(StdTimestampGen::default());
-        let time = sntpc::get_time(addr.1, sock_wrapper, ntp_context)
-            .map_err(NtpError::FromMySntpcError)?;
-        return Ok(Some(time));
-    }
-    Ok(None)
 }
 
 fn ntp_addrs() -> Vec<(String, SocketAddr)> {

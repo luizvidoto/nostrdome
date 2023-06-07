@@ -16,7 +16,6 @@ use nostr::prelude::ToBech32;
 use crate::style;
 use crate::widget::{Element, Rule};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Edit,
     View,
@@ -35,7 +34,6 @@ pub enum CMessage<M: Clone + Debug> {
     CopyPubkey,
     DeleteContact,
 }
-#[derive(Debug, Clone)]
 pub struct ContactDetails {
     db_contact: Option<DbContact>,
     petname_input: String,
@@ -312,7 +310,7 @@ impl ContactDetails {
         match event {
             BackendEvent::ImageDownloaded(image) => {
                 if let Some(db_contact) = &self.db_contact {
-                    if db_contact.get_profile_pic() == Some(image.url.to_string()) {
+                    if db_contact.get_profile_event_hash() == Some(image.event_hash) {
                         self.profile_img_handle =
                             Some(db_contact.profile_image(ImageSize::Medium, conn))
                     }

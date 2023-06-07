@@ -1,12 +1,16 @@
+use base64::engine::general_purpose;
+use base64::{alphabet, engine, Engine};
 use chrono::{DateTime, Utc};
 use directories::ProjectDirs;
 use futures::TryStreamExt;
 use futures_util::StreamExt;
-use image::ImageFormat;
-use nostr::Url;
+use image::io::Reader;
+use image::{DynamicImage, ImageFormat};
+use nostr::{EventId, Url};
 use serde::{Deserialize, Serialize};
 use std::env;
-use std::path::{Path, PathBuf};
+use std::io::Cursor;
+use std::path::PathBuf;
 use thiserror::Error;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -57,6 +61,15 @@ pub enum Error {
 
     #[error("Invalid image kind")]
     InvalidImageKind,
+
+    #[error("Invalid base64 encoded image")]
+    InvalidBase64,
+
+    #[error("Base64 decode error: {0}")]
+    FromDecodeError(#[from] base64::DecodeError),
+
+    #[error("Invalid image type: {0}")]
+    InvalidImageType(String),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -122,14 +135,62 @@ pub fn image_filename(kind: ImageKind, size: ImageSize, image_type: &str) -> Str
     format!("{}_{}.{}", kind.to_str(), size.to_str(), image_type)
 }
 
-pub fn sized_image(filename: &Path, kind: ImageKind, size: ImageSize) -> PathBuf {
-    let new_file_name = image_filename(kind, size, "png");
-    // replace filename with new
-    filename.with_file_name(new_file_name)
-}
-
 pub async fn download_image(
     image_url: &str,
+    event_hash: &EventId,
+    identifier: &str,
+    kind: ImageKind,
+) -> Result<ImageDownloaded, Error> {
+    if image_url.starts_with("data:image/") {
+        parse_base64(image_url, event_hash, identifier, kind).await
+    } else {
+        download_image_url(image_url, event_hash, identifier, kind).await
+    }
+}
+
+async fn get_dirs(identifier: &str) -> Result<PathBuf, Error> {
+    let dirs = ProjectDirs::from(APP_PROJECT_DIRS.0, APP_PROJECT_DIRS.1, APP_PROJECT_DIRS.2)
+        .ok_or(Error::NotFoundProjectDirectory)?;
+    let images_dir = dirs.cache_dir().join(IMAGES_FOLDER_NAME).join(identifier);
+    tokio::fs::create_dir_all(&images_dir).await?;
+    Ok(images_dir)
+}
+
+async fn parse_base64(
+    image_url: &str,
+    event_hash: &EventId,
+    identifier: &str,
+    kind: ImageKind,
+) -> Result<ImageDownloaded, Error> {
+    let image_type = image_type_from_base64(image_url).ok_or(Error::InvalidBase64)?;
+    let decoded = engine::GeneralPurpose::new(&alphabet::URL_SAFE, general_purpose::NO_PAD)
+        .decode(image_url)?;
+
+    let images_dir = get_dirs(identifier).await?;
+    let original_path = images_dir.join(image_filename(kind, ImageSize::Original, image_type));
+    let image_format = ImageFormat::from_extension(image_type)
+        .ok_or(Error::InvalidImageType(image_type.to_owned()))?;
+
+    let cursor = Cursor::new(decoded);
+    let mut reader = Reader::new(cursor);
+    reader.set_format(image_format);
+
+    let image = reader.decode()?;
+
+    image.save_with_format(&original_path, image_format)?;
+    save_dynamic_image(&images_dir, &image, kind, ImageSize::Medium)?;
+    save_dynamic_image(&images_dir, &image, kind, ImageSize::Small)?;
+
+    Ok(ImageDownloaded {
+        kind,
+        path: original_path,
+        event_hash: event_hash.to_owned(),
+    })
+}
+
+async fn download_image_url(
+    image_url: &str,
+    event_hash: &EventId,
     identifier: &str,
     kind: ImageKind,
 ) -> Result<ImageDownloaded, Error> {
@@ -150,13 +211,7 @@ pub async fn download_image(
         ));
     }
 
-    let dirs = ProjectDirs::from(APP_PROJECT_DIRS.0, APP_PROJECT_DIRS.1, APP_PROJECT_DIRS.2)
-        .ok_or(Error::NotFoundProjectDirectory)?;
-    let images_dir = dirs
-        .cache_dir()
-        .join(IMAGES_FOLDER_NAME)
-        .join(identifier.to_string());
-    tokio::fs::create_dir_all(&images_dir).await?;
+    let images_dir = get_dirs(identifier).await?;
 
     // Extract the image type from the content type.
     let content_type_str = content_type.to_str()?;
@@ -177,9 +232,30 @@ pub async fn download_image(
 
     Ok(ImageDownloaded {
         kind,
-        url: image_url,
         path: original_path,
+        event_hash: event_hash.to_owned(),
     })
+}
+
+pub fn save_dynamic_image(
+    images_dir: &PathBuf,
+    image: &DynamicImage,
+    kind: ImageKind,
+    size: ImageSize,
+) -> Result<(), Error> {
+    let output_filename = image_filename(kind, size, "png");
+    tracing::debug!("file: {}", &output_filename);
+    tracing::debug!("resizing: {} - size: {}", kind.to_str(), size.to_str());
+    let output_path = images_dir.join(output_filename);
+    let (width, height) = size
+        .get_width_height()
+        .ok_or(Error::InvalidImageSize(size.clone()))?;
+    let resized_image = image.resize(width, height, image::imageops::FilterType::Lanczos3);
+
+    // Save the resized image as a PNG, regardless of the input format
+    resized_image.save_with_format(output_path, ImageFormat::Png)?;
+
+    Ok(())
 }
 
 pub fn resize_and_save_image(
@@ -240,3 +316,42 @@ pub async fn fetch_latest_version(client: reqwest::Client) -> Result<String, Err
 }
 
 const IMAGES_FOLDER_NAME: &str = "images";
+
+fn image_type_from_base64(s: &str) -> Option<&str> {
+    let parts: Vec<&str> = s.split(';').collect();
+    if parts.len() > 1 {
+        let mime_parts: Vec<&str> = parts[0].split(':').collect();
+        if mime_parts.len() > 1 {
+            let type_parts: Vec<&str> = mime_parts[1].split('/').collect();
+            if type_parts.len() > 1 {
+                return Some(type_parts[1]);
+            }
+        }
+    }
+    None
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_valid_base64_image_url() {
+        let base64_image_url = "data:image/jpeg;base64,/9j/4AAQSkZ...";
+        assert_eq!(image_type_from_base64(base64_image_url), Some("jpeg"));
+
+        let base64_image_url = "data:image/png;base64,iVBORw0...";
+        assert_eq!(image_type_from_base64(base64_image_url), Some("png"));
+    }
+
+    #[test]
+    fn test_invalid_base64_image_url() {
+        let base64_image_url = "image/jpeg;base64,/9j/4AAQSkZ...";
+        assert_eq!(image_type_from_base64(base64_image_url), None);
+
+        let base64_image_url = "data:image/jpeg,/9j/4AAQSkZ...";
+        assert_eq!(image_type_from_base64(base64_image_url), None);
+
+        let base64_image_url = "/9j/4AAQSkZ...";
+        assert_eq!(image_type_from_base64(base64_image_url), None);
+    }
+}

@@ -306,16 +306,17 @@ impl State {
         Command::none()
     }
 
-    fn find_and_update_contact<F>(
+    fn find_and_update_contact(
         &mut self,
         db_contact: &DbContact,
         message: chat_contact::Message,
         conn: &mut BackEndConnection,
-        predicate: F,
-    ) where
-        F: Fn(&&mut ChatContact) -> bool,
-    {
-        if let Some(contact_card) = self.chats.iter_mut().find(predicate) {
+    ) {
+        if let Some(contact_card) = self
+            .chats
+            .iter_mut()
+            .find(|c| c.contact.pubkey() == db_contact.pubkey())
+        {
             contact_card.update(message, conn);
         } else {
             let mut new_chat = ChatContact::new(self.chats.len() as i32, db_contact, conn);
@@ -383,7 +384,7 @@ impl State {
                 if let Some(chat) = self
                     .chats
                     .iter_mut()
-                    .find(|c| c.contact.get_profile_pic() == Some(image.url.to_string()))
+                    .find(|c| c.contact.get_profile_event_hash() == Some(image.event_hash))
                 {
                     chat.update(chat_contact::Message::ImageDownloaded(image), conn);
                 }
@@ -401,7 +402,6 @@ impl State {
                     &db_contact,
                     chat_contact::Message::ContactUpdated(db_contact.clone()),
                     conn,
-                    |c| c.contact.pubkey() == db_contact.pubkey(),
                 );
             }
             BackendEvent::ContactDeleted(db_contact) => {
@@ -414,13 +414,12 @@ impl State {
             BackendEvent::UpdatedMetadata(pubkey) => {
                 conn.send(net::ToBackend::FetchContactWithMetadata(pubkey));
             }
-            BackendEvent::GotSingleContact((pubkey, db_contact)) => {
+            BackendEvent::GotSingleContact(_pubkey, db_contact) => {
                 if let Some(db_contact) = db_contact.as_ref() {
                     self.find_and_update_contact(
                         db_contact,
                         chat_contact::Message::ContactUpdated(db_contact.to_owned()),
                         conn,
-                        |c| c.contact.pubkey() == &pubkey,
                     )
                 }
             }
@@ -470,7 +469,6 @@ impl State {
                     &db_contact,
                     chat_contact::Message::UpdatedMetadata(db_contact.clone()),
                     conn,
-                    |c| c.contact.pubkey() == db_contact.pubkey(),
                 ),
             BackendEvent::ConfirmedDM((_db_contact, chat_msg)) => {
                 self.messages
@@ -484,7 +482,6 @@ impl State {
                     &db_contact,
                     chat_contact::Message::NewMessage(msg.clone()),
                     conn,
-                    |c| c.contact.pubkey() == db_contact.pubkey(),
                 );
                 self.msgs_scroll_offset = scrollable::RelativeOffset::END;
                 commands.push(scrollable::snap_to(
@@ -518,16 +515,14 @@ impl State {
                     &db_contact,
                     chat_contact::Message::NewMessage(msg.clone()),
                     conn,
-                    |c| c.contact.pubkey() == db_contact.pubkey(),
                 );
             }
 
-            BackendEvent::GotChatInfo((db_contact, chat_info)) => {
+            BackendEvent::GotChatInfo(db_contact, chat_info) => {
                 self.find_and_update_contact(
                     &db_contact,
                     chat_contact::Message::GotChatInfo(chat_info),
                     conn,
-                    |c| c.contact.pubkey() == db_contact.pubkey(),
                 );
                 let previous_position = self
                     .chats
@@ -921,7 +916,6 @@ fn calculate_scroll_offset(position: usize, total_height: f32, card_height: f32)
     RelativeOffset { x: 0.0, y }
 }
 
-#[derive(Debug, Clone)]
 pub struct RelaysResponse {
     pub confirmed_relays: Vec<DbRelayResponse>,
     pub all_relays: Vec<DbRelay>,

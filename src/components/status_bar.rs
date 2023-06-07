@@ -49,7 +49,7 @@ impl StatusBar {
         match message {
             Message::GoToAbout => router_message = Some(RouterMessage::GoToAbout),
             Message::GoToNetwork => router_message = Some(RouterMessage::GoToNetwork),
-            Message::Tick => conn.send(net::ToBackend::GetRelayStatusList),
+            Message::Tick => conn.send(net::ToBackend::GetRelayInformation),
         }
         (Command::none(), router_message)
     }

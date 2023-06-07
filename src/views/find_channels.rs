@@ -1,17 +1,15 @@
 use std::collections::HashMap;
 
 use iced::widget::{button, column, container, image, row, text, tooltip, Space};
-use iced::{clipboard, Alignment, Command, Length, Subscription};
+use iced::{clipboard, Length, Subscription};
 use iced_native::widget::text_input;
-use nostr::EventId;
-use url::Url;
 
 use crate::components::common_scrollable;
 use crate::components::text::title;
 use crate::consts::{MEDIUM_CHANNEL_IMG_HEIGHT, MEDIUM_CHANNEL_IMG_WIDTH, YMD_FORMAT};
 use crate::icon::copy_icon;
-use crate::net::{BackEndConnection, BackendEvent, ImageKind, ToBackend};
-use crate::types::ChannelResult;
+use crate::net::{BackEndConnection, BackendEvent, ToBackend};
+use crate::types::{ChannelResult, PrefixedId};
 use crate::views::RouterCommand;
 use crate::widget::Rule;
 use crate::{icon::search_icon, style, widget::Element};
@@ -23,7 +21,7 @@ pub enum Message {
     CopyChannelId(nostr::EventId),
 }
 pub struct State {
-    search_results: HashMap<EventId, ChannelResult>,
+    search_results: HashMap<PrefixedId, ChannelResult>,
     search_input_value: String,
     searching: bool,
 }
@@ -71,22 +69,20 @@ impl State {
                 self.searching = true;
             }
             BackendEvent::SearchChannelResult(result) => {
-                self.search_results.insert(result.id, result);
+                self.search_results.insert(result.id.to_owned(), result);
             }
-            BackendEvent::EOSESearchChannels(url) => {
+            BackendEvent::EOSESearchChannels(_url) => {
                 self.searching = false;
             }
-            BackendEvent::SearchChannelMetaUpdate(channel_id, ns_event) => {
+            BackendEvent::SearchChannelMetaUpdate(channel_id, cache) => {
                 if let Some(result) = self.search_results.get_mut(&channel_id) {
-                    if let Err(e) = result.update_meta(ns_event) {
-                        tracing::error!("Error updating channel meta: {:?}", e);
-                    }
+                    result.update_cache(cache, conn);
                 }
             }
-            BackendEvent::SearchChannelMessage(channel_id, ns_event) => {
+            BackendEvent::SearchChannelMessage(channel_id, pubkey) => {
                 self.search_results
                     .get_mut(&channel_id)
-                    .map(|r| r.message(ns_event));
+                    .map(|r| r.message(pubkey));
             }
             BackendEvent::LoadingChannelDetails(_url, channel_id) => {
                 self.search_results
@@ -96,28 +92,15 @@ impl State {
             BackendEvent::EOSESearchChannelsDetails(_url, channel_id) => {
                 if let Some(result) = self.search_results.get_mut(&channel_id) {
                     result.done_loading();
-
-                    if let Some(image_url) = &result.picture {
-                        match Url::parse(image_url) {
-                            Ok(image_url_parsed) => conn.send(ToBackend::DownloadImage {
-                                identifier: result.id.to_string(),
-                                image_url: image_url_parsed,
-                                kind: ImageKind::Channel,
-                            }),
-                            Err(e) => {
-                                tracing::error!("Error parsing image url: {:?}", e);
-                            }
-                        }
-                    }
                 }
             }
             BackendEvent::ImageDownloaded(image) => {
                 if let Some((_, result)) = self
                     .search_results
                     .iter_mut()
-                    .find(|(_, r)| r.picture == Some(image.url.to_string()))
+                    .find(|(_, r)| r.cache.last_event_hash() == &image.event_hash)
                 {
-                    result.update_image(image);
+                    result.update_image(&image);
                 }
             }
             _ => (),
@@ -179,9 +162,9 @@ fn make_results<'a>(channel: &ChannelResult) -> Element<'a, Message> {
 
     let name_about_ct = container(common_scrollable(
         column![
-            text(channel.name.as_ref().unwrap_or(&"Nameless".into())).size(22),
-            text(channel.about.as_ref().unwrap_or(&"".into())).size(18),
-            text(&channel.url.to_string()).size(14),
+            text(channel.name()).size(22),
+            text(channel.about()).size(18),
+            text(&channel.relay_url.to_string()).size(14),
         ]
         .spacing(5),
     ))
@@ -190,7 +173,7 @@ fn make_results<'a>(channel: &ChannelResult) -> Element<'a, Message> {
     let copy_btn = tooltip(
         button(copy_icon().size(14))
             .padding(2)
-            .on_press(Message::CopyChannelId(channel.id.to_owned()))
+            .on_press(Message::CopyChannelId(channel.full_id.to_owned()))
             .style(style::Button::Primary),
         "Copy Channel Id",
         tooltip::Position::Top,
@@ -202,7 +185,7 @@ fn make_results<'a>(channel: &ChannelResult) -> Element<'a, Message> {
             text(format!("Members: {}", &channel.members.len())).size(14),
             text(format!(
                 "Created: {}",
-                &channel.created_at.format(YMD_FORMAT)
+                channel.created_at().format(YMD_FORMAT)
             ))
             .size(14),
             copy_btn

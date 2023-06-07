@@ -2,7 +2,7 @@ use chrono::NaiveDateTime;
 use iced::widget::{column, container, row, text, Space};
 use iced::Point;
 use iced::{alignment, Length};
-use nostr::{secp256k1::XOnlyPublicKey, EventId};
+use nostr::EventId;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -12,7 +12,7 @@ use crate::icon::{check_icon, double_check_icon, xmark_icon};
 use crate::utils::from_naive_utc_to_local;
 use crate::widget::Element;
 use crate::{
-    db::{DbContact, DbEvent, DbMessage},
+    db::{DbContact, DbMessage},
     style,
 };
 
@@ -28,29 +28,6 @@ pub enum Message {
     ChatRightClick((ChatMessage, Point)),
 }
 
-pub trait EventLike {
-    fn created_at(&self) -> i64;
-    fn pubkey(&self) -> XOnlyPublicKey;
-}
-
-impl EventLike for nostr::Event {
-    fn created_at(&self) -> i64 {
-        self.created_at.as_i64()
-    }
-    fn pubkey(&self) -> XOnlyPublicKey {
-        self.pubkey.clone()
-    }
-}
-
-impl EventLike for DbEvent {
-    fn created_at(&self) -> i64 {
-        self.local_creation.timestamp_millis()
-    }
-    fn pubkey(&self) -> XOnlyPublicKey {
-        self.pubkey.clone()
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub msg_id: i64,
@@ -58,42 +35,22 @@ pub struct ChatMessage {
     pub content: String,
     pub is_from_user: bool,
     pub select_name: String,
-    pub event_id: i64,
+    pub event_id: Option<i64>,
     pub event_hash: EventId,
     pub status: MessageStatus,
 }
 
 impl ChatMessage {
-    pub fn from_db_message(
-        keys: &nostr::Keys,
-        db_message: &DbMessage,
-        contact: &DbContact,
-    ) -> Result<Self, Error> {
-        let content = db_message.decrypt_message(keys)?;
-        Ok(Self::from_db_message_content(
-            keys, db_message, contact, &content,
-        )?)
-    }
-
-    pub fn from_db_message_content(
-        keys: &nostr::Keys,
-        db_message: &DbMessage,
-        contact: &DbContact,
-        content: &str,
-    ) -> Result<Self, Error> {
-        let is_from_user = db_message.im_author(&keys.public_key());
-        let msg_id = db_message.id()?;
-        let event_id = db_message.event_id()?;
-        let event_hash = db_message.event_hash()?;
+    pub fn new(db_message: &DbMessage, contact: &DbContact, content: &str) -> Result<Self, Error> {
         Ok(Self {
             content: content.to_owned(),
             display_time: db_message.display_time(),
-            is_from_user,
+            is_from_user: db_message.is_users,
             select_name: contact.select_name(),
-            msg_id,
-            event_id,
-            event_hash,
-            status: db_message.status(),
+            msg_id: db_message.id,
+            event_hash: db_message.event_hash,
+            event_id: db_message.confirmation_info.as_ref().map(|c| c.event_id),
+            status: db_message.status,
         })
     }
 
@@ -126,7 +83,7 @@ impl ChatMessage {
         let status = {
             let mut status = if self.is_from_user {
                 match self.status {
-                    MessageStatus::Offline => xmark_icon().size(14),
+                    MessageStatus::Pending => xmark_icon().size(14),
                     MessageStatus::Delivered => check_icon().size(14),
                     MessageStatus::Seen => double_check_icon().size(14),
                 }
@@ -136,12 +93,6 @@ impl ChatMessage {
             status = status.style(style::Text::ChatMessageDate);
             status
         };
-
-        // text_input("", &self.content)
-        //         .style(style::TextInput::Invisible)
-        //         .on_input(|_| Message::None)
-        //         .width(Length::Fill)
-        //         .size(18)
 
         let msg_content = container(text(&self.content).size(18));
         let status_row = container(

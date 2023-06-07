@@ -1,5 +1,4 @@
 use futures::channel::mpsc;
-use nostr::secp256k1::XOnlyPublicKey;
 use thiserror::Error;
 
 /// Errors that can occur in the nostrtalk crate
@@ -20,6 +19,9 @@ pub enum Error {
 
     #[error("Nostr Client Error: {0}")]
     FromNostrClientError(#[from] ns_client::Error),
+
+    #[error("{0}")]
+    FromBackendStateError(#[from] crate::types::backend_state::Error),
 
     #[error("{0}")]
     FromUtilsError(#[from] crate::utils::Error),
@@ -61,37 +63,16 @@ pub enum Error {
     FromUserConfigError(#[from] crate::db::user_config::Error),
 
     #[error("{0}")]
-    FromEventBuilderError(#[from] crate::net::operations::builder::Error),
-
-    #[error("{0}")]
     FromNtpError(#[from] crate::net::ntp::NtpError),
 
     #[error("App didn't ask for kind: {0:?}")]
     NotSubscribedToKind(nostr::Kind),
-
-    #[error("Contact not found - pubkey: {0:?}")]
-    ContactNotFound(XOnlyPublicKey),
 
     #[error("Not allowed to insert own pubkey as a contact")]
     SameContactInsert,
 
     #[error("Not allowed to update to own pubkey as a contact")]
     SameContactUpdate,
-
-    #[error("Event need to be confirmed")]
-    NotConfirmedEvent(nostr::EventId),
-
-    #[error("Trying to find message with event_id: {0}")]
-    EventWithoutMessage(i64),
-
-    #[error("Inserting event with the same id")]
-    DuplicatedEvent,
-
-    #[error("Event not in database: {0}")]
-    EventNotInDatabase(nostr::EventId),
-
-    #[error("Failed to insert event")]
-    FailedToInsert,
 
     #[error("{0}")]
     FromUrlParseError(#[from] url::ParseError),

@@ -6,9 +6,8 @@ use iced_aw::{Card, Modal};
 use crate::components::text_input_group::TextInputGroup;
 use crate::components::{common_scrollable, inform_card, relay_row, RelayRow};
 use crate::consts::{NOSTR_RESOURCES_LINK, RELAYS_IMAGE, RELAY_SUGGESTIONS, WELCOME_IMAGE};
-use crate::db::DbRelay;
 use crate::icon::{regular_circle_icon, solid_circle_icon};
-use crate::net::{self, BackEndConnection, BackendEvent, ToBackend};
+use crate::net::{BackEndConnection, BackendEvent, ToBackend};
 use crate::style;
 use crate::{components::text::title, widget::Element};
 
@@ -37,7 +36,6 @@ pub enum Message {
     Tick,
 }
 
-#[derive(Debug, Clone)]
 pub enum ModalState {
     AddRelay { relay_url: String, is_invalid: bool },
     Off,
@@ -421,7 +419,7 @@ impl State {
         let command = Command::none();
         match message {
             Message::Tick => {
-                conn.send(ToBackend::GetRelayStatusList);
+                conn.send(ToBackend::GetRelayInformation);
             }
             Message::OpenLink(url) => {
                 if let Err(e) = webbrowser::open(url) {
@@ -443,16 +441,14 @@ impl State {
             Message::ToPreviousStep => self.to_previous_step(conn),
             Message::AddRelay(relay_url) => {
                 if let StepView::Relays { .. } = &mut self.step_view {
-                    let db_relay = DbRelay::new(relay_url);
-                    conn.send(ToBackend::AddRelay(db_relay));
+                    conn.send(ToBackend::AddRelay(relay_url));
                 }
             }
             Message::AddAllRelays => {
                 if let StepView::Relays { .. } = &mut self.step_view {
                     for relay_url in RELAY_SUGGESTIONS {
                         if let Ok(relay_url) = nostr::Url::parse(relay_url) {
-                            let db_relay = DbRelay::new(relay_url);
-                            conn.send(ToBackend::AddRelay(db_relay));
+                            conn.send(ToBackend::AddRelay(relay_url));
                         }
                     }
                 }
@@ -488,8 +484,7 @@ impl State {
                 {
                     match nostr::Url::parse(&relay_url) {
                         Ok(url) => {
-                            let db_relay = DbRelay::new(url);
-                            conn.send(ToBackend::AddRelay(db_relay));
+                            conn.send(ToBackend::AddRelay(url));
                             add_relay_modal.close();
                         }
                         Err(_e) => add_relay_modal.error(),
@@ -512,7 +507,7 @@ impl State {
         event: BackendEvent,
         conn: &mut BackEndConnection,
     ) -> (Command<Message>, Option<RouterMessage>) {
-        let mut command = Command::none();
+        let command = Command::none();
         let mut router_message = None;
 
         match &mut self.step_view {
@@ -520,51 +515,38 @@ impl State {
                 relays_added,
                 relays_suggestion,
                 ..
-            } => {
-                relays_added
-                    .iter_mut()
-                    .for_each(|r| r.backend_event(event.clone(), conn));
-                match event {
-                    BackendEvent::GotRelayStatusList(list) => {
-                        for (url, status) in list {
-                            if let Some(row) =
-                                relays_added.iter_mut().find(|r| r.db_relay.url == url)
-                            {
-                                let _ =
-                                    row.update(relay_row::Message::UpdateRelayStatus(status), conn);
-                            } else {
-                                tracing::warn!("Got status for unknown relay: {}", url);
-                            }
-                        }
+            } => match event {
+                BackendEvent::RelayUpdated(db_relay) => {
+                    if let Some(row) = relays_added
+                        .iter_mut()
+                        .find(|row| row.db_relay.url == db_relay.url)
+                    {
+                        let _ = row.update(relay_row::Message::RelayUpdated(db_relay), conn);
+                    } else {
+                        tracing::warn!("Got information for unknown relay: {}", db_relay.url);
                     }
-                    BackendEvent::GotRelays(mut db_relays) => {
-                        for db_relay in db_relays.iter() {
-                            relays_suggestion.retain(|url| url != &db_relay.url);
-                        }
-                        db_relays.sort_by(|a, b| a.url.cmp(&b.url));
-                        *relays_added = db_relays
-                            .into_iter()
-                            .enumerate()
-                            .map(|(idx, db_relay)| RelayRow::new(idx as i32, db_relay, conn))
-                            .collect();
-                    }
-                    BackendEvent::RelayCreated(db_relay) => {
-                        relays_suggestion.sort_by(|a, b| a.cmp(&b));
-                        relays_added.sort_by(|a, b| a.db_relay.url.cmp(&b.db_relay.url));
-
-                        relays_suggestion.retain(|url| url != &db_relay.url);
-                        relays_added.push(RelayRow::new(relays_added.len() as i32, db_relay, conn));
-                    }
-                    BackendEvent::RelayDeleted(db_relay) => {
-                        relays_suggestion.sort_by(|a, b| a.cmp(&b));
-                        relays_added.sort_by(|a, b| a.db_relay.url.cmp(&b.db_relay.url));
-
-                        relays_added.retain(|row| &row.db_relay.url != &db_relay.url);
-                        relays_suggestion.push(db_relay.url);
-                    }
-                    _ => (),
                 }
-            }
+                BackendEvent::GotRelays(mut db_relays) => {
+                    for db_relay in db_relays.iter() {
+                        relays_suggestion.retain(|url| url != &db_relay.url);
+                    }
+                    db_relays.sort_by(|a, b| a.url.cmp(&b.url));
+                    *relays_added = db_relays
+                        .into_iter()
+                        .enumerate()
+                        .map(|(idx, db_relay)| RelayRow::new(idx as i32, db_relay, conn))
+                        .collect();
+                }
+                BackendEvent::RelayCreated(db_relay) => {
+                    relays_suggestion.retain(|url| url != &db_relay.url);
+                    relays_added.push(RelayRow::new(relays_added.len() as i32, db_relay, conn));
+                }
+                BackendEvent::RelayDeleted(url) => {
+                    relays_added.retain(|row| &row.db_relay.url != &url);
+                    relays_suggestion.push(url);
+                }
+                _ => (),
+            },
             StepView::Welcome => (),
             StepView::LoadingClient => match event {
                 BackendEvent::FinishedPreparing => {

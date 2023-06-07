@@ -6,7 +6,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::consts::YMD_FORMAT;
 use crate::db::{DbContact, ImageDownloaded};
-use crate::net::{self, sized_image, BackEndConnection, ImageSize};
+use crate::net::{self, BackEndConnection, ImageSize};
 use crate::style;
 use crate::types::ChatMessage;
 use crate::utils::from_naive_utc_to_local;
@@ -29,14 +29,13 @@ pub enum Message {
     ContactPress(i32),
     ShowOnlyProfileImage,
     ShowFullCard,
-    GotChatInfo(Option<ChatInfo>),
+    GotChatInfo(ChatInfo),
     NewMessage(ChatMessage),
     UpdatedMetadata(DbContact),
     ResetUnseenCount,
     ImageDownloaded(ImageDownloaded),
 }
 
-#[derive(Debug, Clone, Copy)]
 pub enum CardMode {
     Small,
     Full,
@@ -44,20 +43,49 @@ pub enum CardMode {
 
 #[derive(Debug, Clone)]
 pub struct ChatInfo {
-    pub unseen_messages: usize,
+    pub unseen_messages: i64,
     pub last_message: String,
-    pub last_message_time: NaiveDateTime,
+    pub last_message_time: Option<NaiveDateTime>,
+}
+impl ChatInfo {
+    fn should_update(&self, new_time: &NaiveDateTime) -> bool {
+        if let Some(last_time) = self.last_message_time.as_ref() {
+            new_time > last_time
+        } else {
+            true
+        }
+    }
+    pub fn update(&mut self, new_info: ChatInfo) {
+        if let Some(new_time) = &new_info.last_message_time {
+            if self.should_update(new_time) {
+                *self = new_info;
+            }
+        }
+    }
+    pub(crate) fn add(&mut self, msg: &ChatMessage) {
+        if self.should_update(&msg.display_time) {
+            self.last_message = msg.content.to_owned();
+            self.last_message_time = Some(msg.display_time.to_owned());
+        }
+        self.unseen_messages = (self.unseen_messages + 1).min(100);
+    }
+}
+impl Default for ChatInfo {
+    fn default() -> Self {
+        Self {
+            unseen_messages: 0,
+            last_message: "".into(),
+            last_message_time: None,
+        }
+    }
 }
 
-#[derive(Debug, Clone)]
 pub struct ChatContact {
     pub id: i32,
     mode: CardMode,
     pub contact: DbContact,
     profile_img_handle: image::Handle,
-    chat_info: Option<ChatInfo>,
-    messages_q: Vec<Message>,
-    is_loading: bool,
+    chat_info: ChatInfo,
 }
 
 impl ChatContact {
@@ -70,9 +98,7 @@ impl ChatContact {
             mode: CardMode::Full,
             contact: db_contact.clone(),
             profile_img_handle,
-            chat_info: None,
-            messages_q: vec![],
-            is_loading: true,
+            chat_info: ChatInfo::default(),
         }
     }
     pub fn view(&self, active_id: Option<i32>) -> Element<MessageWrapper> {
@@ -98,23 +124,17 @@ impl ChatContact {
 
                 let card_bottom_row = iced_lazy::responsive(|size| {
                     // --- BOTTOM ROW ---
-                    let last_message_cp: Element<_> = if let Some(chat_info) = &self.chat_info {
-                        let content = &chat_info.last_message;
-                        let left_pixels = size.width - NOTIFICATION_COUNT_WIDTH - 5.0; //spacing;
-                        let pixel_p_char = 8.0; // 8px = 1 char
-                        let taker = (left_pixels / pixel_p_char).floor() as usize;
-                        let content = if taker > content.len() {
-                            content.to_owned()
-                        } else {
-                            let truncated = content.graphemes(true).take(taker).collect::<String>();
-                            format!("{}...", &truncated)
-                        };
-                        container(text(&content).size(18.0))
-                            .width(Length::Fill)
-                            .into()
+                    let content = &self.chat_info.last_message;
+                    let left_pixels = size.width - NOTIFICATION_COUNT_WIDTH - 5.0; //spacing;
+                    let pixel_p_char = 8.0; // 8px = 1 char
+                    let taker = (left_pixels / pixel_p_char).floor() as usize;
+                    let content = if taker > content.len() {
+                        content.to_owned()
                     } else {
-                        text("").into()
+                        let truncated = content.graphemes(true).take(taker).collect::<String>();
+                        format!("{}...", &truncated)
                     };
+                    let last_message_cp = container(text(&content).size(18.0)).width(Length::Fill);
 
                     container(
                         row![last_message_cp, self.make_notifications()]
@@ -150,9 +170,8 @@ impl ChatContact {
     }
 
     fn make_last_date<'a>(&'a self) -> Element<'a, MessageWrapper> {
-        if let Some(chat_info) = &self.chat_info {
-            let date = chat_info.last_message_time;
-            let local_day = from_naive_utc_to_local(date);
+        if let Some(date) = &self.chat_info.last_message_time {
+            let local_day = from_naive_utc_to_local(*date);
             let local_now = from_naive_utc_to_local(Utc::now().naive_utc());
             let date_format = if local_day.day() == local_now.day() {
                 "%H:%M"
@@ -171,83 +190,45 @@ impl ChatContact {
     }
 
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
-        match self.is_loading {
-            true => match message {
-                Message::GotChatInfo(chat_info) => {
-                    self.handle_got_chat_info(chat_info, conn);
-                }
-                other => {
-                    if self.is_loading {
-                        self.messages_q.push(other);
-                        return;
-                    }
-                }
-            },
-            false => match message {
-                Message::ImageDownloaded(image) => {
-                    let path = sized_image(&image.path, image.kind, ImageSize::Small);
-                    self.profile_img_handle = Handle::from_path(path);
-                }
-                Message::GotChatInfo(chat_info) => {
-                    self.handle_got_chat_info(chat_info, conn);
-                }
-                Message::ResetUnseenCount => {
-                    if let Some(chat_info) = &mut self.chat_info {
-                        chat_info.unseen_messages = 0;
-                    }
-                }
-                Message::UpdatedMetadata(db_contact) | Message::ContactUpdated(db_contact) => {
-                    self.profile_img_handle = db_contact.profile_image(ImageSize::Small, conn);
-                    self.contact = db_contact;
-                }
-                Message::ContactPress(_) => (),
-                Message::ShowOnlyProfileImage => {
-                    self.mode = CardMode::Small;
-                }
-                Message::ShowFullCard => self.mode = CardMode::Full,
-                Message::NewMessage(chat_msg) => {
-                    if let Some(chat_info) = &mut self.chat_info {
-                        chat_info.last_message = chat_msg.content;
-                        chat_info.last_message_time = chat_msg.display_time;
-                        chat_info.unseen_messages = (chat_info.unseen_messages + 1).min(100);
-                    }
-                }
-            },
+        match message {
+            Message::NewMessage(chat_message) => {
+                self.chat_info.add(&chat_message);
+            }
+            Message::GotChatInfo(new_info) => self.chat_info.update(new_info),
+            Message::ImageDownloaded(image) => {
+                let path = image.sized_image(ImageSize::Small);
+                self.profile_img_handle = Handle::from_path(path);
+            }
+            Message::ResetUnseenCount => {
+                self.chat_info.unseen_messages = 0;
+            }
+            Message::UpdatedMetadata(db_contact) | Message::ContactUpdated(db_contact) => {
+                self.profile_img_handle = db_contact.profile_image(ImageSize::Small, conn);
+                self.contact = db_contact;
+            }
+            Message::ContactPress(_) => (),
+            Message::ShowOnlyProfileImage => {
+                self.mode = CardMode::Small;
+            }
+            Message::ShowFullCard => self.mode = CardMode::Full,
         }
-    }
-
-    fn handle_got_chat_info(&mut self, chat_info: Option<ChatInfo>, conn: &mut BackEndConnection) {
-        self.chat_info = chat_info;
-        self.is_loading = false;
-        // Move the messages_q vector out of self temporarily
-        let mut messages = std::mem::replace(&mut self.messages_q, Vec::new());
-
-        // Iterate over the messages and call self.update
-        for msg in messages.drain(..) {
-            self.update(msg, conn);
-        }
-
-        // Move the modified messages vector back into self
-        self.messages_q = messages;
     }
 
     fn make_notifications<'a>(&self) -> Element<'a, MessageWrapper> {
-        if let Some(chat_info) = &self.chat_info {
-            let count_txt = match chat_info.unseen_messages {
-                0 => return text("").into(),
-                1..=99 => chat_info.unseen_messages.to_string(),
-                _ => "99+".into(),
-            };
-            return container(
-                button(text(count_txt).size(16))
-                    .padding([2, 4])
-                    .style(style::Button::Notification),
-            )
-            .width(NOTIFICATION_COUNT_WIDTH)
-            .align_x(alignment::Horizontal::Right)
-            .into();
-        }
-        text("").into()
+        let count_txt = match self.chat_info.unseen_messages {
+            0 => return text("").into(),
+            1..=99 => self.chat_info.unseen_messages.to_string(),
+            _ => "99+".into(),
+        };
+
+        container(
+            button(text(count_txt).size(16))
+                .padding([2, 4])
+                .style(style::Button::Notification),
+        )
+        .width(NOTIFICATION_COUNT_WIDTH)
+        .align_x(alignment::Horizontal::Right)
+        .into()
     }
 
     pub(crate) fn height(&self) -> f32 {
@@ -255,9 +236,7 @@ impl ChatContact {
     }
 
     pub(crate) fn last_message_date(&self) -> Option<NaiveDateTime> {
-        self.chat_info
-            .as_ref()
-            .map(|chat_info| chat_info.last_message_time)
+        self.chat_info.last_message_time.clone()
     }
 }
 

@@ -1,5 +1,4 @@
 use crate::components::common_scrollable;
-use crate::components::text::title;
 use crate::db::{DbRelay, DbRelayResponse};
 use crate::net::BackEndConnection;
 use crate::style;
@@ -16,7 +15,6 @@ pub enum CMessage<M: Clone + Debug> {
     UnderlayMessage(M),
 }
 
-#[derive(Debug, Clone)]
 pub struct RelaysConfirmation {
     responses: Vec<DbRelayResponse>,
     all_relays: Vec<DbRelay>,

@@ -1,5 +1,5 @@
 use iced::widget::{button, column, container, row, Space};
-use iced::{alignment, Command, Length, Subscription};
+use iced::{alignment, Length, Subscription};
 use status_bar::StatusBar;
 
 use crate::components::status_bar;

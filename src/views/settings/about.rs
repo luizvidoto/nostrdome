@@ -1,7 +1,7 @@
 use crate::{
     components::{common_scrollable, copy_btn, text::title},
     consts::{BITCOIN_ADDRESS, GITHUB_REPO, LIGHTNING_ADDRESS, NOSTRTALK_VERSION, TT_LINK},
-    net::BackendEvent,
+    net::{BackEndConnection, BackendEvent},
     style,
     utils::{hide_string, qr_code_handle},
     widget::Element,
@@ -12,13 +12,11 @@ use iced::{Alignment, Command, Length};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    BackEndEvent(BackendEvent),
     OpenTTLink,
     OpenGHLink,
     CopyQrCode(String),
 }
 
-#[derive(Debug, Clone)]
 pub struct State {
     btc_qrcode_handle: Option<Handle>,
     lnd_qrcode_handle: Option<Handle>,
@@ -31,9 +29,10 @@ impl State {
         }
     }
 
+    pub fn backend_event(&mut self, _event: BackendEvent, _conn: &mut BackEndConnection) {}
+
     pub fn update(&mut self, message: Message) -> Command<Message> {
         match message {
-            Message::BackEndEvent(_ev) => (),
             Message::OpenTTLink => {
                 if let Err(e) = webbrowser::open(TT_LINK) {
                     tracing::error!("Failed to open link: {}", e);

@@ -1,12 +1,15 @@
-use crate::utils::{
-    event_hash_or_err, millis_to_naive_or_err, profile_meta_or_err, public_key_or_err, url_or_err,
+use crate::{
+    net::ImageKind,
+    utils::{
+        event_hash_or_err, millis_to_naive_or_err, profile_meta_or_err, public_key_or_err,
+        url_or_err,
+    },
 };
 use chrono::NaiveDateTime;
 use nostr::{secp256k1::XOnlyPublicKey, EventId};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use thiserror::Error;
-use url::Url;
 
 use super::{DbEvent, ImageDownloaded};
 
@@ -50,18 +53,12 @@ impl ProfileCache {
             .await?;
 
         if let Some(profile_cache) = &mut result {
-            if let Some(pic_url) = &profile_cache.metadata.picture {
-                if let Ok(pic_url) = Url::parse(pic_url) {
-                    profile_cache.profile_pic_cache =
-                        ImageDownloaded::fetch(cache_pool, &pic_url).await?;
-                }
-            }
-            if let Some(banner_url) = &profile_cache.metadata.banner {
-                if let Ok(banner_url) = Url::parse(banner_url) {
-                    profile_cache.banner_pic_cache =
-                        ImageDownloaded::fetch(cache_pool, &banner_url).await?;
-                }
-            }
+            profile_cache.profile_pic_cache =
+                ImageDownloaded::fetch(cache_pool, &profile_cache.event_hash, ImageKind::Profile)
+                    .await?;
+            profile_cache.banner_pic_cache =
+                ImageDownloaded::fetch(cache_pool, &profile_cache.event_hash, ImageKind::Banner)
+                    .await?;
         }
 
         Ok(result)
@@ -72,13 +69,8 @@ impl ProfileCache {
             .map_err(|_| Error::JsonToMetadata(db_event.content.clone()))?;
         let public_key = &db_event.pubkey;
         let event_hash = &db_event.event_hash;
-        let event_date = &db_event
-            .remote_creation()
-            .ok_or(Error::NotConfirmedEvent(event_hash.to_owned()))?;
-        let relay_url = db_event
-            .relay_url
-            .as_ref()
-            .ok_or(Error::NotConfirmedEvent(event_hash.to_owned()))?;
+        let event_date = &db_event.created_at;
+        let relay_url = &db_event.relay_url;
 
         if let Some(last_cache) = Self::fetch_by_public_key(cache_pool, public_key).await? {
             if &last_cache.event_hash == event_hash {

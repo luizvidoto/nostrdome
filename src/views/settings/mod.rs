@@ -1,15 +1,15 @@
 use iced::widget::{button, column, container, row, Space};
 use iced::{Command, Length, Subscription};
 
-use crate::db::DbContact;
+use crate::db::{DbContact, DbRelay};
 use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
 
 use crate::widget::{Button, Element};
 
 use super::modal::{
-    basic_contact, import_contact_list, relays_confirmation, ContactDetails, ImportContactList,
-    RelaysConfirmation,
+    basic_contact, import_contact_list, relay_document, relays_confirmation, ContactDetails,
+    ImportContactList, RelayDocState, RelaysConfirmation,
 };
 use super::{RouterCommand, RouterMessage};
 
@@ -26,6 +26,7 @@ pub enum SettingsRouterMessage {
     RouterMessage(RouterMessage),
     OpenImportContactModal,
     OpenAddContactModal,
+    OpenRelayDocument(DbRelay),
 }
 
 #[derive(Debug, Clone)]
@@ -40,6 +41,7 @@ pub enum Message {
     ContactDetailsMessage(Box<basic_contact::CMessage<Message>>),
     ImportContactListMessage(Box<import_contact_list::CMessage<Message>>),
     RelaysConfirmationMessage(Box<relays_confirmation::CMessage<Message>>),
+    RelayDocumentMessage(Box<relay_document::CMessage<Message>>),
     // Navigation
     MenuAccountPress,
     MenuAppearancePress,
@@ -56,7 +58,6 @@ pub enum Message {
     None,
 }
 
-#[derive(Debug)]
 #[repr(u8)]
 pub enum MenuState {
     Account { state: account::State } = 0,
@@ -131,7 +132,6 @@ impl MenuState {
     }
 }
 
-#[derive(Debug)]
 pub struct Settings {
     menu_state: MenuState,
     modal_state: ModalState,
@@ -168,14 +168,13 @@ impl Settings {
         event: BackendEvent,
         conn: &mut BackEndConnection,
     ) -> RouterCommand<Message> {
-        let mut commands = RouterCommand::new();
+        let commands = RouterCommand::new();
 
         self.modal_state.backend_event(event.clone(), conn);
 
         match &mut self.menu_state {
             MenuState::About { state } => {
-                let cmd = state.update(about::Message::BackEndEvent(event));
-                commands.push(cmd.map(Message::AboutMessage));
+                state.backend_event(event, conn);
             }
             MenuState::Account { state } => {
                 state.update(account::Message::BackEndEvent(event), conn);
@@ -184,10 +183,11 @@ impl Settings {
                 state.update(appearance::Message::BackEndEvent(event))
             }
             MenuState::Network { state } => {
-                let cmd = state.update(network::Message::BackEndEvent(event), conn);
-                commands.push(cmd.map(Message::NetworkMessage));
+                state.backend_event(event, conn);
             }
-            MenuState::Backup { state } => state.backend_event(event, conn),
+            MenuState::Backup { state } => {
+                state.backend_event(event, conn);
+            }
             MenuState::Contacts { state } => {
                 let _ = state.update(contacts::Message::BackEndEvent(event), conn);
             }
@@ -233,8 +233,13 @@ impl Settings {
             }
             Message::NetworkMessage(msg) => {
                 if let MenuState::Network { state } = &mut self.menu_state {
-                    let cmd = state.update(msg, conn);
-                    commands.push(cmd.map(Message::NetworkMessage));
+                    if let Some(received_msg) = state.update(msg, conn) {
+                        if let Some(router_message) =
+                            self.handle_settings_route_msg(received_msg, conn)
+                        {
+                            commands.change_route(router_message);
+                        }
+                    }
                 }
             }
             Message::BackupMessage(msg) => {
@@ -287,6 +292,36 @@ impl Settings {
         }
     }
 
+    fn handle_settings_route_msg(
+        &mut self,
+        message: SettingsRouterMessage,
+        conn: &mut BackEndConnection,
+    ) -> Option<RouterMessage> {
+        let mut router_message = None;
+        match message {
+            SettingsRouterMessage::OpenRelayDocument(db_relay) => {
+                self.modal_state = ModalState::RelayDocument(RelayDocState::new(db_relay, conn));
+            }
+            SettingsRouterMessage::OpenAddContactModal => {
+                self.modal_state = ModalState::ContactDetails(ContactDetails::new());
+            }
+            SettingsRouterMessage::OpenImportContactModal => {
+                self.modal_state = ModalState::import_contacts();
+            }
+            SettingsRouterMessage::OpenEditContactModal(contact) => {
+                self.modal_state = ModalState::ContactDetails(ContactDetails::edit(&contact, conn))
+            }
+            SettingsRouterMessage::OpenProfileModal(contact) => {
+                self.modal_state =
+                    ModalState::ContactDetails(ContactDetails::viewer(&contact, conn))
+            }
+            SettingsRouterMessage::RouterMessage(router_msg) => {
+                router_message = Some(router_msg);
+            }
+        }
+        router_message
+    }
+
     fn handle_contacts_message(
         &mut self,
         msg: contacts::Message,
@@ -306,27 +341,7 @@ impl Settings {
                 }
                 other => {
                     if let Some(received_msg) = state.update(other, conn) {
-                        match received_msg {
-                            SettingsRouterMessage::OpenAddContactModal => {
-                                self.modal_state =
-                                    ModalState::ContactDetails(ContactDetails::new());
-                            }
-                            SettingsRouterMessage::OpenImportContactModal => {
-                                self.modal_state = ModalState::import_contacts();
-                            }
-                            SettingsRouterMessage::OpenEditContactModal(contact) => {
-                                self.modal_state =
-                                    ModalState::ContactDetails(ContactDetails::edit(&contact, conn))
-                            }
-                            SettingsRouterMessage::RouterMessage(router_msg) => {
-                                router_message = Some(router_msg);
-                            }
-                            SettingsRouterMessage::OpenProfileModal(contact) => {
-                                self.modal_state = ModalState::ContactDetails(
-                                    ContactDetails::viewer(&contact, conn),
-                                )
-                            }
-                        }
+                        router_message = self.handle_settings_route_msg(received_msg, conn);
                     }
                 }
             }
@@ -398,11 +413,11 @@ impl Settings {
     }
 }
 
-#[derive(Debug, Clone)]
 enum ModalState {
     RelaysConfirmation(RelaysConfirmation),
     ContactDetails(ContactDetails),
     ImportList(ImportContactList),
+    RelayDocument(RelayDocState),
     Off,
 }
 
@@ -414,6 +429,9 @@ impl ModalState {
     }
     pub fn backend_event(&mut self, event: BackendEvent, conn: &mut BackEndConnection) {
         match self {
+            ModalState::RelayDocument(state) => {
+                state.backend_event(event, conn);
+            }
             ModalState::ContactDetails(state) => {
                 state.backend_event(event, conn);
             }
@@ -434,7 +452,6 @@ impl ModalState {
             Message::SendContactListToAll => {
                 println!("Send contacts to all relays");
             }
-
             Message::RelaysConfirmationMessage(modal_msg) => {
                 if let ModalState::RelaysConfirmation(state) = self {
                     match *modal_msg {
@@ -482,6 +499,22 @@ impl ModalState {
                     }
                 }
             }
+            Message::RelayDocumentMessage(modal_msg) => {
+                if let ModalState::RelayDocument(state) = self {
+                    match *modal_msg {
+                        relay_document::CMessage::UnderlayMessage(message) => {
+                            return self.update(message, conn);
+                        }
+                        other => {
+                            let (cmd, close_modal) = state.update(other, conn);
+                            if close_modal {
+                                *self = ModalState::Off
+                            }
+                            command = cmd.map(|m| Message::RelayDocumentMessage(Box::new(m)));
+                        }
+                    }
+                }
+            }
             _ => (),
         }
 
@@ -490,6 +523,9 @@ impl ModalState {
 
     pub fn view<'a>(&'a self, underlay: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
         let view: Element<_> = match self {
+            ModalState::RelayDocument(state) => state
+                .view(underlay)
+                .map(|m| Message::RelayDocumentMessage(Box::new(m))),
             ModalState::RelaysConfirmation(state) => state
                 .view(underlay)
                 .map(|m| Message::RelaysConfirmationMessage(Box::new(m))),

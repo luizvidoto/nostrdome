@@ -13,9 +13,6 @@ use super::DbEvent;
 pub enum Error {
     #[error("Sqlx error: {0}")]
     SqlxError(#[from] sqlx::Error),
-
-    #[error("{0}")]
-    FromDbEventError(#[from] crate::db::event::Error),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -115,16 +112,11 @@ impl DbRelayResponse {
         relay_url: &nostr::Url,
         db_event: &DbEvent,
     ) -> Result<(), Error> {
-        let event_id = db_event.event_id()?;
+        let event_id = db_event.event_id;
         let relay_response = DbRelayResponse::ok(event_id, &db_event.event_hash, relay_url);
         DbRelayResponse::insert(pool, &relay_response).await?;
         Ok(())
     }
-
-    // pub(crate) fn with_id(mut self, id: i64) -> Self {
-    //     self.id = Some(id);
-    //     self
-    // }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

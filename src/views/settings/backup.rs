@@ -5,11 +5,10 @@ use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::utils::hide_string;
 use crate::{db::DbContact, widget::Element};
 use iced::widget::{button, column, row, text};
-use iced::{clipboard, Alignment, Command, Length};
+use iced::{clipboard, Alignment, Command};
 use nostr::prelude::ToBech32;
 use nostr::Keys;
 
-#[derive(Debug, Clone)]
 pub enum Listener {
     Contacts,
     Messages,
@@ -26,14 +25,12 @@ pub enum Message {
     HideSecretKey,
     CopySecretKey,
 }
-#[derive(Debug, Clone)]
 pub enum LoadingState {
     Idle,
     Loading,
     Success,
 }
 
-#[derive(Debug, Clone)]
 pub struct State {
     contacts: Vec<DbContact>,
     messages: Vec<DbEvent>,

@@ -13,7 +13,6 @@ pub enum Message {
     EditContact(DbContact),
     SendMessageTo(DbContact),
 }
-#[derive(Debug, Clone)]
 pub struct ContactRow {
     contact: DbContact,
 }

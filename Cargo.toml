@@ -13,15 +13,10 @@ categories = ["chat", "desktop", "nostr"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-async-recursion = "1"
-async-stream = "0.3.5"
-async-trait = "0.1.68"
-base64 = "0.21.0"
+base64 = "0.21.2"
 chrono = { version="0.4.22", features=["serde"] }
-csv = "1.1.3"
 directories = "5.0.0"
 dotenv = "0.15.0"
-fake = { version = "2.5", features=['derive']}
 futures = "0.3.21"
 futures-util = "0.3.28"
 iced = { version="0.9.0", features = ["tokio", "debug", "image"]}
@@ -29,34 +24,36 @@ iced_native = "0.10.3"
 iced_aw = { git="https://github.com/iced-rs/iced_aw.git", branch="main", features = ["split", "modal", "spinner", "floating_element"] }
 iced_lazy = { version="0.6.1" }
 iced_style = "0.8.0"
-image = {version = "0.23.0", features = ["webp"]}
-log = "0.4.17"
+image = {version = "0.23.14", features = ["webp"]}
 nostr = { version = "0.22.0", features = ["all-nips"]}
-ns-client = {path="../ns-client"}
-num-format = "0.4.3"
+ns-client = { path="../ns-client/lib" }
 once_cell = "1.17.1"
 ouroboros = "0.13.0"
 qrcode = "0.12.0"
 rand = "0.8.5"
-regex = "1.7.3"
+regex = "1.8.4"
 reqwest = { version = "0.11.17", features = ["json", "stream"] }
 rfd = "0.11.4"
 serde = { version="1.0.145", features=["derive"] }
 serde_json = "1.0.68"
-simplelog = "0.12.1"
 sntpc = "0.3.4"
 sqlx = { version="0.6.3", features = ["sqlite", "runtime-tokio-native-tls"] }
 thiserror = "1.0"
 tokio = { version = "1", features = ["full"] }
-tokio-stream = "0.1.12"
 tracing = "0.1.37"
-tracing-appender = "0.2.2"
 tracing-error = "0.2.0"
-tracing-log = "0.1.0"
 tracing-subscriber = { version = "0.3.16", features = [ "std", "env-filter" ] }
 unicode-segmentation = "1.8.0"
 url = "2.3.1"
-uuid = { version = "1.2.1", features = ["v4"] }
 webbrowser = "0.8.9"
-tokio-tungstenite = "0.19.0"
-tungstenite = "0.19.0"
+
+[dev.dependencies]
+fake = { version = "2.5", features=['derive']}
+simplelog = "0.12.1"
+
+[profile.release]
+panic = "abort" # Strip expensive panic clean-up logic
+codegen-units = 1 # Compile crates one after another so the compiler can optimize better
+lto = true # Enables link to optimizations
+opt-level = "z" # Optimize for binary size
+strip = true # Remove debug symbols

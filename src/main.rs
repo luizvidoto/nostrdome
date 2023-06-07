@@ -15,20 +15,15 @@ pub(crate) use crate::error::Error;
 
 use components::inform_card;
 use dotenv::dotenv;
-use iced::{
-    executor,
-    widget::{button, column, text},
-    window, Application, Command, Settings,
-};
+use iced::{executor, window, Application, Command, Settings};
 use net::{backend_connect, BackEndConnection, BackendEvent};
 // use tracing_appender::{non_blocking, rolling};
 use tracing_subscriber::{
     fmt::SubscriberBuilder, prelude::__tracing_subscriber_SubscriberExt, EnvFilter,
 };
 use views::{
-    login::{self, BasicProfile},
     settings::{self, appearance},
-    welcome, Router,
+    Router,
 };
 use widget::Element;
 
@@ -37,7 +32,7 @@ pub enum Message {
     RouterMessage(views::Message),
     BackEndEvent(BackendEvent),
 }
-pub enum BackendState {
+pub enum AppState {
     Loading,
     Loaded {
         conn: BackEndConnection,
@@ -46,7 +41,7 @@ pub enum BackendState {
 }
 
 pub struct App {
-    state: BackendState,
+    state: AppState,
     color_theme: Option<style::Theme>,
 }
 
@@ -59,7 +54,7 @@ impl Application for App {
     fn new(_flags: Self::Flags) -> (Self, Command<Message>) {
         (
             Self {
-                state: BackendState::Loading,
+                state: AppState::Loading,
                 color_theme: Some(style::Theme::default()),
             },
             Command::none(),
@@ -77,9 +72,7 @@ impl Application for App {
         let backend_subscription = backend_connect().map(Message::BackEndEvent);
 
         let app_sub = match &self.state {
-            BackendState::Loaded { router, .. } => {
-                router.subscription().map(Message::RouterMessage)
-            }
+            AppState::Loaded { router, .. } => router.subscription().map(Message::RouterMessage),
             _ => iced::Subscription::none(),
         };
 
@@ -91,14 +84,14 @@ impl Application for App {
 
     fn view(&self) -> Element<Self::Message> {
         match &self.state {
-            BackendState::Loading => inform_card("Loading App", "Please wait...").into(),
-            BackendState::Loaded { router, .. } => router.view().map(Message::RouterMessage).into(),
+            AppState::Loading => inform_card("Loading App", "Please wait...").into(),
+            AppState::Loaded { router, .. } => router.view().map(Message::RouterMessage).into(),
         }
     }
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
             Message::RouterMessage(msg) => {
-                if let BackendState::Loaded { router, conn } = &mut self.state {
+                if let AppState::Loaded { router, conn } = &mut self.state {
                     if let views::Message::SettingsMsg(settings_msg) = msg.clone() {
                         if let settings::Message::AppearanceMessage(appearance_msg) = settings_msg {
                             if let appearance::Message::ChangeTheme(theme) = appearance_msg {
@@ -117,10 +110,10 @@ impl Application for App {
                 match event {
                     BackendEvent::Connected(mut conn) => {
                         let router = Router::new(&mut conn);
-                        self.state = BackendState::Loaded { conn, router };
+                        self.state = AppState::Loaded { conn, router };
                     }
                     other => match &mut self.state {
-                        BackendState::Loaded { router, conn, .. } => {
+                        AppState::Loaded { router, conn, .. } => {
                             return router
                                 .backend_event(other, conn)
                                 .map(Message::RouterMessage);

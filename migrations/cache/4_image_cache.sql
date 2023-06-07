@@ -1,9 +1,11 @@
 CREATE TABLE IF NOT EXISTS image_cache (
-    id PRIMARY KEY,
-    url TEXT NOT NULL,
+    id INTEGER PRIMARY KEY,
     path TEXT NOT NULL,
-    kind INTEGER NOT NULL
+    kind INTEGER NOT NULL,
+    event_hash BLOB NOT NULL
 );
 
 -- Events Indexes
-CREATE UNIQUE INDEX IF NOT EXISTS url_index ON image_cache(url);
+CREATE UNIQUE INDEX IF NOT EXISTS event_hash_index ON image_cache(event_hash);
+
+CREATE UNIQUE INDEX IF NOT EXISTS event_hash_kind_index ON image_cache(event_hash, kind);

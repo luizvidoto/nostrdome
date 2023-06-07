@@ -1,72 +1,100 @@
 use std::collections::HashSet;
 
-use crate::{consts::default_channel_image, db::ImageDownloaded, net::ImageSize, Error};
+use crate::{
+    consts::default_channel_image,
+    db::{ChannelCache, ImageDownloaded},
+    net::{BackEndConnection, ImageKind, ImageSize, ToBackend},
+};
 use chrono::NaiveDateTime;
 use iced::widget::image::Handle;
 use nostr::{secp256k1::XOnlyPublicKey, EventId};
 use url::Url;
 
-use crate::utils::ns_event_to_naive;
-
-use super::ChannelMetadata;
+use super::PrefixedId;
 
 // todo: maybe use channel_id?
 #[derive(Debug, Clone)]
 pub struct ChannelResult {
-    pub id: EventId,
-    pub url: Url,
-    pub name: Option<String>,
-    pub about: Option<String>,
-    pub picture: Option<String>,
+    pub id: PrefixedId,
+    pub full_id: EventId,
+    pub relay_url: Url,
+    pub cache: ChannelCache,
     pub members: HashSet<XOnlyPublicKey>,
-    pub created_at: NaiveDateTime,
-    pub creator: XOnlyPublicKey,
     pub loading_details: bool,
     pub image_handle: Handle,
 }
 
 impl ChannelResult {
-    pub fn from_ns_event(url: Url, ns_event: nostr::Event) -> Result<ChannelResult, Error> {
-        let metadata = ChannelMetadata::from_json(&ns_event.content)?;
+    pub fn from_ns_event(url: Url, ns_event: nostr::Event, cache: ChannelCache) -> Self {
         let mut members = HashSet::new();
         let creator = ns_event.pubkey;
         members.insert(creator.clone());
 
-        Ok(ChannelResult {
-            id: ns_event.id,
-            url,
-            name: metadata.name,
-            about: metadata.about,
-            picture: metadata.picture,
-            creator,
+        let image_handle = cache
+            .image_cache
+            .as_ref()
+            .map(|image| {
+                let path = image.sized_image(IMAGE_SIZE);
+                Handle::from_path(path)
+            })
+            .unwrap_or(Handle::from_memory(default_channel_image(IMAGE_SIZE)));
+
+        let cache = Self {
+            id: PrefixedId::new(&ns_event.id.to_hex()),
+            full_id: ns_event.id,
+            relay_url: url,
+            cache,
             members,
-            created_at: ns_event_to_naive(ns_event.created_at)?,
             loading_details: true,
-            image_handle: Handle::from_memory(default_channel_image(ImageSize::Medium)),
-        })
+            image_handle,
+        };
+
+        cache
     }
 
     pub fn loading_details(&mut self) {
         self.loading_details = true;
     }
-
     pub fn done_loading(&mut self) {
         self.loading_details = false;
     }
-
-    pub fn message(&mut self, ns_event: nostr::Event) {
-        self.members.insert(ns_event.pubkey);
+    pub fn message(&mut self, pubkey: XOnlyPublicKey) {
+        self.members.insert(pubkey);
     }
-
-    pub fn update_meta(&mut self, ns_event: nostr::Event) -> Result<(), Error> {
-        let metadata = ChannelMetadata::from_json(&ns_event.content)?;
-        self.name = metadata.name;
-        self.about = metadata.about;
-        self.picture = metadata.picture;
-        Ok(())
+    pub fn update_cache(&mut self, new_cache: ChannelCache, conn: &mut BackEndConnection) {
+        if let Some(image) = &new_cache.image_cache {
+            self.update_image(image);
+        } else {
+            if let Some(image_url) = &new_cache.metadata.picture {
+                conn.send(ToBackend::DownloadImage {
+                    image_url: image_url.to_owned(),
+                    kind: ImageKind::Channel,
+                    identifier: self.full_id.to_string(),
+                    event_hash: new_cache.last_event_hash().to_owned(),
+                });
+            } else {
+                tracing::info!("Channel don't have image");
+            }
+        }
+        self.cache = new_cache;
     }
-
-    pub fn update_image(&mut self, image: ImageDownloaded) {
-        self.image_handle = Handle::from_path(image.path);
+    pub fn update_image(&mut self, image: &ImageDownloaded) {
+        let path = image.sized_image(IMAGE_SIZE);
+        self.image_handle = Handle::from_path(path);
+    }
+    pub fn name(&self) -> String {
+        self.cache
+            .metadata
+            .name
+            .clone()
+            .unwrap_or("Nameless".into())
+    }
+    pub fn about(&self) -> String {
+        self.cache.metadata.about.clone().unwrap_or("".into())
+    }
+    pub fn created_at(&self) -> &NaiveDateTime {
+        &self.cache.created_at
     }
 }
+
+const IMAGE_SIZE: ImageSize = ImageSize::Medium;

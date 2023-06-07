@@ -2,13 +2,12 @@ use std::path::PathBuf;
 
 use crate::{
     net::{image_filename, ImageKind, ImageSize},
-    utils::{image_kind_or_err, url_or_err},
+    utils::{event_hash_or_err, image_kind_or_err},
 };
 use nostr::EventId;
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use thiserror::Error;
-use url::Url;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -27,65 +26,80 @@ pub enum Error {
     #[error("I/O Error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("Image cache not found for url: {0}")]
-    ImageCacheNotFound(Url),
+    #[error("{1:?} cache not found for event_id: {0}")]
+    ImageCacheNotFound(EventId, ImageKind),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageDownloaded {
-    pub url: Url,
     pub path: PathBuf,
     pub kind: ImageKind,
+    pub event_hash: EventId,
 }
 impl ImageDownloaded {
+    pub fn sized_image(&self, size: ImageSize) -> PathBuf {
+        let sized_file_name = image_filename(self.kind, size, "png");
+        // replace filename with new
+        self.path.with_file_name(sized_file_name)
+    }
     pub async fn fetch(
         cache_pool: &SqlitePool,
-        url: &Url,
+        event_hash: &EventId,
+        kind: ImageKind,
     ) -> Result<Option<ImageDownloaded>, Error> {
-        Ok(
-            sqlx::query_as::<_, ImageDownloaded>("SELECT * FROM image_cache WHERE url = ?")
-                .bind(url.to_string())
-                .fetch_optional(cache_pool)
-                .await?,
+        Ok(sqlx::query_as::<_, ImageDownloaded>(
+            "SELECT * FROM image_cache WHERE event_hash = ? AND kind = ?",
         )
+        .bind(event_hash.to_string())
+        .bind(kind.as_i32())
+        .fetch_optional(cache_pool)
+        .await?)
     }
     pub async fn insert(
         cache_pool: &SqlitePool,
         image: &ImageDownloaded,
     ) -> Result<ImageDownloaded, Error> {
-        if let Some(cache) = Self::fetch(cache_pool, &image.url).await? {
+        if let Some(cache) = Self::fetch(cache_pool, &image.event_hash, image.kind).await? {
             return Ok(cache);
         }
 
         let insert_query = r#"
-                INSERT INTO image_cache (url, path, kind) 
+                INSERT INTO image_cache (path, kind, event_hash) 
                 VALUES (?, ?, ?)
             "#;
 
         sqlx::query(&insert_query)
-            .bind(&image.url.to_string())
             .bind(&image.path.to_string_lossy())
             .bind(&image.kind.as_i32())
+            .bind(&image.event_hash.to_string())
             .execute(cache_pool)
             .await?;
 
-        let cache = Self::fetch(cache_pool, &image.url)
+        let cache = Self::fetch(cache_pool, &image.event_hash, image.kind)
             .await?
-            .ok_or(Error::ImageCacheNotFound(image.url.to_owned()))?;
+            .ok_or(Error::ImageCacheNotFound(
+                image.event_hash.to_owned(),
+                image.kind,
+            ))?;
 
         Ok(cache)
     }
 
-    pub async fn delete(cache_pool: &SqlitePool, url: &Url) -> Result<(), Error> {
-        match Self::fetch(cache_pool, url).await? {
-            None => return Err(Error::ImageCacheNotFound(url.to_owned())),
+    pub async fn delete(
+        cache_pool: &SqlitePool,
+        event_hash: &EventId,
+        kind: ImageKind,
+    ) -> Result<(), Error> {
+        match Self::fetch(cache_pool, event_hash, kind).await? {
+            None => return Err(Error::ImageCacheNotFound(event_hash.to_owned(), kind)),
             Some(cache) => {
-                let delete_query = r#"DELETE FROM image_cache WHERE url = ?"#;
+                let delete_query = r#"DELETE FROM image_cache WHERE event_hash = ? AND kind = ?"#;
 
                 delete_images(cache).await?;
 
                 sqlx::query(&delete_query)
-                    .bind(&url.to_string())
+                    .bind(&event_hash.to_string())
+                    .bind(&kind.as_i32())
                     .execute(cache_pool)
                     .await?;
 
@@ -97,16 +111,20 @@ impl ImageDownloaded {
 
 impl sqlx::FromRow<'_, SqliteRow> for ImageDownloaded {
     fn from_row(row: &'_ SqliteRow) -> Result<Self, sqlx::Error> {
-        let url = row.try_get::<String, &str>("url")?;
-        let url = url_or_err(&url, "url")?;
-
         let path: String = row.get("path");
         let path = PathBuf::from(path);
 
         let kind: i32 = row.get("kind");
         let kind = image_kind_or_err(kind, "kind")?;
 
-        Ok(Self { url, path, kind })
+        let event_hash: String = row.get("event_hash");
+        let event_hash = event_hash_or_err(&event_hash, "event_hash")?;
+
+        Ok(Self {
+            path,
+            kind,
+            event_hash,
+        })
     }
 }
 

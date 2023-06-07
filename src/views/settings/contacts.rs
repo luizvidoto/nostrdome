@@ -44,7 +44,6 @@ impl ContactsRelaysResponse {
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct State {
     contacts: Vec<DbContact>,
     search_contact_input: String,
@@ -121,7 +120,7 @@ impl State {
                         *contact = db_contact;
                     }
                 }
-                BackendEvent::ReceivedContactList { .. }
+                BackendEvent::ReceivedContactList
                 | BackendEvent::FileContactsImported(_)
                 | BackendEvent::ContactCreated(_)
                 | BackendEvent::ContactUpdated(_)

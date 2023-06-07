@@ -19,7 +19,6 @@ pub enum CMessage<M: Clone + Debug> {
     SaveImportedContacts(Vec<DbContact>),
 }
 
-#[derive(Debug, Clone)]
 pub struct ImportContactList {
     pub imported_contacts: Vec<DbContact>,
     pub file_importer: AsyncFileImporter,
@@ -43,10 +42,10 @@ impl ImportContactList {
             CMessage::SaveImportedContacts(imported_contacts) => {
                 // TODO: two buttons, one replace. other merge
                 let is_replace = true;
-                conn.send(net::ToBackend::ImportContacts((
+                conn.send(net::ToBackend::ImportContacts(
                     imported_contacts,
                     is_replace,
-                )));
+                ));
                 // *self = ModalState::Off;
                 return true;
             }

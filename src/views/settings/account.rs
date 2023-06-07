@@ -44,7 +44,6 @@ impl AccountRelaysResponse {
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct State {
     name: String,
     user_name: String,
