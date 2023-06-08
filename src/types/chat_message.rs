@@ -24,8 +24,7 @@ pub enum Error {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    None,
-    ChatRightClick((ChatMessage, Point)),
+    ChatRightClick(ChatMessage, Point),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,7 +108,7 @@ impl ChatMessage {
             .style(container_style);
 
         let mouse_area = MouseArea::new(message_container)
-            .on_right_release(|p| Message::ChatRightClick((self.clone(), p)));
+            .on_right_release(|p| Message::ChatRightClick(self.clone(), p));
 
         container(mouse_area)
             .width(Length::Fill)

@@ -25,15 +25,7 @@ impl MessageWrapper {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    ContactUpdated(DbContact),
     ContactPress(i32),
-    ShowOnlyProfileImage,
-    ShowFullCard,
-    GotChatInfo(ChatInfo),
-    NewMessage(ChatMessage),
-    UpdatedMetadata(DbContact),
-    ResetUnseenCount,
-    ImageDownloaded(ImageDownloaded),
 }
 
 pub enum CardMode {
@@ -60,6 +52,12 @@ impl ChatInfo {
             if self.should_update(new_time) {
                 *self = new_info;
             }
+        }
+    }
+    pub fn update_headers(&mut self, msg: &ChatMessage) {
+        if self.should_update(&msg.display_time) {
+            self.last_message = msg.content.to_owned();
+            self.last_message_time = Some(msg.display_time.to_owned());
         }
     }
     pub(crate) fn add(&mut self, msg: &ChatMessage) {
@@ -189,29 +187,31 @@ impl ChatContact {
         }
     }
 
-    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
-        match message {
-            Message::NewMessage(chat_message) => {
-                self.chat_info.add(&chat_message);
-            }
-            Message::GotChatInfo(new_info) => self.chat_info.update(new_info),
-            Message::ImageDownloaded(image) => {
-                let path = image.sized_image(ImageSize::Small);
-                self.profile_img_handle = Handle::from_path(path);
-            }
-            Message::ResetUnseenCount => {
-                self.chat_info.unseen_messages = 0;
-            }
-            Message::UpdatedMetadata(db_contact) | Message::ContactUpdated(db_contact) => {
-                self.profile_img_handle = db_contact.profile_image(ImageSize::Small, conn);
-                self.contact = db_contact;
-            }
-            Message::ContactPress(_) => (),
-            Message::ShowOnlyProfileImage => {
-                self.mode = CardMode::Small;
-            }
-            Message::ShowFullCard => self.mode = CardMode::Full,
-        }
+    pub fn new_message(&mut self, chat_message: ChatMessage) {
+        self.chat_info.add(&chat_message);
+    }
+    pub fn update_headers(&mut self, chat_message: ChatMessage) {
+        self.chat_info.update_headers(&chat_message);
+    }
+    pub fn reset_unseen(&mut self) {
+        self.chat_info.unseen_messages = 0;
+    }
+    pub fn update_chat_info(&mut self, new_info: ChatInfo) {
+        self.chat_info.update(new_info);
+    }
+    pub fn update_image(&mut self, image: ImageDownloaded) {
+        let path = image.sized_image(ImageSize::Small);
+        self.profile_img_handle = Handle::from_path(path);
+    }
+    pub fn update_contact(&mut self, db_contact: DbContact, conn: &mut BackEndConnection) {
+        self.profile_img_handle = db_contact.profile_image(ImageSize::Small, conn);
+        self.contact = db_contact;
+    }
+    pub fn small_mode(&mut self) {
+        self.mode = CardMode::Small;
+    }
+    pub fn big_mode(&mut self) {
+        self.mode = CardMode::Full;
     }
 
     fn make_notifications<'a>(&self) -> Element<'a, MessageWrapper> {
