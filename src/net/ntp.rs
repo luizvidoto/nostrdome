@@ -111,7 +111,10 @@ pub fn spawn_ntp_request(sender: tokio::sync::mpsc::Sender<Result<TaskOutput, Er
                 match sntpc::get_time(addr.1, sock_wrapper, ntp_context) {
                     Ok(time) => {
                         if let Err(e) = sender
-                            .send(Ok(TaskOutput::Ntp(ntp_total_microseconds(time))))
+                            .send(Ok(TaskOutput::Ntp(
+                                ntp_total_microseconds(time),
+                                addr.0.to_owned(),
+                            )))
                             .await
                         {
                             tracing::error!("Failed to send time to backend: {}", e);
@@ -167,7 +170,7 @@ fn ntp_total_microseconds(time: sntpc::NtpResult) -> u64 {
 }
 
 // Helper function to get total microseconds from SystemTime
-fn system_total_microseconds(time: std::time::SystemTime) -> Result<u64, NtpError> {
+fn system_microseconds(time: std::time::SystemTime) -> Result<u64, NtpError> {
     match time.duration_since(std::time::UNIX_EPOCH) {
         Ok(since_the_epoch) => {
             let system_total_microseconds =
@@ -179,8 +182,8 @@ fn system_total_microseconds(time: std::time::SystemTime) -> Result<u64, NtpErro
 }
 
 // Function to get current system time in total microseconds
-pub fn system_now_total_microseconds() -> Result<u64, NtpError> {
-    system_total_microseconds(std::time::SystemTime::now())
+pub fn system_now_microseconds() -> Result<u64, NtpError> {
+    system_microseconds(std::time::SystemTime::now())
 }
 
 // Function to correct a time value (in microseconds) with an offset
@@ -219,7 +222,7 @@ mod tests {
         let time = std::time::UNIX_EPOCH + duration;
 
         // Calculate the total microseconds
-        let total_microsecs = system_total_microseconds(time).unwrap();
+        let total_microsecs = system_microseconds(time).unwrap();
 
         // Assert that the total microseconds is correct
         assert_eq!(total_microsecs, 1_000_000_000_000);
@@ -228,7 +231,7 @@ mod tests {
     #[test]
     fn test_get_system_time_microseconds() {
         // Get the current system time in total microseconds
-        let total_microsecs = system_now_total_microseconds().unwrap();
+        let total_microsecs = system_now_microseconds().unwrap();
 
         // Assert that the total microseconds is a positive number
         // (i.e., the system time is after the UNIX_EPOCH)
@@ -242,14 +245,14 @@ mod tests {
         let time = std::time::UNIX_EPOCH + duration;
 
         // Calculate the total microseconds
-        let total_microsecs = system_total_microseconds(time).unwrap();
+        let total_microsecs = system_microseconds(time).unwrap();
 
         // Correct the time with a positive offset
         let offset = 1_000_000;
         let corrected_time = correct_time_with_offset(total_microsecs, offset);
 
         // Assert that the corrected time is correct
-        let corrected_total_microsecs = system_total_microseconds(corrected_time).unwrap();
+        let corrected_total_microsecs = system_microseconds(corrected_time).unwrap();
         assert_eq!(corrected_total_microsecs, total_microsecs + offset as u64);
     }
 
@@ -287,7 +290,7 @@ mod tests {
 
         for offset in offsets.iter() {
             // Get the current system time in total microseconds
-            let system_total_microseconds = system_now_total_microseconds().unwrap();
+            let system_total_microseconds = system_now_microseconds().unwrap();
 
             // Correct the system time with the offset and convert to NaiveDateTime
             let corrected_system_time =

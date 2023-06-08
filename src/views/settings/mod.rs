@@ -396,7 +396,7 @@ impl Settings {
 
         let view_ct = container(self.menu_state.view())
             .style(style::Container::ChatContainer)
-            .padding([20, 20, 0, 20])
+            .padding([20, 0, 0, 20])
             .height(Length::Fill)
             .width(Length::FillPortion(3));
 

@@ -147,11 +147,11 @@ impl DbMessage {
         event_hash: &EventId,
     ) -> Result<Option<DbMessage>, Error> {
         let sql = format!("{} WHERE event_hash = ?", Self::FETCH_QUERY);
-        let db_message = sqlx::query_as::<_, DbMessage>(&sql)
+        let db_message_opt = sqlx::query_as::<_, DbMessage>(&sql)
             .bind(&event_hash.to_string())
             .fetch_optional(pool)
             .await?;
-        Ok(db_message)
+        Ok(db_message_opt)
     }
     pub async fn fetch_by_event(
         pool: &SqlitePool,
@@ -170,115 +170,6 @@ impl DbMessage {
             .fetch_optional(pool)
             .await?)
     }
-
-    pub async fn insert_pending(
-        pool: &SqlitePool,
-        pending_event: PendingEvent,
-        contact_pubkey: &XOnlyPublicKey,
-        is_users: bool,
-    ) -> Result<Self, Error> {
-        let utc_now = UserConfig::get_corrected_time(pool)
-            .await
-            .unwrap_or(Utc::now().naive_utc());
-        let sql = r#"
-            INSERT INTO message 
-                (content, contact_pubkey, is_users, created_at, status)
-            VALUES (?1, ?2, ?3, ?4, ?5)
-        "#;
-
-        let ns_event = pending_event.ns_event();
-
-        let output = sqlx::query(sql)
-            .bind(&ns_event.content)
-            .bind(&contact_pubkey.to_string())
-            .bind(&is_users)
-            .bind(&utc_now.timestamp_millis())
-            .bind(&MessageStatus::Pending.to_i32())
-            .execute(pool)
-            .await?;
-
-        let sql = "SELECT * FROM message WHERE msg_id = ?";
-        let db_message = sqlx::query_as::<_, DbMessage>(sql)
-            .bind(output.last_insert_rowid())
-            .fetch_optional(pool)
-            .await?
-            .ok_or(Error::NotFoundPendingMessage)?;
-
-        Ok(db_message)
-    }
-
-    pub async fn insert_confirmed(
-        pool: &SqlitePool,
-        db_event: &DbEvent,
-        contact_pubkey: &XOnlyPublicKey,
-        is_users: bool,
-    ) -> Result<DbMessage, Error> {
-        let sql = r#"
-            INSERT INTO message (content, contact_pubkey, is_users, created_at, 
-                status, event_hash, confirmed_at, event_id, relay_url)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-        "#;
-
-        let output = sqlx::query(sql)
-            .bind(&db_event.content)
-            .bind(&contact_pubkey.to_string())
-            .bind(&is_users)
-            .bind(&db_event.created_at.timestamp_millis())
-            .bind(&MessageStatus::Delivered.to_i32())
-            .bind(&db_event.event_hash.to_string())
-            .bind(&db_event.created_at.timestamp_millis())
-            .bind(&db_event.event_id)
-            .bind(&db_event.relay_url.to_string())
-            .execute(pool)
-            .await?;
-
-        let sql = "SELECT * FROM message WHERE msg_id = ?";
-        let db_message = sqlx::query_as::<_, DbMessage>(sql)
-            .bind(output.last_insert_rowid())
-            .fetch_optional(pool)
-            .await?
-            .ok_or(Error::NotFoundMessage(db_event.event_hash.to_owned()))?;
-
-        Ok(db_message)
-    }
-
-    pub async fn confirm_message(
-        pool: &SqlitePool,
-        db_event: &DbEvent,
-    ) -> Result<DbMessage, Error> {
-        tracing::debug!("Confirming message. ID: {}", db_event.event_hash);
-        let mut db_message = Self::fetch_by_hash(pool, &db_event.event_hash)
-            .await?
-            .ok_or(Error::NotFoundMessage(db_event.event_hash.to_owned()))?;
-
-        let utc_now = UserConfig::get_corrected_time(pool)
-            .await
-            .unwrap_or(Utc::now().naive_utc());
-
-        let sql = r#"
-            UPDATE message 
-            SET status = ?, confirmed_at=?, relay_url=?, event_id=?
-            WHERE event_hash = ?
-        "#;
-
-        db_message.status = MessageStatus::Delivered;
-        db_message.confirmation_info = Some(ConfirmationInfo {
-            confirmed_at: utc_now,
-            relay_url: db_event.relay_url.to_owned(),
-            event_id: db_event.event_id.to_owned(),
-        });
-
-        sqlx::query(sql)
-            .bind(&MessageStatus::Delivered.to_i32())
-            .bind(&utc_now.timestamp_millis())
-            .bind(&db_event.relay_url.to_string())
-            .bind(&db_event.event_hash.to_string())
-            .execute(pool)
-            .await?;
-
-        Ok(db_message)
-    }
-
     pub async fn fetch_unseen_chat_count(
         pool: &SqlitePool,
         contact_pubkey: &XOnlyPublicKey,
@@ -356,6 +247,132 @@ impl DbMessage {
             .await?;
 
         Ok(message)
+    }
+
+    pub async fn insert_pending(
+        pool: &SqlitePool,
+        pending_event: PendingEvent,
+        contact_pubkey: &XOnlyPublicKey,
+        is_users: bool,
+    ) -> Result<Self, Error> {
+        let ns_event = pending_event.ns_event();
+
+        tracing::debug!("Insert pending message. ID: {}", ns_event.id);
+
+        let utc_now = UserConfig::get_corrected_time(pool)
+            .await
+            .unwrap_or(Utc::now().naive_utc());
+        let sql = r#"
+            INSERT INTO message 
+                (event_hash, content, contact_pubkey, is_users, created_at, status)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "#;
+
+        let output = sqlx::query(sql)
+            .bind(&ns_event.id.to_string())
+            .bind(&ns_event.content)
+            .bind(&contact_pubkey.to_string())
+            .bind(&is_users)
+            .bind(&utc_now.timestamp_millis())
+            .bind(&MessageStatus::Pending.to_i32())
+            .execute(pool)
+            .await?;
+
+        let sql = "SELECT * FROM message WHERE msg_id = ?";
+        let db_message = sqlx::query_as::<_, DbMessage>(sql)
+            .bind(output.last_insert_rowid())
+            .fetch_optional(pool)
+            .await?
+            .ok_or(Error::NotFoundPendingMessage)?;
+
+        Ok(db_message)
+    }
+
+    pub async fn insert_confirmed(
+        pool: &SqlitePool,
+        db_event: &DbEvent,
+        contact_pubkey: &XOnlyPublicKey,
+        is_users: bool,
+    ) -> Result<DbMessage, Error> {
+        tracing::debug!("Insert confirmed message. ID: {}", db_event.event_hash);
+
+        match Self::fetch_by_hash(pool, &db_event.event_hash).await? {
+            Some(mut db_message) => {
+                tracing::debug!("Message already in database.  {:?}", &db_message);
+
+                if db_message.confirmation_info.is_none() {
+                    db_message = Self::confirm_message(pool, db_event).await?;
+                }
+
+                Ok(db_message)
+            }
+            None => {
+                let sql = r#"
+                    INSERT INTO message (content, contact_pubkey, is_users, created_at, 
+                        status, event_hash, confirmed_at, event_id, relay_url)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9);
+                "#;
+
+                let output = sqlx::query(sql)
+                    .bind(&db_event.content)
+                    .bind(&contact_pubkey.to_string())
+                    .bind(&is_users)
+                    .bind(&db_event.created_at.timestamp_millis())
+                    .bind(&MessageStatus::Delivered.to_i32())
+                    .bind(&db_event.event_hash.to_string())
+                    .bind(&db_event.created_at.timestamp_millis())
+                    .bind(&db_event.event_id)
+                    .bind(&db_event.relay_url.to_string())
+                    .execute(pool)
+                    .await?;
+
+                let sql = "SELECT * FROM message WHERE msg_id = ?";
+                let db_message = sqlx::query_as::<_, DbMessage>(sql)
+                    .bind(output.last_insert_rowid())
+                    .fetch_optional(pool)
+                    .await?
+                    .ok_or(Error::NotFoundMessage(db_event.event_hash.to_owned()))?;
+
+                Ok(db_message)
+            }
+        }
+    }
+
+    pub async fn confirm_message(
+        pool: &SqlitePool,
+        db_event: &DbEvent,
+    ) -> Result<DbMessage, Error> {
+        tracing::debug!("Confirming message. ID: {}", db_event.event_hash);
+        let mut db_message = Self::fetch_by_hash(pool, &db_event.event_hash)
+            .await?
+            .ok_or(Error::NotFoundMessage(db_event.event_hash.to_owned()))?;
+
+        let utc_now = UserConfig::get_corrected_time(pool)
+            .await
+            .unwrap_or(Utc::now().naive_utc());
+
+        db_message.status = MessageStatus::Delivered;
+        db_message.confirmation_info = Some(ConfirmationInfo {
+            confirmed_at: utc_now,
+            relay_url: db_event.relay_url.to_owned(),
+            event_id: db_event.event_id.to_owned(),
+        });
+
+        let sql = r#"
+            UPDATE message 
+            SET status = ?, confirmed_at=?, relay_url=?, event_id=?
+            WHERE event_hash = ?
+        "#;
+
+        sqlx::query(sql)
+            .bind(&MessageStatus::Delivered.to_i32())
+            .bind(&utc_now.timestamp_millis())
+            .bind(&db_event.relay_url.to_string())
+            .bind(&db_event.event_hash.to_string())
+            .execute(pool)
+            .await?;
+
+        Ok(db_message)
     }
 
     pub async fn message_seen(pool: &SqlitePool, db_message: &mut DbMessage) -> Result<(), Error> {

@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS channel (
     channel_id INTEGER PRIMARY KEY,
     -- database event_id
     event_id INTEGER NOT NULL REFERENCES event(event_id) ON UPDATE CASCADE ON DELETE CASCADE,
-    event_hash BLOB NOT NULL,
+    event_hash TEXT NOT NULL,
     -- UNIX timestamp as integer milliseconds
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,

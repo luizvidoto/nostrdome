@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use iced::alignment::{self, Horizontal};
 use iced::widget::{button, column, container, row, text, text_input, tooltip, Space};
-use iced::{Length, Subscription};
+use iced::{Alignment, Length, Subscription};
 use iced_aw::{Card, Modal};
 use nostr::Url;
 
@@ -27,6 +27,13 @@ pub enum Message {
     AddRelayInputChange(String),
     SearchInputChange(String),
     Tick,
+    SyncWithNTP,
+}
+
+pub struct NtpInfo {
+    last_ntp_offset: i64,
+    ntp_offset: Option<i64>,
+    ntp_server: Option<String>,
 }
 
 pub struct State {
@@ -35,6 +42,8 @@ pub struct State {
     add_relay_input: String,
     is_invalid: bool,
     search_input: String,
+    ntp_info: Option<NtpInfo>,
+    ntp_btn_enabled: bool,
 }
 impl State {
     pub fn subscription(&self) -> Subscription<Message> {
@@ -42,17 +51,35 @@ impl State {
     }
     pub fn new(conn: &mut BackEndConnection) -> Self {
         conn.send(net::ToBackend::FetchRelays);
+        conn.send(net::ToBackend::GetNtpInfo);
         Self {
             relays: vec![],
             show_modal: false,
             add_relay_input: "".into(),
             is_invalid: false,
             search_input: "".into(),
+            ntp_info: None,
+            ntp_btn_enabled: false,
         }
     }
 
     pub fn backend_event(&mut self, event: BackendEvent, conn: &mut BackEndConnection) {
         match event {
+            BackendEvent::NtpInfo {
+                last_ntp_offset,
+                ntp_offset,
+                ntp_server,
+            } => {
+                if ntp_server.is_none() {
+                    self.ntp_btn_enabled = true;
+                }
+
+                self.ntp_info = Some(NtpInfo {
+                    last_ntp_offset,
+                    ntp_offset,
+                    ntp_server,
+                })
+            }
             BackendEvent::RelayUpdated(db_relay) => {
                 if let Some(row) = self
                     .relays
@@ -130,13 +157,52 @@ impl State {
                     }
                 }
             },
+            Message::SyncWithNTP => {
+                self.ntp_btn_enabled = false;
+                conn.send(net::ToBackend::SyncWithNTP);
+            }
         }
 
         None
     }
 
     pub fn view(&self) -> Element<Message> {
-        let title = title("Network").height(HEADER_HEIGHT);
+        let page_title = title("Network").height(HEADER_HEIGHT);
+        let ntp_title = text("NTP Server").size(24);
+
+        let ntp_content: Element<_> = if let Some(info) = &self.ntp_info {
+            let synced_with: Element<_> = if let Some(server) = &info.ntp_server {
+                let server_input = text_input("", &server).style(style::TextInput::ChatSearch);
+                row![text("Synced with NTP server").width(200), server_input,]
+                    .align_items(Alignment::Center)
+                    .spacing(5)
+                    .into()
+            } else {
+                text("Not synced with NTP server").into()
+            };
+
+            let last_offset_input = text_input("", &info.last_ntp_offset.to_string())
+                .style(style::TextInput::ChatSearch);
+            let mut sync_btn = button("Sync").style(style::Button::Primary);
+            if self.ntp_btn_enabled {
+                sync_btn = sync_btn.on_press(Message::SyncWithNTP);
+            }
+
+            column![
+                synced_with,
+                row![text("Time Offset").width(200), last_offset_input,]
+                    .align_items(Alignment::Center)
+                    .spacing(5),
+                row![Space::with_width(Length::Fill), sync_btn]
+            ]
+            .spacing(5)
+            .into()
+        } else {
+            text("Loading...").into()
+        };
+        let ntp_gp = column![ntp_title, ntp_content,].spacing(10);
+
+        let relays_title = text("Relays").size(24);
 
         let add_btn = tooltip(
             button(
@@ -167,12 +233,17 @@ impl State {
             .fold(column![].spacing(4), |col, relay| {
                 col.push(relay.view().map(Message::RelayRowMessage))
             });
-        let relays_ct = container(table_header.push(common_scrollable(relay_rows)));
+        let relays_table = container(table_header.push(relay_rows));
+        let relays_gp = column![relays_title, utils_row, relays_table].spacing(5);
 
-        let content: Element<_> = container(column![title, utils_row, relays_ct])
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
+        let content: Element<_> = container(common_scrollable(
+            column![page_title, ntp_gp, relays_gp]
+                .spacing(10)
+                .padding([0, 20, 0, 0]),
+        ))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into();
 
         Modal::new(self.show_modal, content, || {
             let mut add_relay_input = TextInputGroup::new(

@@ -15,7 +15,7 @@ pub(crate) use crate::error::Error;
 
 use components::inform_card;
 use dotenv::dotenv;
-use iced::{executor, window, Application, Command, Settings};
+use iced::{executor, subscription, window, Application, Command, Settings};
 use net::{backend_connect, BackEndConnection, BackendEvent};
 // use tracing_appender::{non_blocking, rolling};
 use tracing_subscriber::{
@@ -31,6 +31,7 @@ use widget::Element;
 pub enum Message {
     RouterMessage(views::Message),
     BackEndEvent(BackendEvent),
+    RuntimeEvent(iced::Event),
 }
 pub enum AppState {
     Loading,
@@ -68,7 +69,6 @@ impl Application for App {
     }
     fn subscription(&self) -> iced::Subscription<Self::Message> {
         let mut subscriptions = vec![];
-
         let backend_subscription = backend_connect().map(Message::BackEndEvent);
 
         let app_sub = match &self.state {
@@ -76,8 +76,11 @@ impl Application for App {
             _ => iced::Subscription::none(),
         };
 
+        let runtime_events = subscription::events().map(Message::RuntimeEvent);
+
         subscriptions.push(backend_subscription);
         subscriptions.push(app_sub);
+        subscriptions.push(runtime_events);
 
         iced::Subscription::batch(subscriptions)
     }
@@ -90,6 +93,21 @@ impl Application for App {
     }
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
+            Message::RuntimeEvent(event) => {
+                if let iced::Event::Window(window_event) = event {
+                    if let window::Event::CloseRequested = window_event {
+                        match &mut self.state {
+                            AppState::Loading => {
+                                return window::close();
+                            }
+                            AppState::Loaded { conn, .. } => {
+                                // window::close();
+                                conn.send(net::ToBackend::Shutdown);
+                            }
+                        }
+                    }
+                }
+            }
             Message::RouterMessage(msg) => {
                 if let AppState::Loaded { router, conn } = &mut self.state {
                     if let views::Message::SettingsMsg(settings_msg) = msg.clone() {
@@ -108,6 +126,9 @@ impl Application for App {
             Message::BackEndEvent(event) => {
                 tracing::trace!("Backend event: {:?}", event);
                 match event {
+                    BackendEvent::ShutdownDone => {
+                        return window::close();
+                    }
                     BackendEvent::Connected(mut conn) => {
                         let router = Router::new(&mut conn);
                         self.state = AppState::Loaded { conn, router };
@@ -134,7 +155,7 @@ async fn main() {
 
     // Cria um filtro de ambiente que define o nível de log padrão para todas as bibliotecas como ERROR e o nível de log do seu aplicativo como INFO
     let filter = EnvFilter::from_default_env()
-        .add_directive("nostrtalk=info".parse().unwrap())
+        .add_directive("nostrtalk=debug".parse().unwrap())
         .add_directive("warn".parse().unwrap());
 
     let subscriber = SubscriberBuilder::default()
@@ -153,6 +174,7 @@ async fn main() {
     tracing::info!("Starting up");
 
     App::run(Settings {
+        exit_on_close_request: false,
         id: Some(String::from("nostrtalk")),
         window: window::Settings {
             size: (APP_WIDTH, APP_HEIGHT),
@@ -160,6 +182,7 @@ async fn main() {
             position: window::Position::Centered,
             ..window::Settings::default()
         },
+        antialiasing: true,
         ..Default::default()
     })
     .expect("Failed to run app");

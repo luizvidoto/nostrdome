@@ -77,6 +77,7 @@ pub enum Message {
     OpenContactProfile,
     CloseModal,
     CloseCtxMenu,
+    DebugPressed,
 }
 
 pub struct State {
@@ -572,6 +573,12 @@ impl State {
                 }
                 self.hide_context_menu = true;
             }
+            Message::DebugPressed => {
+                if let Some(chat_msg) = &self.chat_message_pressed {
+                    tracing::info!("{:?}", chat_msg);
+                }
+                self.hide_context_menu = true;
+            }
             Message::ReplyPressed => {
                 tracing::info!("Reply Pressed");
                 self.hide_context_menu = true;
@@ -852,9 +859,22 @@ fn make_context_menu<'a>(response: &Option<RelaysResponse>) -> Element<'a, Messa
     .height(CTX_BUTTON_HEIGHT)
     .on_press(Message::CopyPressed)
     .style(style::Button::ContextMenuButton);
-    let reply_btn = button(
+    // let reply_btn = button(
+    //     row![
+    //         text("Reply").size(18),
+    //         Space::with_width(Length::Fill),
+    //         reply_icon().size(16)
+    //     ]
+    //     .align_items(Alignment::Center),
+    // )
+    // .height(CTX_BUTTON_HEIGHT)
+    // .width(Length::Fill)
+    // .on_press(Message::ReplyPressed)
+    // .style(style::Button::ContextMenuButton);
+
+    let debug_btn = button(
         row![
-            text("Reply").size(18),
+            text("Debug").size(18),
             Space::with_width(Length::Fill),
             reply_icon().size(16)
         ]
@@ -862,8 +882,9 @@ fn make_context_menu<'a>(response: &Option<RelaysResponse>) -> Element<'a, Messa
     )
     .height(CTX_BUTTON_HEIGHT)
     .width(Length::Fill)
-    // .on_press(Message::ReplyPressed)
+    .on_press(Message::DebugPressed)
     .style(style::Button::ContextMenuButton);
+
     let relays_btn: Element<_> = if let Some(response) = response {
         let resp_txt = format!(
             "{}/{}",
@@ -892,7 +913,7 @@ fn make_context_menu<'a>(response: &Option<RelaysResponse>) -> Element<'a, Messa
             .into()
     };
 
-    let buttons = column![copy_btn, reply_btn, relays_btn].spacing(5);
+    let buttons = column![debug_btn, copy_btn, relays_btn].spacing(5);
 
     container(buttons)
         .height(ctx_menu_height())

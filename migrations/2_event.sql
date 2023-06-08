@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS event (
     event_id INTEGER PRIMARY KEY,
-    event_hash BLOB NOT NULL,
+    event_hash TEXT NOT NULL,
     -- author pubkey
     pubkey BLOB NOT NULL,
     created_at INTEGER NOT NULL,

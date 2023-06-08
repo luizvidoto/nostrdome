@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS image_cache (
     id INTEGER PRIMARY KEY,
     path TEXT NOT NULL,
     kind INTEGER NOT NULL,
-    event_hash BLOB NOT NULL
+    event_hash TEXT NOT NULL
 );
 
 -- Events Indexes

@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS channel_cache (
     -- channel_id is the hash of the channel's first event
-    creation_event_hash BLOB PRIMARY KEY,
+    creation_event_hash TEXT PRIMARY KEY,
     creator_pubkey BLOB NOT NULL,
     -- UNIX milliseconds
     created_at INTEGER NOT NULL,

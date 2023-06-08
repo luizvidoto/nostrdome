@@ -7,6 +7,7 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::time::Duration;
+use tokio::signal;
 use tokio::sync::broadcast;
 use url::Url;
 
@@ -91,7 +92,7 @@ pub enum ClientState {
 }
 
 pub enum TaskOutput {
-    Ntp(u64),
+    Ntp(u64, String),
     LatestVersion(String),
     ImageDownloaded(ImageDownloaded),
 }
@@ -358,6 +359,34 @@ async fn get_clients(
     })
 }
 
+fn shutdown_signal_task(sender: tokio::sync::mpsc::Sender<ToBackend>) {
+    tokio::spawn(async move {
+        let ctrl_c = async {
+            signal::ctrl_c()
+                .await
+                .expect("failed to install Ctrl+C handler");
+        };
+
+        #[cfg(unix)]
+        let terminate = async {
+            signal::unix::signal(signal::unix::SignalKind::terminate())
+                .expect("failed to install signal handler")
+                .recv()
+                .await;
+        };
+
+        #[cfg(not(unix))]
+        let terminate = std::future::pending::<()>();
+
+        tokio::select! {
+            _ = ctrl_c => {},
+            _ = terminate => {},
+        }
+
+        _ = sender.send(ToBackend::Shutdown).await;
+    });
+}
+
 pub fn backend_connect() -> Subscription<BackendEvent> {
     struct Backend;
     let id = std::any::TypeId::of::<Backend>();
@@ -365,12 +394,16 @@ pub fn backend_connect() -> Subscription<BackendEvent> {
     subscription::channel(id, BACKEND_CHANNEL_SIZE, |mut output| async move {
         let mut state = State::Start;
         let mut client_state = ClientState::Empty;
+
         loop {
             match &mut state {
                 State::Start => {
                     let (sender, receiver) =
                         tokio::sync::mpsc::channel::<ToBackend>(BACKEND_CHANNEL_SIZE);
                     state = State::Ready(receiver);
+
+                    shutdown_signal_task(sender.clone());
+
                     _ = output
                         .send(BackendEvent::Connected(BackEndConnection::new(sender)))
                         .await;
@@ -395,8 +428,6 @@ pub fn backend_connect() -> Subscription<BackendEvent> {
                                             }
                                         }
                                     }
-                                    // TODO: do something with profile
-                                    // create profile to send later to a relay when connected
                                     ToBackend::CreateAccount(profile) => {
                                         let keys = Keys::generate();
                                         match get_clients(&keys, Some(profile)).await {
@@ -414,6 +445,15 @@ pub fn backend_connect() -> Subscription<BackendEvent> {
                                             }
                                         }
                                     }
+                                    ToBackend::Shutdown => {
+                                        tracing::info!("Shutdown received");
+                                        state = State::Start;
+                                        _ = output.send(BackendEvent::ShutdownDone).await;
+                                    }
+                                    ToBackend::Logout => {
+                                        state = State::Start;
+                                        _ = output.send(BackendEvent::LogoutSuccess).await;
+                                    }
                                     _ => (),
                                 }
                             }
@@ -427,20 +467,30 @@ pub fn backend_connect() -> Subscription<BackendEvent> {
                         } => {
                             tokio::select! {
                                 message = receiver.recv() => {
-                                    tracing::debug!("Received message from frontend");
+                                    tracing::trace!("Received message from frontend");
                                     if let Some(message) = message {
-                                        if let ToBackend::Logout = message {
-                                            let _ = backend.logout().await;
-                                            _ = output.send(BackendEvent::LogoutSuccess).await;
-                                            state = State::Start;
-                                            client_state = ClientState::Empty;
-
-                                        } else {
-                                            if let Err(e) = process_message(&mut output, &keys, backend, tasks_tx, message).await {
-                                                // depending on the error, restart backend?
-                                                tracing::error!("{}", e);
+                                        match message {
+                                            ToBackend::Shutdown => {
+                                                tracing::info!("Shutdown received");
+                                                let _ = backend.logout().await;
+                                                state = State::Start;
+                                                client_state = ClientState::Empty;
+                                                _ = output.send(BackendEvent::ShutdownDone).await;
+                                            }
+                                            ToBackend::Logout => {
+                                                let _ = backend.logout().await;
+                                                state = State::Start;
+                                                client_state = ClientState::Empty;
+                                                _ = output.send(BackendEvent::LogoutSuccess).await;
+                                            }
+                                            other => {
+                                                if let Err(e) = process_message(&mut output, &keys, backend, tasks_tx, other).await {
+                                                    // depending on the error, restart backend?
+                                                    tracing::error!("{}", e);
+                                                }
                                             }
                                         }
+
                                     } else {
                                         tracing::info!("Front to backend channel closed");
                                         let _ = backend.logout().await;
@@ -450,7 +500,7 @@ pub fn backend_connect() -> Subscription<BackendEvent> {
                                     }
                                 }
                                 notification = notifications.recv() => {
-                                    tracing::debug!("Received notification from nostr");
+                                    tracing::trace!("Received notification from nostr");
                                     if let Ok(notification) = notification {
                                         let url = notification.url;
                                         match notification.event {
@@ -538,16 +588,23 @@ async fn handle_task_result(
     result: Result<TaskOutput, Error>,
 ) -> Result<(), Error> {
     let task_result = result?;
-    let pool = &backend.db_client.pool;
-    let cache_pool = &backend.db_client.cache_pool;
     match task_result {
-        TaskOutput::Ntp(ntp_time) => {
+        TaskOutput::Ntp(ntp_time, server) => {
             tracing::info!("NTP time: {}", ntp_time);
-            UserConfig::update_ntp_offset(pool, ntp_time).await?;
-            _ = output.send(BackendEvent::SyncedWithNtpServer).await;
+            backend.update_ntp(ntp_time, &server);
+            let last_ntp_offset =
+                UserConfig::update_ntp_offset(&backend.db_client.pool, ntp_time).await?;
+            let (ntp_offset, ntp_server) = backend.synced_ntp();
+            _ = output
+                .send(BackendEvent::NtpInfo {
+                    last_ntp_offset,
+                    ntp_offset,
+                    ntp_server,
+                })
+                .await;
         }
         TaskOutput::ImageDownloaded(image) => {
-            ImageDownloaded::insert(cache_pool, &image).await?;
+            ImageDownloaded::insert(&backend.db_client.cache_pool, &image).await?;
             _ = output.send(BackendEvent::ImageDownloaded(image)).await;
         }
         TaskOutput::LatestVersion(version) => {
@@ -608,7 +665,11 @@ pub enum BackendEvent {
     ChannelUpdated(ChannelCache),
 
     // --- Config ---
-    SyncedWithNtpServer,
+    NtpInfo {
+        last_ntp_offset: i64,
+        ntp_offset: Option<i64>,
+        ntp_server: Option<String>,
+    },
     Connected(BackEndConnection),
     FinishedPreparing,
     LoginSuccess,
@@ -616,6 +677,7 @@ pub enum BackendEvent {
     FailedToStartClient,
     CreateAccountSuccess,
     LogoutSuccess,
+    ShutdownDone,
 
     // --- Specific Events ---
     ReceivedDM {
@@ -659,6 +721,7 @@ pub enum BackendEvent {
 
 #[derive(Debug, Clone)]
 pub enum ToBackend {
+    Shutdown,
     Logout,
     FetchLatestVersion,
     QueryFirstLogin,
@@ -683,6 +746,7 @@ pub enum ToBackend {
     DeleteContact(DbContact),
     ImportContacts(Vec<DbContact>, bool),
 
+    GetNtpInfo,
     GetUserProfileMeta,
     UpdateUserProfileMeta(Metadata),
     FetchAllMessageEvents,
@@ -705,6 +769,9 @@ pub enum ToBackend {
         identifier: String,
         event_hash: EventId,
     },
+    SyncWithNTP,
+    GetRelayStatusList,
+    ReconnectRelay(url::Url),
 }
 
 pub async fn process_message(
@@ -714,7 +781,7 @@ pub async fn process_message(
     task_tx: &tokio::sync::mpsc::Sender<Result<TaskOutput, Error>>,
     message: ToBackend,
 ) -> Result<(), Error> {
-    tracing::debug!("Processing message: {:?}", message);
+    tracing::trace!("Processing message: {:?}", message);
     match message {
         // ---- CONFIG ----
         ToBackend::LoginWithSK(_) => {
@@ -722,6 +789,9 @@ pub async fn process_message(
         }
         ToBackend::Logout => {
             unreachable!("Logout should be processed outside here")
+        }
+        ToBackend::Shutdown => {
+            unreachable!("Shutdown should be processed outside here")
         }
         ToBackend::CreateAccount(profile) => {
             let profile_meta: Metadata = profile.into();
@@ -824,6 +894,28 @@ pub async fn process_message(
             }
         }
         // -----------
+        ToBackend::SyncWithNTP => {
+            spawn_ntp_request(task_tx.clone());
+        }
+        ToBackend::GetNtpInfo => {
+            let pool = &backend.db_client.pool;
+            let last_ntp_offset = UserConfig::get_ntp_offset(pool).await?;
+            let (ntp_offset, ntp_server) = backend.synced_ntp();
+            _ = output
+                .send(BackendEvent::NtpInfo {
+                    last_ntp_offset,
+                    ntp_offset,
+                    ntp_server,
+                })
+                .await;
+        }
+        ToBackend::ReconnectRelay(url) => {
+            backend.nostr.reconnect_relay(&url)?;
+        }
+        ToBackend::GetRelayStatusList => {
+            let list = backend.nostr.relay_status_list().await?;
+            _ = output.send(BackendEvent::GotRelayStatusList(list)).await;
+        }
         ToBackend::FetchNipsData => {
             _ = output
                 .send(BackendEvent::GotNipsData(backend.nips_data.clone()))

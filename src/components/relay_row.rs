@@ -1,5 +1,7 @@
 use crate::db::DbRelay;
-use crate::icon::{delete_icon, exclamation_icon, file_icon_regular, solid_circle_icon};
+use crate::icon::{
+    delete_icon, exclamation_icon, file_icon_regular, refresh_icon, solid_circle_icon,
+};
 use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::widget::{Element, Text};
@@ -15,6 +17,7 @@ pub enum Message {
     ToggleWrite,
     OpenRelayDocument(DbRelay),
     RelayUpdated(DbRelay),
+    ReconnectRelay,
 }
 #[derive(Debug, Clone)]
 pub struct MessageWrapper {
@@ -46,6 +49,9 @@ impl RelayRow {
             Message::OpenRelayDocument(_db_relay) => (),
             Message::RelayUpdated(db_relay) => {
                 self.db_relay = db_relay;
+            }
+            Message::ReconnectRelay => {
+                conn.send(net::ToBackend::ReconnectRelay(self.db_relay.url.to_owned()));
             }
             Message::DeleteRelay => {
                 conn.send(net::ToBackend::DeleteRelay(self.db_relay.url.to_owned()));
@@ -95,6 +101,9 @@ impl RelayRow {
                 .width(Length::Fixed(ACTION_ICON_WIDTH)),
             container(text(""))
                 .center_x()
+                .width(Length::Fixed(ACTION_ICON_WIDTH)),
+            container(text(""))
+                .center_x()
                 .width(Length::Fixed(ACTION_ICON_WIDTH))
         ]
         .into()
@@ -117,6 +126,21 @@ impl RelayRow {
         }
 
         let document_btn = tooltip(doc_btn, "Relay Document", tooltip::Position::Left)
+            .style(style::Container::TooltipBg);
+
+        let mut reconnect_btn = button(refresh_icon().size(16))
+            .style(style::Button::Primary)
+            .width(Length::Fixed(ACTION_ICON_WIDTH));
+        if let Some(information) = &self.db_relay.information {
+            match information.status {
+                RelayStatus::Connected => (),
+                _ => {
+                    reconnect_btn = reconnect_btn
+                        .on_press(MessageWrapper::new(self.id, Message::ReconnectRelay));
+                }
+            }
+        }
+        let reconnect_btn = tooltip(reconnect_btn, "Reconnect", tooltip::Position::Left)
             .style(style::Container::TooltipBg);
 
         let delete_btn = tooltip(
@@ -157,6 +181,7 @@ impl RelayRow {
                 .center_x()
                 .width(Length::Fixed(CHECKBOX_CELL_WIDTH)),
                 document_btn,
+                reconnect_btn,
                 delete_btn,
             ]
             .align_items(alignment::Alignment::Center),

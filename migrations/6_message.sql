@@ -9,7 +9,7 @@ CREATE TABLE message (
     -- UNIX timestamp as integer milliseconds
     created_at INTEGER NOT NULL,
     status INTEGER NOT NULL,
-    event_hash BLOB NOT NULL,
+    event_hash TEXT NOT NULL,
     -- only confirmed has values below
     event_id INTEGER,
     confirmed_at INTEGER,

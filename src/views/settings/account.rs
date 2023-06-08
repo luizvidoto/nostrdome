@@ -301,7 +301,12 @@ impl State {
             .width(Length::Fill)
             .height(FOOTER_HEIGHT);
 
-        container(column![title_group, form, footer_row].spacing(10)).into()
+        container(
+            column![title_group, form, footer_row]
+                .padding([0, 20, 0, 0])
+                .spacing(10),
+        )
+        .into()
     }
 }
 

@@ -7,6 +7,7 @@ use thiserror::Error;
 
 use crate::{
     db::{Database, DbContact, UserConfig},
+    net::ntp::system_now_microseconds,
     utils::{naive_to_event_tt, NipData},
     views::login::BasicProfile,
 };
@@ -48,6 +49,8 @@ pub struct BackendState {
     pub nips_data: Vec<NipData>,
     pub create_account: Option<BasicProfile>,
     pub pending_events: HashMap<EventId, PendingEvent>,
+    ntp_offset: Option<i64>,
+    ntp_server: Option<String>,
 }
 impl BackendState {
     pub fn new(
@@ -65,11 +68,23 @@ impl BackendState {
             nips_data,
             create_account,
             pending_events: HashMap::new(),
+            ntp_offset: None,
+            ntp_server: None,
         }
     }
 
     fn insert_pending(&mut self, event: PendingEvent) {
         self.pending_events.insert(event.id().clone(), event);
+    }
+    pub fn synced_ntp(&self) -> (Option<i64>, Option<String>) {
+        (self.ntp_offset, self.ntp_server.clone())
+    }
+    pub fn update_ntp(&mut self, ntp_time: u64, server: &str) {
+        let system_microseconds = system_now_microseconds().expect("System time before unix epoch");
+        let offset = ntp_time as i64 - system_microseconds as i64;
+
+        self.ntp_offset = Some(offset);
+        self.ntp_server = Some(server.to_owned());
     }
     pub async fn new_profile_event(
         &mut self,

@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS relay_response (
     relay_response_id INTEGER PRIMARY KEY,
     event_id INTEGER NOT NULL,
-    event_hash BLOB NOT NULL,
+    event_hash TEXT NOT NULL,
     relay_url TEXT NOT NULL,
     status INTEGER NOT NULL,
     error_message TEXT,

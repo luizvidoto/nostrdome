@@ -140,6 +140,7 @@ fn make_donation_qrcode<'a>(
     .spacing(5);
 
     let content = column![name, qrcode_image, qrcode_txt_group]
+        .padding([0, 20, 0, 0])
         .spacing(5)
         .align_items(Alignment::Center);
 

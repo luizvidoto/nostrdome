@@ -175,6 +175,7 @@ impl State {
             self.make_relays_response()
         ]
         .align_items(Alignment::Center)
+        .padding([0, 20, 0, 0])
         .spacing(10);
 
         let search_contact = text_input("Search", &self.search_contact_input)
@@ -215,6 +216,7 @@ impl State {
             refresh_btn,
             import_btn,
         ]
+        .padding([0, 20, 0, 0])
         .spacing(5)
         .width(Length::Fill);
 
@@ -223,11 +225,15 @@ impl State {
             .iter()
             .filter(|c| contact_matches_search_full(c, &self.search_contact_input))
             .map(|c| ContactRow::from_db_contact(c))
-            .fold(column![].spacing(5), |col, contact| {
-                col.push(contact.view().map(Message::ContactRowMessage))
-            })
+            .fold(
+                column![].padding([0, 20, 0, 0]).spacing(5),
+                |col, contact| col.push(contact.view().map(Message::ContactRowMessage)),
+            )
             .into();
-        let contact_list_scroller = column![ContactRow::header(), common_scrollable(contact_list)];
+        let contact_list_scroller = column![
+            container(ContactRow::header()).padding([0, 20, 0, 0]),
+            common_scrollable(contact_list)
+        ];
         let content: Element<_> = column![title_group, utils_row, contact_list_scroller]
             .spacing(10)
             .width(Length::Fill)
