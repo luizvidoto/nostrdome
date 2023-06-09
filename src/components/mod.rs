@@ -2,7 +2,9 @@ use iced::widget::column;
 
 pub mod async_file_importer;
 pub mod chat_contact;
+pub mod chat_list_container;
 mod common_scrollable;
+pub mod contact_list;
 pub mod contact_row;
 mod copy_btn;
 mod custom_widgets;

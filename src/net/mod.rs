@@ -1,7 +1,7 @@
 use futures_util::SinkExt;
 use iced::subscription;
-use iced::Subscription;
 use nostr::Metadata;
+use ns_client::Subscription;
 use rfd::AsyncFileDialog;
 use serde::Serialize;
 use sqlx::SqlitePool;
@@ -39,27 +39,25 @@ use crate::db::UserConfig;
 use crate::net::filters::channel_search_filter;
 use crate::net::filters::contact_list_filter;
 use crate::net::filters::messages_filter;
-use crate::net::filters::user_metadata;
+use crate::net::filters::user_metadata_filter;
 use crate::net::ntp::spawn_ntp_request;
-use crate::net::operations::contact_list::received_contact_list;
 use crate::net::reqwest_client::fetch_latest_version;
 use crate::types::BackendState;
 use crate::types::ChannelResult;
 use crate::types::ChatMessage;
+use crate::types::PendingEvent;
 use crate::types::PrefixedId;
-use crate::types::SubscriptionType;
+use crate::types::SubName;
+use crate::utils::ns_event_to_millis;
 use crate::utils::parse_nips_markdown;
 use crate::utils::NipData;
 use crate::views::login::BasicProfile;
 use crate::Error;
 mod filters;
 pub(crate) mod ntp;
-pub(crate) mod operations;
 pub(crate) mod reqwest_client;
 use self::filters::channel_details_filter;
-use self::filters::contact_list_metadata;
-use self::operations::contact_list::handle_contact_list;
-use self::operations::direct_message::handle_dm;
+use self::filters::contact_list_metadata_filter;
 use self::reqwest_client::download_image;
 pub(crate) use reqwest_client::{image_filename, ImageKind, ImageSize};
 
@@ -72,7 +70,9 @@ impl BackEndConnection {
     pub fn send(&mut self, input: ToBackend) {
         if let Err(e) = self.0.try_send(input).map_err(|e| e.to_string()) {
             tracing::error!("{}", e);
+            // return window::close();
         }
+        // Command::none()
     }
 }
 
@@ -106,32 +106,29 @@ async fn handle_eose(
 ) -> Result<(), Error> {
     // tracing::info!("EOSE {} - {}", &url, &subscription_id);
 
-    if let Some(sub_type) = SubscriptionType::from_id(&subscription_id) {
+    if let Some(sub_type) = SubName::from_id(&subscription_id) {
         let pool = &backend.db_client.pool;
-        let cache_pool = &backend.db_client.cache_pool;
-
         match sub_type {
-            SubscriptionType::ContactList => {
-                let list = DbContact::fetch(pool, cache_pool).await?;
-                if let Some(filter) = contact_list_metadata(&list) {
-                    backend.nostr.relay_subscribe_eose(
-                        &url,
-                        &SubscriptionType::ContactListMetadata.id(),
-                        vec![filter],
-                        Some(Duration::from_secs(10)),
-                    )?;
+            SubName::ContactList => {
+                let contact_list = DbContact::fetch_basic(pool).await?;
+                let last_event = DbEvent::fetch_last_url(pool, &url).await?;
+                if let Some(filter) = contact_list_metadata_filter(&contact_list, &last_event) {
+                    let subscription = ns_client::Subscription::new(vec![filter])
+                        .with_id(SubName::ContactListMetadata.to_string());
+                    tracing::info!("contact_list_meta_sub: {:?}", subscription);
+                    backend.nostr.relay_subscribe(&url, &subscription)?;
                 }
             }
-            SubscriptionType::SearchChannels => {
+            SubName::SearchChannels => {
                 // send search channels metadata now
                 let actions_id = SubscriptionId::generate().to_string();
                 let actions: Vec<_> = backend
                     .search_channel_ids
                     .iter()
                     .map(|channel_id| {
-                        ns_client::Subscription::action(channel_details_filter(channel_id))
-                            .with_id(&SubscriptionType::src_channel_details(channel_id).id())
-                            .timeout(Some(Duration::from_secs(5)))
+                        ns_client::Subscription::new(channel_details_filter(channel_id))
+                            .eose(Some(Duration::from_secs(5)))
+                            .with_id(SubName::src_channel_details(channel_id).to_string())
                     })
                     .collect();
                 backend
@@ -141,7 +138,7 @@ async fn handle_eose(
                     .send(BackendEvent::EOSESearchChannels(url.to_owned()))
                     .await;
             }
-            SubscriptionType::SearchChannelsDetails(channel_id) => {
+            SubName::SearchChannelsDetails(channel_id) => {
                 _ = output
                     .send(BackendEvent::EOSESearchChannelsDetails(
                         url.to_owned(),
@@ -163,21 +160,21 @@ async fn handle_event(
     subscription_id: SubscriptionId,
     ns_event: nostr::Event,
 ) -> Result<(), Error> {
-    tracing::debug!("Event {} - {} - {:?}", &url, &subscription_id, &ns_event);
+    tracing::info!("Event {} - {} - {:?}", &url, &subscription_id, &ns_event);
 
     let pool = &backend.db_client.pool;
     let cache_pool = &backend.db_client.cache_pool;
 
-    if let Some(sub_type) = SubscriptionType::from_id(&subscription_id) {
+    if let Some(sub_type) = SubName::from_id(&subscription_id) {
         match sub_type {
-            SubscriptionType::SearchChannels => {
+            SubName::SearchChannels => {
                 backend.search_channel_ids.insert(ns_event.id.to_owned());
                 let cache = ChannelCache::fetch_insert(cache_pool, &ns_event).await?;
                 let result = ChannelResult::from_ns_event(url.to_owned(), ns_event, cache);
                 _ = output.send(BackendEvent::SearchChannelResult(result)).await;
                 return Ok(());
             }
-            SubscriptionType::SearchChannelsDetails(channel_id) => {
+            SubName::SearchChannelsDetails(channel_id) => {
                 if let Kind::ChannelMetadata = ns_event.kind {
                     let cache = ChannelCache::update(cache_pool, &ns_event).await?;
                     _ = output
@@ -197,42 +194,47 @@ async fn handle_event(
         }
     }
 
-    match ns_event.kind {
-        Kind::ContactList => {
-            if let Some(db_event) = received_contact_list(pool, &url, &ns_event).await? {
-                handle_contact_list(output, keys, pool, &url, db_event).await?;
+    if let Some(pending) = backend.pending_events.remove(&ns_event.id) {
+        confirm_pending(output, keys, backend, &url, pending).await?;
+    } else {
+        match ns_event.kind {
+            Kind::ContactList => {
+                if let Some(db_event) = received_contact_list(pool, &url, &ns_event).await? {
+                    handle_contact_list(output, keys, pool, &url, db_event).await?;
+                }
             }
-        }
-        other => {
-            if let Some(db_event) = DbEvent::insert(pool, &url, &ns_event).await? {
-                match other {
-                    Kind::Metadata => {
-                        handle_metadata_event(output, cache_pool, &db_event).await?;
-                    }
-                    Kind::EncryptedDirectMessage => {
-                        handle_dm(output, pool, cache_pool, keys, &url, &db_event).await?;
-                    }
-                    Kind::RecommendRelay => {
-                        handle_recommend_relay(db_event).await?;
-                    }
-                    Kind::ChannelCreation => {
-                        handle_channel_creation(output, cache_pool, &db_event).await?;
-                    }
-                    Kind::ChannelMetadata => {
-                        handle_channel_update(output, cache_pool, &db_event).await?;
-                    }
-                    Kind::ChannelMessage => {
-                        handle_channel_message(output, cache_pool, &db_event).await?;
-                    }
-                    _other_kind => {
-                        _ = output
-                            .send(BackendEvent::OtherKindEventInserted(db_event))
-                            .await;
+            other => {
+                if let Some(db_event) = DbEvent::insert(pool, &url, &ns_event).await? {
+                    match other {
+                        Kind::Metadata => {
+                            insert_metadata_event(output, cache_pool, &db_event).await?;
+                        }
+                        Kind::EncryptedDirectMessage => {
+                            handle_dm(output, pool, cache_pool, keys, &url, &db_event).await?;
+                        }
+                        Kind::RecommendRelay => {
+                            handle_recommend_relay(db_event).await?;
+                        }
+                        Kind::ChannelCreation => {
+                            handle_channel_creation(output, cache_pool, &db_event).await?;
+                        }
+                        Kind::ChannelMetadata => {
+                            handle_channel_update(output, cache_pool, &db_event).await?;
+                        }
+                        Kind::ChannelMessage => {
+                            handle_channel_message(output, cache_pool, &db_event).await?;
+                        }
+                        _other_kind => {
+                            _ = output
+                                .send(BackendEvent::OtherKindEventInserted(db_event))
+                                .await;
+                        }
                     }
                 }
             }
         }
     }
+
     Ok(())
 }
 
@@ -244,8 +246,6 @@ async fn handle_relay_message(
     url: Url,
     message: RelayMessage,
 ) -> Result<(), Error> {
-    let pool = &backend.db_client.pool;
-    let cache_pool = &backend.db_client.cache_pool;
     match message {
         RelayMessage::Ok {
             event_id: event_hash,
@@ -267,44 +267,7 @@ async fn handle_relay_message(
             }
 
             if let Some(pending) = backend.pending_events.remove(&event_hash) {
-                if let Some(db_event) = DbEvent::insert(pool, &url, pending.ns_event()).await? {
-                    match db_event.kind {
-                        Kind::ContactList => {
-                            _ = output
-                                .send(BackendEvent::ConfirmedContactList(db_event.to_owned()))
-                                .await;
-                        }
-                        Kind::Metadata => {
-                            let is_user = db_event.pubkey == keys.public_key();
-                            _ = output
-                                .send(BackendEvent::ConfirmedMetadata {
-                                    db_event: db_event.to_owned(),
-                                    is_user,
-                                })
-                                .await;
-                        }
-                        Kind::EncryptedDirectMessage => {
-                            let db_message = DbMessage::confirm_message(pool, &db_event).await?;
-                            let db_contact = DbContact::fetch_insert(
-                                pool,
-                                cache_pool,
-                                &db_message.contact_pubkey,
-                            )
-                            .await?;
-                            let tag_info = TagInfo::from_db_event(&db_event)?;
-                            let decrypted_content = db_message.decrypt_message(keys, &tag_info)?;
-                            let chat_message =
-                                ChatMessage::new(&db_message, &db_contact, &decrypted_content)?;
-                            _ = output
-                                .send(BackendEvent::ConfirmedDM((db_contact, chat_message)))
-                                .await;
-                            return Ok(());
-                        }
-                        _ => {
-                            return Err(Error::NotSubscribedToKind(db_event.kind.clone()));
-                        }
-                    }
-                }
+                confirm_pending(output, keys, backend, &url, pending).await?;
             }
         }
         RelayMessage::EndOfStoredEvents(subscription_id) => {
@@ -333,6 +296,57 @@ async fn handle_relay_message(
         }
     }
 
+    Ok(())
+}
+
+async fn confirm_pending(
+    output: &mut futures::channel::mpsc::Sender<BackendEvent>,
+    keys: &Keys,
+    backend: &mut BackendState,
+    url: &Url,
+    pending: PendingEvent,
+) -> Result<(), Error> {
+    let pool = &backend.db_client.pool;
+    let cache_pool = &backend.db_client.cache_pool;
+    if let Some(db_event) = DbEvent::insert(pool, url, pending.ns_event()).await? {
+        match db_event.kind {
+            Kind::ContactList => {
+                _ = output
+                    .send(BackendEvent::ConfirmedContactList(db_event.to_owned()))
+                    .await;
+            }
+            Kind::Metadata => {
+                insert_metadata_event(output, cache_pool, &db_event).await?;
+
+                let is_user = db_event.pubkey == keys.public_key();
+                tracing::debug!(
+                    "Metadata confirmed:  is_users: {} - {:?}",
+                    is_user,
+                    &db_event
+                );
+                _ = output
+                    .send(BackendEvent::ConfirmedMetadata {
+                        db_event: db_event.to_owned(),
+                        is_user,
+                    })
+                    .await;
+            }
+            Kind::EncryptedDirectMessage => {
+                let db_message = DbMessage::confirm_message(pool, &db_event).await?;
+                let db_contact =
+                    DbContact::fetch_insert(pool, cache_pool, &db_message.contact_pubkey).await?;
+                let tag_info = TagInfo::from_db_event(&db_event)?;
+                let decrypted_content = db_message.decrypt_message(keys, &tag_info)?;
+                let chat_message = ChatMessage::new(&db_message, &db_contact, &decrypted_content);
+                tracing::info!("Decrypted message: {:?}", &chat_message);
+                _ = output.send(BackendEvent::ConfirmedDM(chat_message)).await;
+                return Ok(());
+            }
+            _ => {
+                return Err(Error::NotSubscribedToKind(db_event.kind.clone()));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -387,7 +401,7 @@ fn shutdown_signal_task(sender: tokio::sync::mpsc::Sender<ToBackend>) {
     });
 }
 
-pub fn backend_connect() -> Subscription<BackendEvent> {
+pub fn backend_connect() -> iced::Subscription<BackendEvent> {
     struct Backend;
     let id = std::any::TypeId::of::<Backend>();
 
@@ -627,7 +641,7 @@ pub enum BackendEvent {
 
     // ---  ---
     GotKeys(Keys),
-    GotChatMessages((DbContact, Vec<ChatMessage>)),
+    GotChatMessages(DbContact, Vec<ChatMessage>),
     GotRelayResponses {
         chat_message: ChatMessage,
         responses: Vec<DbRelayResponse>,
@@ -679,27 +693,20 @@ pub enum BackendEvent {
     LogoutSuccess,
     ShutdownDone,
 
-    // --- Specific Events ---
+    PendingDM(DbContact, ChatMessage),
     ReceivedDM {
         relay_url: Url,
         db_contact: DbContact,
         chat_message: ChatMessage,
     },
     ReceivedContactList,
-    UpdatedContactMetadata {
-        relay_url: Url,
-        db_contact: DbContact,
-    },
     // --- Confirmed Events ---
-    ConfirmedDM((DbContact, ChatMessage)),
+    ConfirmedDM(ChatMessage),
     ConfirmedContactList(DbEvent),
     ConfirmedMetadata {
         db_event: DbEvent,
         is_user: bool,
     },
-
-    // --- Pending Events ---
-    PendingDM((DbContact, ChatMessage)),
 
     // --- RFD ---
     RFDPickedFile(PathBuf),
@@ -754,10 +761,9 @@ pub enum ToBackend {
     ExportContacts,
     FetchChatInfo(DbContact),
     FetchContactWithMetadata(XOnlyPublicKey),
-    RefreshContactsProfile,
-    SendDM((DbContact, String)),
+    SendDM(DbContact, String),
     CreateChannel,
-    FetchMoreMessages((DbContact, ChatMessage)),
+    FetchMoreMessages(DbContact, ChatMessage),
     ChooseFile(Option<FileFilter>),
     LoginWithSK(Keys),
     CreateAccount(BasicProfile),
@@ -772,6 +778,7 @@ pub enum ToBackend {
     SyncWithNTP,
     GetRelayStatusList,
     ReconnectRelay(url::Url),
+    MessageSeen(i64),
 }
 
 pub async fn process_message(
@@ -1011,11 +1018,10 @@ pub async fn process_message(
             _ = output.send(BackendEvent::GotKeys(keys.to_owned())).await;
         }
         ToBackend::FindChannels(search_term) => {
-            backend.nostr.subscribe_eose(
-                &SubscriptionType::SearchChannels.id(),
-                vec![channel_search_filter(&search_term)],
-                Some(Duration::from_secs(10)),
-            )?;
+            let subscription = Subscription::new(vec![channel_search_filter(&search_term)])
+                .with_id(SubName::SearchChannels.to_string())
+                .eose(Some(Duration::from_secs(10)));
+            backend.nostr.subscribe(&subscription)?;
             _ = output.send(BackendEvent::SearchingForChannels).await;
         }
         ToBackend::UpdateUserProfileMeta(profile_meta) => {
@@ -1037,29 +1043,36 @@ pub async fn process_message(
             prepare_client(keys, backend).await?;
             _ = output.send(BackendEvent::FinishedPreparing).await;
         }
-        ToBackend::FetchMoreMessages((db_contact, first_message)) => {
+        ToBackend::MessageSeen(msg_id) => {
+            DbMessage::mark_seen(&backend.db_client.pool, msg_id).await?;
+        }
+        ToBackend::FetchMessages(db_contact) => {
             let pool = &backend.db_client.pool;
-            let msgs = DbMessage::fetch_more(pool, db_contact.pubkey(), first_message).await?;
-            match msgs.is_empty() {
-                // update nostr subscriber
-                true => (),
+            let db_messages = DbMessage::fetch_chat(pool, db_contact.pubkey()).await?;
+
+            // Maybe the message is only seen when scrolling?
+            tracing::debug!("Updating unseen messages to marked as seen");
+            DbMessage::reset_unseen(pool, db_contact.pubkey()).await?;
+
+            // Maybe a spawned task?
+            tracing::debug!("Decrypting messages");
+            send_got_chat_messages(output, keys, backend, db_contact, &db_messages).await?;
+        }
+        ToBackend::FetchMoreMessages(db_contact, first_message) => {
+            let pool = &backend.db_client.pool;
+            let db_messages =
+                DbMessage::fetch_chat_more(pool, db_contact.pubkey(), first_message).await?;
+
+            // Maybe the message is only seen when scrolling?
+            tracing::debug!("Updating unseen messages to marked as seen");
+            DbMessage::reset_unseen(pool, db_contact.pubkey()).await?;
+
+            match db_messages.is_empty() {
+                true => {
+                    // update nostr subscriber??
+                }
                 false => {
-                    let mut chat_messages = vec![];
-                    tracing::debug!("Decrypting messages");
-                    for db_message in &msgs {
-                        if let Some(db_event) =
-                            DbEvent::fetch_hash(pool, &db_message.event_hash).await?
-                        {
-                            let tag_info = TagInfo::from_db_event(&db_event)?;
-                            let decrypted_content = db_message.decrypt_message(keys, &tag_info)?;
-                            let chat_message =
-                                ChatMessage::new(&db_message, &db_contact, &decrypted_content)?;
-                            chat_messages.push(chat_message);
-                        }
-                    }
-                    _ = output
-                        .send(BackendEvent::GotChatMessages((db_contact, chat_messages)))
-                        .await;
+                    send_got_chat_messages(output, keys, backend, db_contact, &db_messages).await?;
                 }
             }
         }
@@ -1110,14 +1123,29 @@ pub async fn process_message(
             .await?;
             _ = output.send(BackendEvent::GotUserProfileCache(cache)).await;
         }
-        ToBackend::ImportContacts(db_contacts, _is_replace) => {
-            for _db_contact in &db_contacts {
-                // check if contact already exists
-                // if exists and replace just upsert
-                // else none
-                todo!();
+        ToBackend::ImportContacts(db_contacts, is_replace) => {
+            let pool = &backend.db_client.pool;
+
+            for db_contact in &db_contacts {
+                // Check if the contact is the same as the user
+                if &keys.public_key() == db_contact.pubkey() {
+                    tracing::info!("{}", Error::SameContactInsert);
+                    continue;
+                }
+
+                if DbContact::has_contact(pool, db_contact.pubkey()).await? {
+                    if is_replace {
+                        DbContact::upsert_contact(pool, db_contact).await?;
+                    } else {
+                        continue;
+                    }
+                } else {
+                    DbContact::insert(pool, db_contact.pubkey()).await?;
+                }
             }
+
             backend.new_contact_list_event(keys).await?;
+
             _ = output
                 .send(BackendEvent::FileContactsImported(db_contacts))
                 .await;
@@ -1151,46 +1179,15 @@ pub async fn process_message(
             _ = output.send(BackendEvent::GotContacts(contacts)).await;
         }
 
-        ToBackend::FetchMessages(db_contact) => {
-            let pool = &backend.db_client.pool;
-            let db_messages = DbMessage::fetch_chat(pool, db_contact.pubkey()).await?;
-
-            // Maybe the message is only seen when scrolling?
-            tracing::debug!("Updating unseen messages to marked as seen");
-            DbMessage::reset_unseen(pool, db_contact.pubkey()).await?;
-
-            // Maybe a spawned task?
-            tracing::debug!("Decrypting messages");
-            let mut chat_messages = vec![];
-            for db_message in &db_messages {
-                if let Some(db_event) = DbEvent::fetch_hash(pool, &db_message.event_hash).await? {
-                    let tag_info = TagInfo::from_db_event(&db_event)?;
-                    let decrypted_content = db_message.decrypt_message(keys, &tag_info)?;
-                    let chat_message =
-                        ChatMessage::new(&db_message, &db_contact, &decrypted_content)?;
-                    chat_messages.push(chat_message);
-                }
-            }
-
-            _ = output
-                .send(BackendEvent::GotChatMessages((db_contact, chat_messages)))
-                .await;
-        }
-
         ToBackend::GetRelayInformation => {
             backend.nostr.relays_info()?;
-        }
-
-        ToBackend::RefreshContactsProfile => {
-            // subscribe_eose contact_list_metadata
-            todo!();
         }
 
         ToBackend::CreateChannel => {
             todo!()
         }
 
-        ToBackend::SendDM((db_contact, raw_content)) => {
+        ToBackend::SendDM(db_contact, raw_content) => {
             // create a pending event and await confirmation of relays
             let pending_event = backend.new_dm(keys, &db_contact, &raw_content).await?;
             let pending_msg = DbMessage::insert_pending(
@@ -1201,10 +1198,10 @@ pub async fn process_message(
             )
             .await?;
 
-            let chat_message = ChatMessage::new(&pending_msg, &db_contact, &raw_content)?;
+            let chat_message = ChatMessage::new(&pending_msg, &db_contact, &raw_content);
 
             _ = output
-                .send(BackendEvent::PendingDM((db_contact, chat_message)))
+                .send(BackendEvent::PendingDM(db_contact, chat_message))
                 .await;
         }
     }
@@ -1212,12 +1209,55 @@ pub async fn process_message(
     Ok(())
 }
 
-async fn handle_metadata_event(
+async fn send_got_chat_messages(
+    output: &mut futures::channel::mpsc::Sender<BackendEvent>,
+    keys: &Keys,
+    backend: &mut BackendState,
+    db_contact: DbContact,
+    db_messages: &[DbMessage],
+) -> Result<(), Error> {
+    let pool = &backend.db_client.pool;
+    let mut chat_messages = vec![];
+    tracing::debug!("Decrypting messages");
+
+    for db_message in db_messages {
+        if let Some(db_event) = DbEvent::fetch_hash(pool, &db_message.event_hash).await? {
+            match decrypt_message(&db_event, db_message, keys, &db_contact) {
+                Ok(chat_message) => {
+                    chat_messages.push(chat_message);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to decrypt message: {}", e);
+                }
+            }
+        }
+    }
+
+    _ = output
+        .send(BackendEvent::GotChatMessages(db_contact, chat_messages))
+        .await;
+
+    Ok(())
+}
+
+fn decrypt_message(
+    db_event: &DbEvent,
+    db_message: &DbMessage,
+    keys: &Keys,
+    db_contact: &DbContact,
+) -> Result<ChatMessage, Error> {
+    let tag_info = TagInfo::from_db_event(db_event)?;
+    let decrypted_content = db_message.decrypt_message(keys, &tag_info)?;
+    let chat_message = ChatMessage::new(&db_message, db_contact, &decrypted_content);
+    Ok(chat_message)
+}
+
+async fn insert_metadata_event(
     output: &mut futures::channel::mpsc::Sender<BackendEvent>,
     cache_pool: &SqlitePool,
     db_event: &DbEvent,
 ) -> Result<(), Error> {
-    tracing::info!(
+    tracing::debug!(
         "Received metadata event for public key: {}",
         db_event.pubkey
     );
@@ -1297,6 +1337,7 @@ pub fn add_relays_and_connect(
     backend: &mut BackendState,
     keys: &Keys,
     relays: &[DbRelay],
+    contact_list: &[DbContact],
     last_event: Option<DbEvent>,
 ) -> Result<(), Error> {
     tracing::info!("Adding relays to client: {}", relays.len());
@@ -1310,30 +1351,27 @@ pub fn add_relays_and_connect(
         }
     }
 
-    let last_event_tt: u64 = last_event
-        .map(|e| {
-            // syncronization problems with different machines
-            let earlier_time = e.created_at - chrono::Duration::minutes(10);
-            (earlier_time.timestamp_millis() / 1000) as u64
-        })
-        .unwrap_or(0);
-    tracing::info!("last event timestamp: {}", last_event_tt);
+    let contact_list_sub =
+        Subscription::new(vec![contact_list_filter(keys.public_key(), &last_event)])
+            .with_id(SubName::ContactList.to_string());
+    backend.nostr.subscribe(&contact_list_sub)?;
 
-    backend.nostr.subscribe_eose(
-        &SubscriptionType::ContactList.id(),
-        vec![contact_list_filter(keys.public_key(), last_event_tt)],
-        None,
-    )?;
-    backend.nostr.subscribe_eose(
-        &SubscriptionType::UserMetadata.id(),
-        vec![user_metadata(keys.public_key(), last_event_tt)],
-        None,
-    )?;
-    backend.nostr.subscribe_id(
-        &SubscriptionType::Messages.id(),
-        messages_filter(keys.public_key(), last_event_tt),
-        None,
-    )?;
+    let user_meta_sub =
+        Subscription::new(vec![user_metadata_filter(keys.public_key(), &last_event)])
+            .with_id(SubName::UserMetadata.to_string())
+            .eose(Some(Duration::from_secs(30)));
+    backend.nostr.subscribe(&user_meta_sub)?;
+
+    let messages_sub = Subscription::new(messages_filter(keys.public_key(), &last_event))
+        .with_id(SubName::Messages.to_string());
+    backend.nostr.subscribe(&messages_sub)?;
+
+    if let Some(filter) = contact_list_metadata_filter(contact_list, &last_event) {
+        let contact_list_meta_sub =
+            Subscription::new(vec![filter]).with_id(SubName::ContactListMetadata.to_string());
+        tracing::info!("contact_list_meta_sub: {:?}", contact_list_meta_sub);
+        backend.nostr.subscribe(&contact_list_meta_sub)?;
+    }
 
     Ok(())
 }
@@ -1341,11 +1379,12 @@ pub fn add_relays_and_connect(
 async fn prepare_client(keys: &Keys, backend: &mut BackendState) -> Result<(), Error> {
     let pool = &backend.db_client.pool;
     let relays = DbRelay::fetch(pool).await?;
-    let last_event = DbEvent::fetch_last_kind(pool, Kind::EncryptedDirectMessage).await?;
+    let last_event = DbEvent::fetch_last(pool).await?;
+    let contact_list = DbContact::fetch_basic(pool).await?;
 
     UserConfig::store_first_login(pool).await?;
 
-    add_relays_and_connect(backend, &keys, &relays, last_event)?;
+    add_relays_and_connect(backend, &keys, &relays, &contact_list, last_event)?;
 
     if let Some(profile) = backend.create_account.take() {
         let profile_meta: Metadata = profile.into();
@@ -1380,6 +1419,135 @@ async fn save_file<T: Serialize>(data: &T, extension: &str) -> Result<BackendEve
             Ok(BackendEvent::RFDCancelPick)
         }
     }
+}
+
+pub async fn handle_dm(
+    output: &mut futures::channel::mpsc::Sender<BackendEvent>,
+    pool: &SqlitePool,
+    cache_pool: &SqlitePool,
+    keys: &Keys,
+    url: &Url,
+    db_event: &DbEvent,
+) -> Result<(), Error> {
+    let is_users = db_event.pubkey == keys.public_key();
+    let tag_info = TagInfo::from_db_event(db_event)?;
+    let contact_pubkey = tag_info.contact_pubkey(keys)?;
+
+    // If the message is from the user to themselves, log the error and return None
+    if tag_info.to_pubkey == db_event.pubkey {
+        tracing::debug!("Message is from the user to himself");
+        return Ok(());
+    }
+    // Parse the event and insert the message into the database
+    let db_message = DbMessage::insert_confirmed(pool, db_event, &contact_pubkey, is_users).await?;
+
+    let db_contact = DbContact::fetch_insert(pool, cache_pool, &db_message.contact_pubkey).await?;
+
+    let decrypted_content = db_message.decrypt_message(keys, &tag_info)?;
+    let chat_message = ChatMessage::new(&db_message, &db_contact, &decrypted_content);
+
+    let _ = output
+        .send(BackendEvent::ReceivedDM {
+            chat_message,
+            db_contact,
+            relay_url: url.to_owned(),
+        })
+        .await;
+
+    Ok(())
+}
+
+pub async fn handle_contact_list(
+    output: &mut futures::channel::mpsc::Sender<BackendEvent>,
+    keys: &Keys,
+    pool: &SqlitePool,
+    url: &Url,
+    db_event: DbEvent,
+) -> Result<(), Error> {
+    if db_event.pubkey == keys.public_key() {
+        handle_user_contact_list(output, keys, pool, url, db_event).await?;
+    } else {
+        handle_other_contact_list(db_event).await?;
+    }
+    Ok(())
+}
+
+pub async fn received_contact_list(
+    pool: &SqlitePool,
+    url: &Url,
+    ns_event: &nostr::Event,
+) -> Result<Option<DbEvent>, Error> {
+    match DbEvent::fetch_last_kind(pool, Kind::ContactList).await? {
+        Some(db_event) => {
+            if db_event.event_hash == ns_event.id {
+                // if event already in the database, just confirmed it
+                tracing::info!("ContactList already in the database");
+                DbRelayResponse::insert_ok(pool, url, &db_event).await?;
+                return Ok(None);
+            }
+            // if event is older than the last one, ignore it
+            if db_event.created_at.timestamp_millis() > (ns_event_to_millis(ns_event.created_at)) {
+                tracing::info!("ContactList is older than the last one");
+                return Ok(None);
+            } else {
+                // delete old and insert new contact list
+                tracing::info!("ContactList is newer than the last one");
+                DbEvent::delete(pool, db_event.event_id).await?;
+            }
+        }
+        None => {
+            tracing::info!("No ContactList in the database - inserting");
+        }
+    }
+    let db_event = DbEvent::insert(pool, url, ns_event).await?;
+
+    Ok(db_event)
+}
+
+async fn handle_user_contact_list(
+    output: &mut futures::channel::mpsc::Sender<BackendEvent>,
+    keys: &Keys,
+    pool: &SqlitePool,
+    _url: &Url,
+    db_event: DbEvent,
+) -> Result<(), Error> {
+    tracing::debug!("Received a ContactList");
+
+    // contact list from event tags
+    let db_contacts: Vec<_> = db_event
+        .tags
+        .iter()
+        .filter_map(|t| DbContact::from_tag(t).ok())
+        .collect();
+
+    // Filter out contacts with the same public key as the user's public key
+    let filtered_contacts: Vec<&DbContact> = db_contacts
+        .iter()
+        .filter(|c| c.pubkey() != &keys.public_key())
+        .collect();
+
+    if filtered_contacts.len() < db_contacts.len() {
+        tracing::warn!("Error inserting contact: {:?}", Error::SameContactInsert);
+    }
+
+    for db_contact in &db_contacts {
+        DbContact::upsert_contact(pool, db_contact).await?;
+        let _ = output
+            .send(BackendEvent::ContactCreated(db_contact.to_owned()))
+            .await;
+    }
+
+    let _ = output.send(BackendEvent::ReceivedContactList).await;
+
+    Ok(())
+}
+
+async fn handle_other_contact_list(_db_event: DbEvent) -> Result<(), Error> {
+    // Others ContactList That Im in
+    // which means that someone else added me to their contact list
+    // so I could build a followers list from this
+    tracing::info!("*** Others ContactList That Im in ***");
+    Ok(())
 }
 
 const BACKEND_CHANNEL_SIZE: usize = 1024;

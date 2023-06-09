@@ -1,8 +1,22 @@
 use nostr::{secp256k1::XOnlyPublicKey, Filter, Kind, Timestamp};
 
-use crate::db::DbContact;
+use crate::db::{DbContact, DbEvent};
 
-pub fn contact_list_metadata(contact_list: &[DbContact]) -> Option<Filter> {
+fn to_secs(last_event: &Option<DbEvent>) -> u64 {
+    last_event
+        .as_ref()
+        .map(|e| {
+            // syncronization problems with different machines
+            let earlier_time = e.created_at - chrono::Duration::minutes(10);
+            (earlier_time.timestamp_millis() / 1000) as u64
+        })
+        .unwrap_or(0)
+}
+
+pub fn contact_list_metadata_filter(
+    contact_list: &[DbContact],
+    last_event: &Option<DbEvent>,
+) -> Option<Filter> {
     if contact_list.is_empty() {
         return None;
     }
@@ -12,33 +26,38 @@ pub fn contact_list_metadata(contact_list: &[DbContact]) -> Option<Filter> {
         .map(|c| c.pubkey().to_string())
         .collect::<Vec<_>>();
 
-    Some(Filter::new().authors(all_pubkeys).kind(Kind::Metadata))
+    Some(
+        Filter::new()
+            .authors(all_pubkeys)
+            .kind(Kind::Metadata)
+            .since(Timestamp::from(to_secs(last_event))),
+    )
 }
-pub fn user_metadata(pubkey: XOnlyPublicKey, last_event_tt: u64) -> Filter {
+pub fn user_metadata_filter(pubkey: XOnlyPublicKey, last_event: &Option<DbEvent>) -> Filter {
     Filter::new()
         .author(pubkey.to_string())
         .kind(Kind::Metadata)
-        .since(Timestamp::from(last_event_tt))
+        .since(Timestamp::from(to_secs(last_event)))
 }
 
-pub fn contact_list_filter(public_key: XOnlyPublicKey, last_event_tt: u64) -> Filter {
+pub fn contact_list_filter(public_key: XOnlyPublicKey, last_event: &Option<DbEvent>) -> Filter {
     let user_contact_list = Filter::new()
         .author(public_key.to_string())
         .kind(Kind::ContactList)
-        .since(Timestamp::from(last_event_tt));
+        .since(Timestamp::from(to_secs(last_event)));
 
     user_contact_list
 }
 
-pub fn messages_filter(public_key: XOnlyPublicKey, last_event_tt: u64) -> Vec<Filter> {
+pub fn messages_filter(public_key: XOnlyPublicKey, last_event: &Option<DbEvent>) -> Vec<Filter> {
     let sent_msgs = Filter::new()
         .kind(nostr::Kind::EncryptedDirectMessage)
         .author(public_key.to_string())
-        .since(Timestamp::from(last_event_tt));
+        .since(Timestamp::from(to_secs(last_event)));
     let recv_msgs = Filter::new()
         .kind(nostr::Kind::EncryptedDirectMessage)
         .pubkey(public_key)
-        .since(Timestamp::from(last_event_tt));
+        .since(Timestamp::from(to_secs(last_event)));
 
     vec![sent_msgs, recv_msgs]
 }

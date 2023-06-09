@@ -177,7 +177,7 @@ impl Settings {
                 state.backend_event(event, conn);
             }
             MenuState::Account { state } => {
-                state.update(account::Message::BackEndEvent(event), conn);
+                state.backend_event(event, conn);
             }
             MenuState::Appearance { state } => {
                 state.update(appearance::Message::BackEndEvent(event))
@@ -189,7 +189,7 @@ impl Settings {
                 state.backend_event(event, conn);
             }
             MenuState::Contacts { state } => {
-                let _ = state.update(contacts::Message::BackEndEvent(event), conn);
+                state.backend_event(event, conn);
             }
         }
 

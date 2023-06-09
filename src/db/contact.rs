@@ -283,15 +283,27 @@ impl DbContact {
         Ok(db_contacts)
     }
 
+    pub async fn insert(pool: &SqlitePool, pubkey: &XOnlyPublicKey) -> Result<i64, Error> {
+        let utc_now = UserConfig::get_corrected_time(pool)
+            .await
+            .unwrap_or(Utc::now().naive_utc());
+
+        let output =
+            sqlx::query("INSERT INTO contact (pubkey, created_at, updated_at) VALUES (?, ?, ?);")
+                .bind(&pubkey.to_string())
+                .bind(&utc_now.timestamp_millis())
+                .bind(&utc_now.timestamp_millis())
+                .execute(pool)
+                .await?;
+
+        Ok(output.last_insert_rowid())
+    }
+
     pub async fn fetch_insert(
         pool: &SqlitePool,
         cache_pool: &SqlitePool,
         pubkey: &XOnlyPublicKey,
     ) -> Result<DbContact, Error> {
-        let utc_now = UserConfig::get_corrected_time(pool)
-            .await
-            .unwrap_or(Utc::now().naive_utc());
-
         let sql = format!("{} WHERE pubkey = ?", Self::FETCH_QUERY);
 
         let result = sqlx::query_as::<_, DbContact>(&sql)
@@ -300,18 +312,10 @@ impl DbContact {
             .await?;
 
         let mut db_contact = if result.is_none() {
-            let output = sqlx::query(
-                "INSERT INTO contact (pubkey, created_at, updated_at) VALUES (?, ?, ?);",
-            )
-            .bind(&pubkey.to_string())
-            .bind(&utc_now.timestamp_millis())
-            .bind(&utc_now.timestamp_millis())
-            .execute(pool)
-            .await?;
-
+            let last_insert_rowid = Self::insert(pool, pubkey).await?;
             let sql = format!("{} WHERE id = ?", Self::FETCH_QUERY);
             let db_contact = sqlx::query_as::<_, DbContact>(&sql)
-                .bind(output.last_insert_rowid())
+                .bind(last_insert_rowid)
                 .fetch_one(pool)
                 .await?;
             db_contact
@@ -441,6 +445,16 @@ impl DbContact {
             .await?;
 
         Ok(())
+    }
+    pub async fn has_contact(pool: &SqlitePool, pubkey: &XOnlyPublicKey) -> Result<bool, Error> {
+        let sql = "SELECT EXISTS(SELECT 1 FROM contact WHERE pubkey=?)";
+
+        let exists: (bool,) = sqlx::query_as(sql)
+            .bind(pubkey.to_string())
+            .fetch_one(pool)
+            .await?;
+
+        Ok(exists.0)
     }
 }
 

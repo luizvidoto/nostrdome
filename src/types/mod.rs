@@ -10,4 +10,4 @@ pub(crate) use channel_metadata::ChannelMetadata;
 pub(crate) use channel_result::ChannelResult;
 pub(crate) use chat_message::ChatMessage;
 pub(crate) use event::UncheckedEvent;
-pub(crate) use subscription_type::{PrefixedId, SubscriptionType};
+pub(crate) use subscription_type::{PrefixedId, SubName};

@@ -209,7 +209,7 @@ impl DbMessage {
         Ok(messages)
     }
 
-    pub async fn fetch_more(
+    pub async fn fetch_chat_more(
         pool: &SqlitePool,
         contact_pubkey: &XOnlyPublicKey,
         first_message: ChatMessage,
@@ -257,7 +257,7 @@ impl DbMessage {
     ) -> Result<Self, Error> {
         let ns_event = pending_event.ns_event();
 
-        tracing::debug!("Insert pending message. ID: {}", ns_event.id);
+        tracing::info!("Insert pending message. ID: {}", ns_event.id);
 
         let utc_now = UserConfig::get_corrected_time(pool)
             .await
@@ -294,7 +294,7 @@ impl DbMessage {
         contact_pubkey: &XOnlyPublicKey,
         is_users: bool,
     ) -> Result<DbMessage, Error> {
-        tracing::debug!("Insert confirmed message. ID: {}", db_event.event_hash);
+        tracing::info!("Insert confirmed message. ID: {}", db_event.event_hash);
 
         match Self::fetch_by_hash(pool, &db_event.event_hash).await? {
             Some(mut db_message) => {
@@ -342,7 +342,7 @@ impl DbMessage {
         pool: &SqlitePool,
         db_event: &DbEvent,
     ) -> Result<DbMessage, Error> {
-        tracing::debug!("Confirming message. ID: {}", db_event.event_hash);
+        tracing::info!("Confirming message. ID: {}", db_event.event_hash);
         let mut db_message = Self::fetch_by_hash(pool, &db_event.event_hash)
             .await?
             .ok_or(Error::NotFoundMessage(db_event.event_hash.to_owned()))?;
@@ -368,6 +368,7 @@ impl DbMessage {
             .bind(&MessageStatus::Delivered.to_i32())
             .bind(&utc_now.timestamp_millis())
             .bind(&db_event.relay_url.to_string())
+            .bind(&db_event.event_id)
             .bind(&db_event.event_hash.to_string())
             .execute(pool)
             .await?;
@@ -409,6 +410,20 @@ impl DbMessage {
             .bind(MessageStatus::Seen.to_i32())
             .bind(&contact_pubkey.to_string())
             .bind(MessageStatus::Delivered.to_i32())
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn mark_seen(pool: &SqlitePool, msg_id: i64) -> Result<(), Error> {
+        let sql = r#"
+            UPDATE message
+            SET status = ?
+            WHERE msg_id = ?
+        "#;
+        sqlx::query(sql)
+            .bind(MessageStatus::Seen.to_i32())
+            .bind(msg_id)
             .execute(pool)
             .await?;
         Ok(())

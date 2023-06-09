@@ -23,7 +23,6 @@ pub enum Message {
     LNChange(String),
     NIP05Change(String),
     SavePress,
-    BackEndEvent(BackendEvent),
     RelaysConfirmationPress(Option<AccountRelaysResponse>),
 }
 
@@ -80,37 +79,41 @@ impl State {
         }
     }
 
+    pub fn backend_event(&mut self, event: BackendEvent, conn: &mut BackEndConnection) {
+        match event {
+            BackendEvent::ConfirmedMetadata { is_user, .. } => {
+                if is_user {
+                    conn.send(ToBackend::GetUserProfileMeta);
+                    conn.send(ToBackend::FetchRelayResponsesUserProfile);
+                }
+            }
+            BackendEvent::GotRelayResponsesUserProfile {
+                responses,
+                all_relays,
+            } => {
+                self.relays_response = Some(AccountRelaysResponse::new(responses, all_relays));
+            }
+            BackendEvent::GotUserProfileCache(cache) => {
+                if let Some(profile_cache) = cache {
+                    let meta = profile_cache.metadata;
+                    self.name = meta.name.unwrap_or("".into());
+                    self.user_name = meta.display_name.unwrap_or("".into());
+                    self.picture_url = meta.picture.unwrap_or("".into());
+                    self.about = meta.about.unwrap_or("".into());
+                    self.banner = meta.banner.unwrap_or("".into());
+                    self.website = meta.website.unwrap_or("".into());
+                    self.ln_url = meta.lud06.unwrap_or("".into());
+                    self.ln_addrs = meta.lud16.unwrap_or("".into());
+                    self.nostr_addrs = meta.nip05.unwrap_or("".into());
+                }
+            }
+            _ => (),
+        }
+    }
+
     pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
         match message {
             Message::RelaysConfirmationPress(_) => (),
-            Message::BackEndEvent(back_ev) => match back_ev {
-                BackendEvent::ConfirmedMetadata { is_user, .. } => {
-                    if is_user {
-                        conn.send(ToBackend::FetchRelayResponsesUserProfile);
-                    }
-                }
-                BackendEvent::GotRelayResponsesUserProfile {
-                    responses,
-                    all_relays,
-                } => {
-                    self.relays_response = Some(AccountRelaysResponse::new(responses, all_relays));
-                }
-                BackendEvent::GotUserProfileCache(cache) => {
-                    if let Some(profile_cache) = cache {
-                        let meta = profile_cache.metadata;
-                        self.name = meta.name.unwrap_or("".into());
-                        self.user_name = meta.display_name.unwrap_or("".into());
-                        self.picture_url = meta.picture.unwrap_or("".into());
-                        self.about = meta.about.unwrap_or("".into());
-                        self.banner = meta.banner.unwrap_or("".into());
-                        self.website = meta.website.unwrap_or("".into());
-                        self.ln_url = meta.lud06.unwrap_or("".into());
-                        self.ln_addrs = meta.lud16.unwrap_or("".into());
-                        self.nostr_addrs = meta.nip05.unwrap_or("".into());
-                    }
-                }
-                _ => (),
-            },
             Message::ProfileNameChange(name) => self.name = name,
             Message::UserNameChange(user_name) => self.user_name = user_name,
             Message::AboutChange(about) => self.about = about,
@@ -192,7 +195,7 @@ impl State {
                 ))
                 .style(style::Button::MenuBtn)
                 .padding(5),
-                "Relays Confirmation",
+                "Account On Relays",
                 tooltip::Position::Left,
             )
             .style(style::Container::TooltipBg)

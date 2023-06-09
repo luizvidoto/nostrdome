@@ -40,8 +40,8 @@ pub struct ChatMessage {
 }
 
 impl ChatMessage {
-    pub fn new(db_message: &DbMessage, contact: &DbContact, content: &str) -> Result<Self, Error> {
-        Ok(Self {
+    pub fn new(db_message: &DbMessage, contact: &DbContact, content: &str) -> Self {
+        Self {
             content: content.to_owned(),
             display_time: db_message.display_time(),
             is_from_user: db_message.is_users,
@@ -50,12 +50,12 @@ impl ChatMessage {
             event_hash: db_message.event_hash,
             event_id: db_message.confirmation_info.as_ref().map(|c| c.event_id),
             status: db_message.status,
-        })
+        }
     }
 
     pub fn confirm_msg(&mut self, chat_msg: &ChatMessage) {
         self.display_time = chat_msg.display_time;
-        self.status = chat_msg.status;
+        self.status = MessageStatus::Seen;
     }
 
     pub fn view<'a>(&'a self) -> Element<'a, Message> {

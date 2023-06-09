@@ -3,7 +3,7 @@ use iced::{Alignment, Length};
 
 use crate::components::{common_scrollable, contact_row, ContactRow};
 use crate::db::{DbRelay, DbRelayResponse};
-use crate::icon::{import_icon, plus_icon, refresh_icon, satellite_icon};
+use crate::icon::{import_icon, plus_icon, satellite_icon};
 use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
 use crate::utils::contact_matches_search_full;
@@ -15,14 +15,12 @@ use super::SettingsRouterMessage;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    BackEndEvent(BackendEvent),
     DeleteContact(DbContact),
     OpenProfileModal(DbContact),
     ContactRowMessage(contact_row::Message),
     OpenAddContactModal,
     OpenImportContactModal,
     SearchContactInputChange(String),
-    RefreshContacts,
     RelaysConfirmationPress(Option<ContactsRelaysResponse>),
     SendMessageTo(DbContact),
 }
@@ -60,6 +58,52 @@ impl State {
         }
     }
 
+    pub fn backend_event(&mut self, event: BackendEvent, conn: &mut BackEndConnection) {
+        match event {
+            BackendEvent::ConfirmedContactList(_) => {
+                conn.send(net::ToBackend::FetchRelayResponsesContactList);
+            }
+            BackendEvent::GotRelayResponsesContactList {
+                responses,
+                all_relays,
+            } => {
+                self.relays_response = Some(ContactsRelaysResponse::new(responses, all_relays));
+            }
+            BackendEvent::GotContacts(db_contacts) => {
+                self.contacts = db_contacts;
+            }
+            BackendEvent::UpdatedMetadata(pubkey) => {
+                if self.contacts.iter().any(|c| c.pubkey() == &pubkey) {
+                    conn.send(net::ToBackend::FetchContactWithMetadata(pubkey));
+                }
+            }
+            BackendEvent::GotSingleContact(_pubkey, db_contact) => {
+                if let Some(db_contact) = db_contact {
+                    if let Some(contact) = self
+                        .contacts
+                        .iter_mut()
+                        .find(|c| c.pubkey() == db_contact.pubkey())
+                    {
+                        *contact = db_contact;
+                    } else {
+                        tracing::info!(
+                            "GotSingleContact for someone not in the list?? {:?}",
+                            db_contact
+                        );
+                    }
+                }
+            }
+            BackendEvent::ReceivedContactList
+            | BackendEvent::FileContactsImported(_)
+            | BackendEvent::ContactCreated(_)
+            | BackendEvent::ContactUpdated(_)
+            | BackendEvent::ContactDeleted(_) => {
+                conn.send(net::ToBackend::FetchContacts);
+            }
+            _ => (),
+        }
+    }
+
     pub fn update(
         &mut self,
         message: Message,
@@ -68,9 +112,6 @@ impl State {
         match message {
             Message::SendMessageTo(_) => (),
             Message::RelaysConfirmationPress(_) => (),
-            Message::RefreshContacts => {
-                conn.send(net::ToBackend::RefreshContactsProfile);
-            }
             Message::OpenProfileModal(db_contact) => {
                 return Some(SettingsRouterMessage::OpenProfileModal(db_contact))
             }
@@ -98,37 +139,6 @@ impl State {
             Message::DeleteContact(contact) => {
                 conn.send(net::ToBackend::DeleteContact(contact));
             }
-            Message::BackEndEvent(event) => match event {
-                BackendEvent::ConfirmedContactList(_) => {
-                    conn.send(net::ToBackend::FetchRelayResponsesContactList);
-                }
-                BackendEvent::GotRelayResponsesContactList {
-                    responses,
-                    all_relays,
-                } => {
-                    self.relays_response = Some(ContactsRelaysResponse::new(responses, all_relays));
-                }
-                BackendEvent::GotContacts(db_contacts) => {
-                    self.contacts = db_contacts;
-                }
-                BackendEvent::UpdatedContactMetadata { db_contact, .. } => {
-                    if let Some(contact) = self
-                        .contacts
-                        .iter_mut()
-                        .find(|c| c.pubkey() == db_contact.pubkey())
-                    {
-                        *contact = db_contact;
-                    }
-                }
-                BackendEvent::ReceivedContactList
-                | BackendEvent::FileContactsImported(_)
-                | BackendEvent::ContactCreated(_)
-                | BackendEvent::ContactUpdated(_)
-                | BackendEvent::ContactDeleted(_) => {
-                    conn.send(net::ToBackend::FetchContacts);
-                }
-                _ => (),
-            },
         }
 
         None
@@ -154,7 +164,7 @@ impl State {
                 ))
                 .style(style::Button::MenuBtn)
                 .padding(5),
-                "Relays Confirmation",
+                "Contact List On Relays",
                 tooltip::Position::Left,
             )
             .style(style::Container::TooltipBg)
@@ -194,12 +204,7 @@ impl State {
             tooltip::Position::Top,
         )
         .style(style::Container::TooltipBg);
-        let refresh_btn = tooltip(
-            button(refresh_icon().size(18)).on_press(Message::RefreshContacts),
-            "Refresh Contacts",
-            tooltip::Position::Top,
-        )
-        .style(style::Container::TooltipBg);
+
         let import_btn = tooltip(
             button(import_icon().size(18))
                 .padding(5)
@@ -213,7 +218,6 @@ impl State {
             search_contact,
             Space::with_width(Length::Fill),
             add_contact_btn,
-            refresh_btn,
             import_btn,
         ]
         .padding([0, 20, 0, 0])

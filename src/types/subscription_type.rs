@@ -17,7 +17,7 @@ impl std::fmt::Display for PrefixedId {
     }
 }
 #[derive(Clone)]
-pub enum SubscriptionType {
+pub enum SubName {
     ContactList,
     ContactListMetadata,
     UserMetadata,
@@ -25,24 +25,22 @@ pub enum SubscriptionType {
     SearchChannels,
     SearchChannelsDetails(PrefixedId),
 }
-impl SubscriptionType {
+impl SubName {
     pub fn src_channel_details(channel_id: &nostr::EventId) -> Self {
         Self::SearchChannelsDetails(PrefixedId::new(&channel_id.to_hex()))
     }
     pub fn from_id(id: &SubscriptionId) -> Option<Self> {
         let str = id.to_string();
         match str.as_str() {
-            "ContactList" => Some(SubscriptionType::ContactList),
-            "ContactListMetadata" => Some(SubscriptionType::ContactListMetadata),
-            "UserMetadata" => Some(SubscriptionType::UserMetadata),
-            "Messages" => Some(SubscriptionType::Messages),
-            "SearchChannels" => Some(SubscriptionType::SearchChannels),
+            "ContactList" => Some(SubName::ContactList),
+            "ContactListMetadata" => Some(SubName::ContactListMetadata),
+            "UserMetadata" => Some(SubName::UserMetadata),
+            "Messages" => Some(SubName::Messages),
+            "SearchChannels" => Some(SubName::SearchChannels),
             _ => {
                 if str.starts_with("SrcChannelDts_") {
                     let (_, hex) = str.split_at("SrcChannelDts_".len());
-                    Some(SubscriptionType::SearchChannelsDetails(PrefixedId(
-                        hex.to_owned(),
-                    )))
+                    Some(SubName::SearchChannelsDetails(PrefixedId(hex.to_owned())))
                 } else {
                     None
                 }
@@ -51,24 +49,24 @@ impl SubscriptionType {
     }
 }
 
-impl std::fmt::Display for SubscriptionType {
+impl std::fmt::Display for SubName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SubscriptionType::ContactList => write!(f, "ContactList"),
-            SubscriptionType::ContactListMetadata => write!(f, "ContactListMetadata"),
-            SubscriptionType::UserMetadata => write!(f, "UserMetadata"),
-            SubscriptionType::Messages => write!(f, "Messages"),
-            SubscriptionType::SearchChannels => write!(f, "SearchChannels"),
-            SubscriptionType::SearchChannelsDetails(prefixed) => {
+            SubName::ContactList => write!(f, "ContactList"),
+            SubName::ContactListMetadata => write!(f, "ContactListMetadata"),
+            SubName::UserMetadata => write!(f, "UserMetadata"),
+            SubName::Messages => write!(f, "Messages"),
+            SubName::SearchChannels => write!(f, "SearchChannels"),
+            SubName::SearchChannelsDetails(prefixed) => {
                 write!(f, "SrcChannelDts_{}", &prefixed)
             }
         }
     }
 }
-impl SubscriptionType {
+impl SubName {
     pub fn id(&self) -> SubscriptionId {
         match self {
-            SubscriptionType::SearchChannelsDetails(channel_id) => {
+            SubName::SearchChannelsDetails(channel_id) => {
                 SubscriptionId::new(format!("SrcChannelDts_{}", &channel_id))
             }
             other => SubscriptionId::new(other.to_string()),

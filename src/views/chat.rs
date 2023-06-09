@@ -6,12 +6,12 @@ use iced::{Alignment, Command, Length};
 use iced_native::widget::scrollable::RelativeOffset;
 use nostr::secp256k1::XOnlyPublicKey;
 
-use crate::components::chat_contact;
 use crate::components::chat_contact::{ChatContact, CARD_HEIGHT};
 use crate::components::floating_element::{Anchor, FloatingElement, Offset};
+use crate::components::{chat_contact, chat_list_container, contact_list};
 use crate::db::{DbContact, DbRelay, DbRelayResponse};
 use crate::icon::{copy_icon, reply_icon, satellite_icon};
-use crate::net::{self, BackEndConnection, BackendEvent};
+use crate::net::{BackEndConnection, BackendEvent, ToBackend};
 use crate::style;
 use crate::types::ChatMessage;
 use crate::widget::Element;
@@ -80,7 +80,6 @@ pub struct State {
     ver_divider_position: Option<u16>,
     chats: Vec<ChatContact>,
     active_idx: Option<i32>,
-    dm_msg: String,
     messages: Vec<ChatMessage>,
     show_only_profile: bool,
     msgs_scroll_offset: scrollable::RelativeOffset,
@@ -96,7 +95,7 @@ pub struct State {
 
 impl State {
     pub fn new(conn: &mut BackEndConnection) -> Self {
-        conn.send(net::ToBackend::FetchContacts);
+        conn.send(ToBackend::FetchContacts);
         Self {
             contact_list: ContactList::new(),
             chat_list_container: ChatListContainer::new(),
@@ -105,7 +104,6 @@ impl State {
             messages: vec![],
             ver_divider_position: Some(300),
             active_idx: None,
-            dm_msg: "".into(),
             show_only_profile: false,
             msgs_scroll_offset: scrollable::RelativeOffset::END,
             modal_state: ModalState::Off,
@@ -154,14 +152,24 @@ impl State {
         // --- FIRST SPLIT ---
         let first_split = self
             .contact_list
-            .view(&self.chats, self.show_only_profile, self.active_idx)
+            .view(
+                &CONTACTS_SCROLLABLE_ID,
+                &self.chats,
+                self.show_only_profile,
+                self.active_idx,
+            )
             .map(Message::ContactListMsg);
 
         // ---
         // --- SECOND SPLIT ---
         let second_split = self
             .chat_list_container
-            .view(&self.messages, self.active_chat())
+            .view(
+                &CHAT_SCROLLABLE_ID,
+                &CHAT_INPUT_ID,
+                &self.messages,
+                self.active_chat(),
+            )
             .map(Message::ChatListContainerMsg);
 
         let main_content = iced_aw::split::Split::new(
@@ -230,9 +238,9 @@ impl State {
     /// If it finds a contact, focus the text input chat.
     fn set_active_contact(&mut self, idx: i32, conn: &mut BackEndConnection) -> Command<Message> {
         if let Some(chat) = self.chats.iter().find(|c| c.id == idx) {
-            conn.send(net::ToBackend::FetchMessages(chat.contact.to_owned()));
+            conn.send(ToBackend::FetchMessages(chat.contact.to_owned()));
             self.messages = vec![];
-            self.dm_msg = "".into();
+            self.chat_list_container.update_dm_msg("".into());
             self.active_idx = Some(idx);
             return text_input::focus(CHAT_INPUT_ID.clone());
         }
@@ -274,6 +282,44 @@ impl State {
         }
     }
 
+    fn handle_new_message(
+        &mut self,
+        db_contact: DbContact,
+        chat_message: ChatMessage,
+        conn: &mut BackEndConnection,
+    ) -> Command<Message> {
+        let active_chatting = self.active_matches(&db_contact);
+
+        // push into chat messages
+        self.messages.push(chat_message.clone());
+
+        // update chat card headers
+        if let Some(contact_card) = self
+            .chats
+            .iter_mut()
+            .find(|c| c.contact.pubkey() == db_contact.pubkey())
+        {
+            if active_chatting {
+                contact_card.update_headers(chat_message);
+            } else {
+                contact_card.new_message(chat_message);
+            }
+        } else {
+            tracing::info!(
+                "New message for a contact not in the list?? {:?}",
+                &db_contact
+            );
+            let new_chat = ChatContact::new(self.chats.len() as i32, &db_contact, conn);
+            self.chats.push(new_chat);
+        }
+
+        self.sort_contacts_name_date();
+
+        // scroll to end
+        self.msgs_scroll_offset = scrollable::RelativeOffset::END;
+        scrollable::snap_to(CHAT_SCROLLABLE_ID.clone(), self.msgs_scroll_offset)
+    }
+
     pub fn backend_event(
         &mut self,
         event: BackendEvent,
@@ -297,7 +343,7 @@ impl State {
                 let id = self.chats.len() as i32;
                 self.chats
                     .push(chat_contact::ChatContact::new(id, &db_contact, conn));
-                conn.send(net::ToBackend::FetchContactWithMetadata(
+                conn.send(ToBackend::FetchContactWithMetadata(
                     db_contact.pubkey().to_owned(),
                 ));
             }
@@ -321,21 +367,11 @@ impl State {
                 self.active_idx = None;
             }
             BackendEvent::UpdatedMetadata(pubkey) => {
-                conn.send(net::ToBackend::FetchContactWithMetadata(pubkey));
-            }
-            BackendEvent::UpdatedContactMetadata { db_contact, .. } => {
-                if let Some(contact_card) = self
-                    .chats
-                    .iter_mut()
-                    .find(|c| c.contact.pubkey() == db_contact.pubkey())
-                {
-                    contact_card.update_contact(db_contact, conn);
-                } else {
-                    let new_chat = ChatContact::new(self.chats.len() as i32, &db_contact, conn);
-                    self.chats.push(new_chat);
-                }
+                tracing::info!("Chat got updatedmetadata: {}", pubkey.to_string());
+                conn.send(ToBackend::FetchContactWithMetadata(pubkey));
             }
             BackendEvent::GotSingleContact(_pubkey, db_contact) => {
+                tracing::info!("Chat got single_contact: {:?}", db_contact);
                 if let Some(db_contact) = db_contact {
                     if let Some(contact_card) = self
                         .chats
@@ -372,7 +408,7 @@ impl State {
                 self.last_relays_response =
                     Some(RelaysResponse::new(chat_message, responses, all_relays));
             }
-            BackendEvent::GotChatMessages((db_contact, chat_msgs)) => {
+            BackendEvent::GotChatMessages(db_contact, chat_msgs) => {
                 if self.active_matches(&db_contact) {
                     if self.messages.is_empty() {
                         self.messages = chat_msgs;
@@ -397,82 +433,24 @@ impl State {
                     )
                 }
             }
-
-            BackendEvent::ConfirmedDM((_db_contact, chat_msg)) => {
-                self.messages
+            BackendEvent::ConfirmedDM(chat_message) => {
+                if let Some(message) = self
+                    .messages
                     .iter_mut()
-                    .find(|m| m.msg_id == chat_msg.msg_id)
-                    .map(|m| m.confirm_msg(&chat_msg));
-            }
-            BackendEvent::PendingDM((db_contact, msg)) => {
-                let active_chatting = self.active_matches(&db_contact);
-
-                // push into chat messages
-                self.messages.push(msg.clone());
-                // update chat card headers
-                if let Some(contact_card) = self
-                    .chats
-                    .iter_mut()
-                    .find(|c| c.contact.pubkey() == db_contact.pubkey())
+                    .find(|message| message.msg_id == chat_message.msg_id)
                 {
-                    if active_chatting {
-                        contact_card.update_headers(msg);
-                    } else {
-                        contact_card.new_message(msg);
-                    }
-                } else {
-                    tracing::info!("PendingDM for a contact not in the list?? {:?}", db_contact);
+                    message.confirm_msg(&chat_message);
+                    conn.send(ToBackend::MessageSeen(message.msg_id))
                 }
-                // scroll to end
-                self.msgs_scroll_offset = scrollable::RelativeOffset::END;
-                commands.push(scrollable::snap_to(
-                    CHAT_SCROLLABLE_ID.clone(),
-                    self.msgs_scroll_offset,
-                ));
             }
-            BackendEvent::ReceivedDM {
-                chat_message: msg,
+            BackendEvent::PendingDM(db_contact, chat_message)
+            | BackendEvent::ReceivedDM {
+                chat_message,
                 db_contact,
                 ..
             } => {
-                let active_chatting = self.active_matches(&db_contact);
-
-                if active_chatting {
-                    // estou na conversa
-                    self.messages.push(msg.clone());
-                    self.msgs_scroll_offset = scrollable::RelativeOffset::END;
-                    commands.push(scrollable::snap_to(
-                        CHAT_SCROLLABLE_ID.clone(),
-                        self.msgs_scroll_offset,
-                    ));
-                } else {
-                    //nao estou na conversa
-                }
-
-                if let Some(contact_card) = self
-                    .chats
-                    .iter_mut()
-                    .find(|c| c.contact.pubkey() == db_contact.pubkey())
-                {
-                    if active_chatting {
-                        contact_card.update_headers(msg);
-                    } else {
-                        contact_card.new_message(msg);
-                    }
-
-                    self.sort_contacts_name_date();
-                    commands.push(scrollable::snap_to(
-                        CONTACTS_SCROLLABLE_ID.clone(),
-                        scrollable::RelativeOffset::START,
-                    ));
-                } else {
-                    tracing::info!(
-                        "ReceivedDM for a contact not in the list?? {:?}",
-                        &db_contact
-                    );
-                    let new_chat = ChatContact::new(self.chats.len() as i32, &db_contact, conn);
-                    self.chats.push(new_chat);
-                }
+                let cmd = self.handle_new_message(db_contact, chat_message, conn);
+                commands.push(cmd);
             }
 
             BackendEvent::GotChatInfo(db_contact, chat_info) => {
@@ -621,14 +599,14 @@ impl State {
             }
 
             Message::ChatListContainerMsg(chat_msg) => match chat_msg {
-                chat_list_container::Message::DMSentPress => {
-                    match (self.active_chat(), self.dm_msg.is_empty()) {
+                chat_list_container::Message::DMSentPress(dm_msg) => {
+                    match (self.active_chat(), dm_msg.is_empty()) {
                         (Some(chat_contact), false) => {
-                            conn.send(net::ToBackend::SendDM((
+                            conn.send(ToBackend::SendDM(
                                 chat_contact.contact.to_owned(),
-                                self.dm_msg.clone(),
-                            )));
-                            self.dm_msg = "".into();
+                                dm_msg.clone(),
+                            ));
+                            self.chat_list_container.update_dm_msg("".into());
                         }
                         _ => (),
                     }
@@ -652,10 +630,10 @@ impl State {
                                     "fetching more messages, first: {:?}",
                                     first_message
                                 );
-                                conn.send(net::ToBackend::FetchMoreMessages((
+                                conn.send(ToBackend::FetchMoreMessages(
                                     contact,
                                     first_message.to_owned(),
-                                )));
+                                ));
                             }
                         }
                     }
@@ -666,7 +644,7 @@ impl State {
                     }
                 }
                 chat_list_container::Message::ChatRightClick(msg, point) => {
-                    conn.send(net::ToBackend::FetchRelayResponsesChatMsg(msg.clone()));
+                    conn.send(ToBackend::FetchRelayResponsesChatMsg(msg.clone()));
                     self.calculate_ctx_menu_pos(point);
                     self.hide_context_menu = false;
                     self.chat_message_pressed = Some(msg);
@@ -703,6 +681,7 @@ fn make_context_menu<'a>(response: &Option<RelaysResponse>) -> Element<'a, Messa
     .height(CTX_BUTTON_HEIGHT)
     .on_press(Message::CopyPressed)
     .style(style::Button::ContextMenuButton);
+
     // let reply_btn = button(
     //     row![
     //         text("Reply").size(18),
@@ -810,289 +789,3 @@ impl RelaysResponse {
 const PIC_WIDTH: u16 = 50;
 const CONTEXT_MENU_WIDTH: f32 = 130.0;
 const CTX_BUTTON_HEIGHT: f32 = 30.0;
-
-mod contact_list {
-    use crate::components::chat_contact::{self, ChatContact};
-    use crate::components::common_scrollable;
-    use crate::style;
-    use crate::utils::chat_matches_search;
-    use crate::widget::Element;
-    use iced::widget::{button, column, container, row, text, text_input};
-    use iced::{alignment, Length};
-
-    use super::CONTACTS_SCROLLABLE_ID;
-
-    #[derive(Debug, Clone)]
-    pub enum Message {
-        AddContactPress,
-        SearchContactInputChange(String),
-        ContactPress(i32),
-    }
-    pub struct ContactList {
-        search_input: String,
-    }
-    impl ContactList {
-        pub fn new() -> Self {
-            Self {
-                search_input: "".into(),
-            }
-        }
-        pub fn search_input_change(&mut self, text: String) {
-            self.search_input = text;
-        }
-        pub fn view<'a>(
-            &'a self,
-            chats: &'a [ChatContact],
-            show_only_profile: bool,
-            active_idx: Option<i32>,
-        ) -> Element<'a, Message> {
-            // --- FIRST SPLIT ---
-            let contact_list: Element<_> = if chats.is_empty() {
-                container(
-                    button("Add Contact")
-                        .padding(10)
-                        .on_press(Message::AddContactPress),
-                )
-                .center_x()
-                .width(Length::Fill)
-                .into()
-            } else {
-                let contact_list = chats
-                    .iter()
-                    .filter(|chat| chat_matches_search(&chat, &self.search_input))
-                    .fold(column![].spacing(0), |col, chat| {
-                        col.push(chat.view(active_idx).map(|m| match m.message {
-                            chat_contact::Message::ContactPress(idx) => Message::ContactPress(idx),
-                        }))
-                    });
-                common_scrollable(contact_list)
-                    .id(CONTACTS_SCROLLABLE_ID.clone())
-                    .into()
-            };
-            let search_contact: Element<_> = match show_only_profile {
-                true => text("").into(),
-                false => text_input("Search", &self.search_input)
-                    .on_input(Message::SearchContactInputChange)
-                    .style(style::TextInput::ChatSearch)
-                    .into(),
-            };
-            let search_container = container(
-                row![search_contact]
-                    .spacing(5)
-                    .align_items(alignment::Alignment::Center),
-            )
-            .padding([10, 10])
-            .width(Length::Fill)
-            .height(NAVBAR_HEIGHT);
-
-            container(column![search_container, contact_list])
-                .height(Length::Fill)
-                .width(Length::Fill)
-                .style(style::Container::ContactList)
-                .into()
-        }
-    }
-
-    const NAVBAR_HEIGHT: f32 = 50.0;
-}
-
-mod chat_list_container {
-    use crate::components::chat_contact::ChatContact;
-    use crate::components::{common_scrollable, Responsive};
-    use crate::consts::YMD_FORMAT;
-    use crate::icon::{file_icon_regular, send_icon};
-    use crate::style;
-    use crate::types::chat_message::{self, ChatMessage};
-    use crate::utils::from_naive_utc_to_local;
-    use crate::widget::{Button, Container, Element};
-    use chrono::{Datelike, NaiveDateTime};
-    use iced::widget::{button, column, container, row, scrollable, text, text_input};
-    use iced::{Alignment, Command, Length, Point, Size};
-
-    use super::{CHAT_INPUT_ID, CHAT_SCROLLABLE_ID};
-
-    #[derive(Debug, Clone)]
-    pub enum Message {
-        DMSentPress,
-        DMNMessageChange(String),
-        GotChatSize(Size, Size),
-        Scrolled(scrollable::RelativeOffset),
-        OpenContactProfile,
-        ChatRightClick(ChatMessage, Point),
-    }
-
-    pub struct ChatListContainer {
-        dm_msg_input: String,
-    }
-    impl ChatListContainer {
-        pub fn new() -> Self {
-            Self {
-                dm_msg_input: "".into(),
-            }
-        }
-        pub fn update_dm_msg(&mut self, text: String) {
-            self.dm_msg_input = text;
-        }
-        pub fn view<'a>(
-            &'a self,
-            messages: &'a [ChatMessage],
-            active_chat: Option<&'a ChatContact>,
-        ) -> Element<'a, Message> {
-            if let Some(active_contact) = active_chat {
-                let chat_messages = create_chat_content(messages);
-                let message_input = text_input("Write a message...", &self.dm_msg_input)
-                    .on_submit(Message::DMSentPress)
-                    .on_input(Message::DMNMessageChange)
-                    .id(CHAT_INPUT_ID.clone());
-                let send_btn = button(send_icon().style(style::Text::Primary))
-                    .style(style::Button::Invisible)
-                    .on_press(Message::DMSentPress);
-                let msg_input_row = container(row![message_input, send_btn].spacing(5))
-                    .style(style::Container::Default)
-                    .height(CHAT_INPUT_HEIGHT)
-                    .padding([10, 5]);
-                // Todo: add/remove user button
-                // if user is unkown
-                let add_or_remove_user = text("");
-
-                return container(column![
-                    chat_navbar(active_contact),
-                    add_or_remove_user,
-                    chat_messages,
-                    msg_input_row
-                ])
-                .width(Length::Fill)
-                .into();
-            }
-
-            container(text("Select a chat to start messaging"))
-                .center_x()
-                .center_y()
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .style(style::Container::ChatContainer)
-                .into()
-        }
-    }
-
-    fn create_chat_content<'a>(messages: &'a [ChatMessage]) -> Element<'a, Message> {
-        let lazy = Responsive::new(move |_size| {
-            if messages.is_empty() {
-                return container(text("No messages"))
-                    .center_x()
-                    .center_y()
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .style(style::Container::ChatContainer)
-                    .into();
-            }
-
-            let mut col = column![];
-            let mut last_date: Option<NaiveDateTime> = None;
-
-            for msg in messages {
-                let msg_date = msg.display_time;
-
-                if let Some(last) = last_date {
-                    if last.day() != msg_date.day() {
-                        col = col.push(chat_day_divider(msg_date.clone()));
-                    }
-                } else {
-                    col = col.push(chat_day_divider(msg_date.clone()));
-                }
-
-                col = col.push(msg.view().map(|m| match m {
-                    chat_message::Message::ChatRightClick(msg, point) => {
-                        Message::ChatRightClick(msg, point)
-                    }
-                }));
-
-                last_date = Some(msg_date);
-            }
-            // col.into()
-            let scrollable = common_scrollable(col)
-                .height(Length::Fill)
-                .id(CHAT_SCROLLABLE_ID.clone())
-                .on_scroll(Message::Scrolled);
-
-            scrollable.into()
-        })
-        .on_update(Message::GotChatSize);
-
-        container(lazy)
-            .center_x()
-            .center_y()
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(style::Container::ChatContainer)
-            .into()
-    }
-
-    fn chat_day_divider<Message: 'static>(date: NaiveDateTime) -> Element<'static, Message> {
-        let local_date = from_naive_utc_to_local(date);
-        let text_container = container(text(local_date.format(YMD_FORMAT).to_string()))
-            .style(style::Container::ChatDateDivider)
-            .padding([5, 10]);
-        container(text_container)
-            .width(Length::Fill)
-            .padding([20, 0])
-            .center_x()
-            .center_y()
-            .into()
-    }
-
-    fn chat_navbar<'a>(active_contact: &'a ChatContact) -> Container<'a, Message> {
-        container(
-            row![header_details(active_contact), header_action_buttons()]
-                .spacing(5)
-                .width(Length::Fill),
-        )
-        .height(NAVBAR_HEIGHT)
-        .style(style::Container::Default)
-    }
-
-    fn header_details<'a>(chat: &'a ChatContact) -> Button<'a, Message> {
-        let local_message_date = chat
-            .last_message_date()
-            .map(from_naive_utc_to_local)
-            .map(|date| format!("last seen {}", date.format(YMD_FORMAT)))
-            .unwrap_or("".into());
-
-        let user_name: Element<_> = if let Some(petname) = chat.contact.get_petname() {
-            if !petname.is_empty() {
-                row![
-                    text(petname).size(20),
-                    text(chat.contact.get_display_name().unwrap_or("".into()))
-                        .size(14)
-                        .style(style::Text::ChatMessageStatus)
-                ]
-                .align_items(Alignment::End)
-                .spacing(5)
-                .into()
-            } else {
-                text(chat.contact.select_name()).size(20).into()
-            }
-        } else {
-            text(chat.contact.select_name()).size(20).into()
-        };
-
-        button(column![user_name, text(local_message_date).size(16)])
-            .padding([5, 0, 0, 5])
-            .style(style::Button::Invisible)
-            .on_press(Message::OpenContactProfile)
-            .height(Length::Fill)
-            .width(Length::Fill)
-    }
-
-    fn header_action_buttons<'a>() -> Element<'a, Message> {
-        row![button(file_icon_regular())
-            .style(style::Button::Invisible)
-            .on_press(Message::OpenContactProfile)]
-        .padding(10)
-        .align_items(Alignment::End)
-        .into()
-    }
-
-    const NAVBAR_HEIGHT: f32 = 50.0;
-    const CHAT_INPUT_HEIGHT: f32 = 50.0;
-}

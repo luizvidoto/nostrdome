@@ -116,6 +116,20 @@ impl DbEvent {
             .await?)
     }
 
+    pub(crate) async fn fetch_last_url(
+        pool: &SqlitePool,
+        url: &Url,
+    ) -> Result<Option<DbEvent>, Error> {
+        let sql = format!(
+            "{} WHERE relay_url = ? ORDER BY event_id DESC LIMIT 1",
+            Self::FETCH_QUERY
+        );
+        Ok(sqlx::query_as::<_, DbEvent>(&sql)
+            .bind(url.to_string())
+            .fetch_optional(pool)
+            .await?)
+    }
+
     pub async fn fetch_last_kind(
         pool: &SqlitePool,
         kind: nostr::Kind,
