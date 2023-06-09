@@ -8,7 +8,7 @@ use crate::utils::from_naive_utc_to_local;
 use crate::widget::{Button, Container, Element};
 use chrono::{Datelike, NaiveDateTime};
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
-use iced::{Alignment, Command, Length, Point, Size};
+use iced::{Alignment, Length, Point, Size};
 
 #[derive(Debug, Clone)]
 pub enum Message {

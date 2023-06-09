@@ -14,15 +14,15 @@ impl checkbox::StyleSheet for Theme {
         match style {
             Checkbox::Default => checkbox::Appearance {
                 background: if is_checked {
-                    self.pallete().text_color.into()
+                    self.palette().text_color.into()
                 } else {
-                    self.pallete().background.into()
+                    self.palette().background.into()
                 },
-                icon_color: self.pallete().background,
+                icon_color: self.palette().background,
                 border_radius: 4.0,
                 border_width: 1.0,
-                border_color: self.pallete().text_color,
-                text_color: self.pallete().text_color.into(),
+                border_color: self.palette().text_color,
+                text_color: self.palette().text_color.into(),
             },
         }
     }
@@ -31,9 +31,9 @@ impl checkbox::StyleSheet for Theme {
         match style {
             Checkbox::Default => checkbox::Appearance {
                 background: if is_checked {
-                    self.pallete().primary.into()
+                    self.palette().primary.into()
                 } else {
-                    self.pallete().background.into()
+                    self.palette().background.into()
                 },
                 ..self.active(style, is_checked)
             },

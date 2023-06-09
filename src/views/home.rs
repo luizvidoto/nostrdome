@@ -14,6 +14,7 @@ use crate::{
     widget::Element,
 };
 
+use super::route::Route;
 use super::{chat, find_channels, RouterCommand, RouterMessage};
 
 #[derive(Debug, Clone)]
@@ -54,7 +55,10 @@ impl State {
             },
         }
     }
-    pub(crate) fn subscription(&self) -> Subscription<Message> {
+}
+impl Route for State {
+    type Message = Message;
+    fn subscription(&self) -> Subscription<Message> {
         Subscription::batch(vec![
             self.active_view.subscription(),
             self.status_bar
@@ -62,64 +66,57 @@ impl State {
                 .map(Message::StatusBarMessage),
         ])
     }
-    pub(crate) fn backend_event(
+    fn backend_event(
         &mut self,
         event: BackendEvent,
         conn: &mut BackEndConnection,
-    ) -> RouterCommand<Message> {
-        let mut commands = RouterCommand::new();
+    ) -> RouterCommand<Self::Message> {
+        let mut commands = self.active_view.backend_event(event.clone(), conn);
 
         let cmd = self.status_bar.backend_event(event.clone(), conn);
         commands.push(cmd.map(Message::StatusBarMessage));
 
-        let (cmds, router_message) = self.active_view.backend_event(event.clone(), conn).batch();
-        if let Some(router_message) = router_message {
-            commands.change_route(router_message);
-        }
-        commands.push(cmds);
-
         commands
     }
-    pub(crate) fn update(
+    fn update(
         &mut self,
         message: Message,
         conn: &mut BackEndConnection,
-    ) -> RouterCommand<Message> {
+    ) -> RouterCommand<Self::Message> {
         let mut commands = RouterCommand::new();
 
         match message {
-            Message::DMsPressed => {
-                self.active_view = ViewState::DMs {
-                    state: chat::State::new(conn),
+            Message::DMsPressed => match self.active_view {
+                ViewState::DMs { .. } => (),
+                _ => {
+                    self.active_view = ViewState::DMs {
+                        state: chat::State::new(conn),
+                    }
                 }
-            }
-            Message::FindChannelsPressed => {
-                self.active_view = ViewState::FindChannel {
-                    state: find_channels::State::new(conn),
+            },
+            Message::FindChannelsPressed => match self.active_view {
+                ViewState::FindChannel { .. } => (),
+                _ => {
+                    self.active_view = ViewState::FindChannel {
+                        state: find_channels::State::new(conn),
+                    }
                 }
-            }
+            },
             Message::StatusBarMessage(status_msg) => {
-                let (cmd, router_message) = self.status_bar.update(status_msg, conn);
-                if let Some(router_message) = router_message {
-                    commands.change_route(router_message);
-                }
-                commands.push(cmd.map(Message::StatusBarMessage));
+                return self
+                    .status_bar
+                    .update(status_msg, conn)
+                    .map(Message::StatusBarMessage);
             }
             Message::SettingsPressed => commands.change_route(RouterMessage::GoToSettings),
             other => {
-                let (cmds, msg) = self.active_view.update(other, conn).batch();
-                if let Some(msg) = msg {
-                    commands.change_route(msg)
-                }
-                commands.push(cmds);
+                return self.active_view.update(other, conn);
             }
         }
 
         commands
     }
-    pub fn view(&self) -> Element<Message> {
-        // like discord, on the left
-
+    fn view(&self, selected_theme: Option<style::Theme>) -> Element<Self::Message> {
         let dm_btn = make_menu_btn(self.active_view.is_dms(), home_icon, Message::DMsPressed);
         let find_ch_btn = make_menu_btn(
             self.active_view.is_find_channel(),
@@ -144,7 +141,7 @@ impl State {
         let status_bar = self.status_bar.view().map(Message::StatusBarMessage);
 
         let active_view = column![
-            container(self.active_view.view())
+            container(self.active_view.view(selected_theme))
                 .width(Length::Fill)
                 .height(Length::Fill),
             status_bar
@@ -190,80 +187,6 @@ pub enum ViewState {
     FindChannel { state: find_channels::State },
 }
 impl ViewState {
-    pub(crate) fn update(
-        &mut self,
-        message: Message,
-        conn: &mut BackEndConnection,
-    ) -> RouterCommand<Message> {
-        let mut commands = RouterCommand::new();
-        match message {
-            Message::DmsMessage(dms_msg) => {
-                if let ViewState::DMs { state } = self {
-                    let (cmds, msg) = state.update(dms_msg, conn).batch();
-                    if let Some(msg) = msg {
-                        commands.change_route(msg)
-                    }
-                    commands.push(cmds.map(Message::DmsMessage));
-                }
-            }
-            Message::FindChannelsMessage(find_ch_msg) => {
-                if let ViewState::FindChannel { state } = self {
-                    let (cmds, msg) = state.update(find_ch_msg, conn).batch();
-                    if let Some(msg) = msg {
-                        commands.change_route(msg)
-                    }
-                    commands.push(cmds.map(Message::FindChannelsMessage));
-                }
-            }
-            Message::StatusBarMessage(_) => (),
-            Message::SettingsPressed => (),
-            Message::FindChannelsPressed => (),
-            Message::DMsPressed => (),
-        }
-
-        commands
-    }
-    pub(crate) fn backend_event(
-        &mut self,
-        event: BackendEvent,
-        conn: &mut BackEndConnection,
-    ) -> RouterCommand<Message> {
-        let mut commands = RouterCommand::new();
-
-        match self {
-            ViewState::DMs { state } => {
-                let (cmds, msg) = state.backend_event(event, conn).batch();
-                if let Some(msg) = msg {
-                    commands.change_route(msg);
-                }
-                commands.push(cmds.map(Message::DmsMessage));
-            }
-            ViewState::FindChannel { state } => {
-                let (cmds, msg) = state.backend_event(event, conn).batch();
-                if let Some(msg) = msg {
-                    commands.change_route(msg);
-                }
-                commands.push(cmds.map(Message::FindChannelsMessage));
-            }
-        }
-
-        commands
-    }
-    pub(crate) fn subscription(&self) -> Subscription<Message> {
-        match self {
-            ViewState::DMs { state } => state.subscription().map(Message::DmsMessage),
-            ViewState::FindChannel { state } => {
-                state.subscription().map(Message::FindChannelsMessage)
-            }
-        }
-    }
-
-    pub fn view(&self) -> Element<Message> {
-        match self {
-            ViewState::DMs { state } => state.view().map(Message::DmsMessage),
-            ViewState::FindChannel { state } => state.view().map(Message::FindChannelsMessage),
-        }
-    }
     pub fn is_dms(&self) -> bool {
         match self {
             ViewState::DMs { .. } => true,
@@ -274,6 +197,64 @@ impl ViewState {
         match self {
             ViewState::FindChannel { .. } => true,
             _ => false,
+        }
+    }
+}
+impl Route for ViewState {
+    type Message = Message;
+    fn update(
+        &mut self,
+        message: Message,
+        conn: &mut BackEndConnection,
+    ) -> RouterCommand<Self::Message> {
+        let commands = RouterCommand::new();
+        match message {
+            Message::DmsMessage(dms_msg) => {
+                if let ViewState::DMs { state } = self {
+                    return state.update(dms_msg, conn).map(Message::DmsMessage);
+                }
+            }
+            Message::FindChannelsMessage(find_ch_msg) => {
+                if let ViewState::FindChannel { state } = self {
+                    return state
+                        .update(find_ch_msg, conn)
+                        .map(Message::FindChannelsMessage);
+                }
+            }
+            Message::StatusBarMessage(_) => (),
+            Message::SettingsPressed => (),
+            Message::FindChannelsPressed => (),
+            Message::DMsPressed => (),
+        }
+
+        commands
+    }
+    fn backend_event(
+        &mut self,
+        event: BackendEvent,
+        conn: &mut BackEndConnection,
+    ) -> RouterCommand<Self::Message> {
+        match self {
+            ViewState::DMs { state } => state.backend_event(event, conn).map(Message::DmsMessage),
+            ViewState::FindChannel { state } => state
+                .backend_event(event, conn)
+                .map(Message::FindChannelsMessage),
+        }
+    }
+    fn subscription(&self) -> Subscription<Self::Message> {
+        match self {
+            ViewState::DMs { state } => state.subscription().map(Message::DmsMessage),
+            ViewState::FindChannel { state } => {
+                state.subscription().map(Message::FindChannelsMessage)
+            }
+        }
+    }
+    fn view(&self, selected_theme: Option<style::Theme>) -> Element<Self::Message> {
+        match self {
+            ViewState::DMs { state } => state.view(selected_theme).map(Message::DmsMessage),
+            ViewState::FindChannel { state } => {
+                state.view(selected_theme).map(Message::FindChannelsMessage)
+            }
         }
     }
 }

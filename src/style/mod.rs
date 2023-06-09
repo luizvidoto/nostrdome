@@ -36,7 +36,7 @@ pub enum Theme {
     Dark,
 }
 impl Theme {
-    pub fn pallete(&self) -> AppPalette {
+    pub fn palette(&self) -> AppPalette {
         match self {
             Theme::Light => AppPalette::LIGHT,
             Theme::Dark => AppPalette::DARK,
@@ -49,8 +49,8 @@ impl application::StyleSheet for Theme {
 
     fn appearance(&self, _style: &Self::Style) -> application::Appearance {
         application::Appearance {
-            background_color: self.pallete().background,
-            text_color: self.pallete().text_color,
+            background_color: self.palette().background,
+            text_color: self.palette().text_color,
         }
     }
 }
@@ -60,7 +60,7 @@ impl iced::widget::rule::StyleSheet for Theme {
 
     fn appearance(&self, _style: &Self::Style) -> iced_style::rule::Appearance {
         iced_style::rule::Appearance {
-            color: self.pallete().placeholder.into(),
+            color: self.palette().grayish.into(),
             width: 1,
             radius: 2.0,
             fill_mode: FillMode::Full,

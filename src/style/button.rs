@@ -27,72 +27,72 @@ impl button::StyleSheet for Theme {
 
     fn active(&self, style: &Self::Style) -> button::Appearance {
         let primary = button::Appearance {
-            background: self.pallete().primary.into(),
+            background: self.palette().primary.into(),
             border_radius: 4.0,
             border_width: 1.0,
             border_color: Color::TRANSPARENT,
-            text_color: self.pallete().text_color,
+            text_color: self.palette().text_color,
             shadow_offset: Vector { x: 0., y: 0. },
         };
         match style {
             Button::Primary => primary,
             Button::Secondary => button::Appearance {
                 background: Color::TRANSPARENT.into(),
-                border_color: self.pallete().primary,
-                text_color: self.pallete().primary,
+                border_color: self.palette().primary,
+                text_color: self.palette().primary,
                 ..primary
             },
             Button::Danger => button::Appearance {
-                background: self.pallete().danger.into(),
+                background: self.palette().danger.into(),
                 ..primary
             },
             Button::Invisible => button::Appearance {
                 background: Color::TRANSPARENT.into(),
                 border_color: Color::TRANSPARENT,
-                text_color: self.pallete().text_color,
+                text_color: self.palette().text_color,
                 ..primary
             },
             Button::Bordered => button::Appearance {
                 background: Color::TRANSPARENT.into(),
                 border_color: Color::from_rgb8(120, 120, 120),
-                text_color: self.pallete().primary,
+                text_color: self.palette().primary,
                 ..primary
             },
             Button::ContactCard => button::Appearance {
-                background: self.pallete().contact.into(),
-                text_color: self.pallete().text_color,
+                background: self.palette().background.into(),
+                text_color: self.palette().text_color,
                 border_radius: 0.0,
                 ..primary
             },
             Button::ActiveContactCard => button::Appearance {
                 border_radius: 0.0,
-                background: self.pallete().contact_selected.into(),
-                text_color: self.pallete().text_color,
+                background: self.palette().primary_darker.into(),
+                text_color: self.palette().text_color,
                 ..primary
             },
             Button::ActiveMenuBtn => button::Appearance {
-                background: self.pallete().contact_selected.into(),
-                text_color: self.pallete().text_color,
+                background: self.palette().primary_darker.into(),
+                text_color: self.palette().text_color,
                 border_radius: 5.0,
                 ..primary
             },
             Button::MenuBtn => button::Appearance {
                 background: Color::TRANSPARENT.into(),
-                text_color: self.pallete().text_color,
+                text_color: self.palette().text_color,
                 border_radius: 5.0,
                 ..primary
             },
             Button::StatusBarButton => button::Appearance {
-                background: self.pallete().status_bar_bg.into(),
-                text_color: self.pallete().text_color,
+                background: self.palette().status_bar_bg.into(),
+                text_color: self.palette().status_bar_text_color,
                 border_color: Color::TRANSPARENT,
                 border_radius: 0.0,
                 border_width: 0.0,
                 ..primary
             },
             Button::Notification => button::Appearance {
-                background: self.pallete().notification.into(),
-                text_color: self.pallete().text_color,
+                background: self.palette().notification.into(),
+                text_color: self.palette().text_color,
                 border_color: Color::TRANSPARENT,
                 border_radius: 20.0,
                 border_width: 0.0,
@@ -108,7 +108,7 @@ impl button::StyleSheet for Theme {
             },
             Button::Link => button::Appearance {
                 background: Color::TRANSPARENT.into(),
-                text_color: self.pallete().link_1,
+                text_color: self.palette().primary_lighter,
                 border_color: Color::TRANSPARENT,
                 border_radius: 0.0,
                 border_width: 0.0,
@@ -119,20 +119,20 @@ impl button::StyleSheet for Theme {
     fn hovered(&self, style: &Self::Style) -> button::Appearance {
         match style {
             Button::Primary => button::Appearance {
-                background: self.pallete().primary_hover.into(),
+                background: self.palette().primary_lighter.into(),
                 ..self.active(style)
             },
             Button::Secondary => self.active(style),
             Button::Danger => self.active(style),
             Button::Invisible => self.active(style),
             Button::Bordered => button::Appearance {
-                border_color: self.pallete().primary,
-                text_color: self.pallete().primary,
+                border_color: self.palette().primary,
+                text_color: self.palette().primary,
                 ..self.active(style)
             },
             Button::ContactCard => button::Appearance {
-                background: self.pallete().contact_hover.into(),
-                text_color: self.pallete().text_color,
+                background: self.palette().background.into(),
+                text_color: self.palette().text_color,
                 ..self.active(style)
             },
 
@@ -141,18 +141,18 @@ impl button::StyleSheet for Theme {
                 ..self.active(style)
             },
             Button::MenuBtn => button::Appearance {
-                background: self.pallete().contact_hover.into(),
-                text_color: self.pallete().text_color,
+                background: self.palette().background.into(),
+                text_color: self.palette().text_color,
                 ..self.active(style)
             },
             Button::StatusBarButton => button::Appearance {
-                background: self.pallete().hover_status_bar_bg.into(),
+                background: self.palette().hover_status_bar_bg.into(),
                 ..self.active(style)
             },
             Button::Notification => self.active(style),
             Button::ContextMenuButton => button::Appearance {
-                background: self.pallete().primary.into(),
-                text_color: self.pallete().text_color,
+                background: self.palette().primary.into(),
+                text_color: self.palette().text_color,
                 ..self.active(style)
             },
             Button::Link => self.active(style),

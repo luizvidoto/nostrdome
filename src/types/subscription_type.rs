@@ -63,13 +63,3 @@ impl std::fmt::Display for SubName {
         }
     }
 }
-impl SubName {
-    pub fn id(&self) -> SubscriptionId {
-        match self {
-            SubName::SearchChannelsDetails(channel_id) => {
-                SubscriptionId::new(format!("SrcChannelDts_{}", &channel_id))
-            }
-            other => SubscriptionId::new(other.to_string()),
-        }
-    }
-}

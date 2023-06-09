@@ -11,6 +11,7 @@ use super::modal::{
     basic_contact, import_contact_list, relay_document, relays_confirmation, ContactDetails,
     ImportContactList, RelayDocState, RelaysConfirmation,
 };
+use super::route::Route;
 use super::{RouterCommand, RouterMessage};
 
 mod about;
@@ -32,7 +33,6 @@ pub enum SettingsRouterMessage {
 #[derive(Debug, Clone)]
 pub enum Message {
     AccountMessage(account::Message),
-    AppearanceMessage(appearance::Message),
     NetworkMessage(network::Message),
     BackupMessage(backup::Message),
     ContactsMessage(contacts::Message),
@@ -56,12 +56,13 @@ pub enum Message {
     CloseModal,
     // Other
     None,
+    ChangeTheme(style::Theme),
 }
 
 #[repr(u8)]
 pub enum MenuState {
     Account { state: account::State } = 0,
-    Appearance { state: appearance::State } = 1,
+    Appearance = 1,
     Network { state: network::State } = 2,
     Backup { state: backup::State } = 3,
     Contacts { state: contacts::State } = 4,
@@ -79,7 +80,7 @@ impl MenuState {
     pub fn is_same_type(&self, other: u8) -> bool {
         match (self, other) {
             (MenuState::Account { .. }, Self::ACCOUNT) => true,
-            (MenuState::Appearance { .. }, Self::APPEARANCE) => true,
+            (MenuState::Appearance, Self::APPEARANCE) => true,
             (MenuState::Network { .. }, Self::NETWORK) => true,
             (MenuState::Backup { .. }, Self::BACKUP) => true,
             (MenuState::Contacts { .. }, Self::CONTACTS) => true,
@@ -90,11 +91,6 @@ impl MenuState {
     fn account(conn: &mut BackEndConnection) -> Self {
         Self::Account {
             state: account::State::new(conn),
-        }
-    }
-    fn appearance(selected_theme: Option<style::Theme>) -> Self {
-        Self::Appearance {
-            state: appearance::State::new(selected_theme),
         }
     }
     pub fn network(db_conn: &mut BackEndConnection) -> Self {
@@ -120,10 +116,12 @@ impl MenuState {
     pub fn new(conn: &mut BackEndConnection) -> Self {
         Self::account(conn)
     }
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self, selected_theme: Option<style::Theme>) -> Element<Message> {
         match self {
             Self::Account { state } => state.view().map(Message::AccountMessage),
-            Self::Appearance { state } => state.view().map(Message::AppearanceMessage),
+            Self::Appearance => appearance::view(selected_theme).map(|m| match m {
+                appearance::Message::ChangeTheme(x) => Message::ChangeTheme(x),
+            }),
             Self::Network { state } => state.view().map(Message::NetworkMessage),
             Self::Backup { state } => state.view().map(Message::BackupMessage),
             Self::Contacts { state } => state.view().map(Message::ContactsMessage),
@@ -137,13 +135,6 @@ pub struct Settings {
     modal_state: ModalState,
 }
 impl Settings {
-    pub fn subscription(&self) -> Subscription<Message> {
-        let menu_subs = match &self.menu_state {
-            MenuState::Network { state } => state.subscription().map(Message::NetworkMessage),
-            _ => Subscription::none(),
-        };
-        Subscription::batch(vec![menu_subs, self.modal_state.subscription()])
-    }
     fn with_menu_state(menu_state: MenuState) -> Self {
         Self {
             menu_state,
@@ -162,128 +153,10 @@ impl Settings {
     pub fn about(db_conn: &mut BackEndConnection) -> Self {
         Self::with_menu_state(MenuState::about(db_conn))
     }
-
-    pub fn backend_event(
-        &mut self,
-        event: BackendEvent,
-        conn: &mut BackEndConnection,
-    ) -> RouterCommand<Message> {
-        let commands = RouterCommand::new();
-
-        self.modal_state.backend_event(event.clone(), conn);
-
-        match &mut self.menu_state {
-            MenuState::About { state } => {
-                state.backend_event(event, conn);
-            }
-            MenuState::Account { state } => {
-                state.backend_event(event, conn);
-            }
-            MenuState::Appearance { state } => {
-                state.update(appearance::Message::BackEndEvent(event))
-            }
-            MenuState::Network { state } => {
-                state.backend_event(event, conn);
-            }
-            MenuState::Backup { state } => {
-                state.backend_event(event, conn);
-            }
-            MenuState::Contacts { state } => {
-                state.backend_event(event, conn);
-            }
-        }
-
-        commands
-    }
-    pub fn update(
-        &mut self,
-        message: Message,
-        conn: &mut BackEndConnection,
-        selected_theme: Option<style::Theme>,
-    ) -> RouterCommand<Message> {
-        let mut commands = RouterCommand::new();
-
-        match message {
-            Message::AccountMessage(msg) => {
-                if let MenuState::Account { state } = &mut self.menu_state {
-                    match msg {
-                        account::Message::RelaysConfirmationPress(acc_resp) => {
-                            if let Some(acc_resp) = acc_resp {
-                                self.modal_state =
-                                    ModalState::RelaysConfirmation(RelaysConfirmation::new(
-                                        &acc_resp.confirmed_relays,
-                                        &acc_resp.all_relays,
-                                    ))
-                            }
-                        }
-                        other => state.update(other, conn),
-                    }
-                }
-            }
-            Message::AboutMessage(msg) => {
-                if let MenuState::About { state } = &mut self.menu_state {
-                    let cmd = state.update(msg);
-                    commands.push(cmd.map(Message::AboutMessage))
-                }
-            }
-            Message::AppearanceMessage(msg) => {
-                if let MenuState::Appearance { state } = &mut self.menu_state {
-                    state.update(msg);
-                }
-            }
-            Message::NetworkMessage(msg) => {
-                if let MenuState::Network { state } = &mut self.menu_state {
-                    if let Some(received_msg) = state.update(msg, conn) {
-                        if let Some(router_message) =
-                            self.handle_settings_route_msg(received_msg, conn)
-                        {
-                            commands.change_route(router_message);
-                        }
-                    }
-                }
-            }
-            Message::BackupMessage(msg) => {
-                if let MenuState::Backup { state } = &mut self.menu_state {
-                    let cmd = state.update(msg, conn);
-                    commands.push(cmd.map(Message::BackupMessage));
-                }
-            }
-            Message::ContactsMessage(msg) => {
-                if let Some(router_message) = self.handle_contacts_message(msg, conn) {
-                    commands.change_route(router_message)
-                }
-            }
-            Message::NavEscPress => commands.change_route(RouterMessage::GoToChat),
-            Message::MenuAccountPress
-            | Message::MenuAppearancePress
-            | Message::MenuNetworkPress
-            | Message::MenuBackupPress
-            | Message::MenuContactsPress
-            | Message::MenuAboutPress => {
-                self.handle_menu_press(message, conn, selected_theme);
-            }
-            Message::LogoutPress => {
-                conn.send(net::ToBackend::Logout);
-                commands.change_route(RouterMessage::GoToLogout)
-            }
-            other => {
-                let cmd = self.modal_state.update(other, conn);
-                commands.push(cmd);
-            }
-        }
-
-        commands
-    }
-
-    fn handle_menu_press(
-        &mut self,
-        message: Message,
-        conn: &mut BackEndConnection,
-        selected_theme: Option<style::Theme>,
-    ) {
+    fn handle_menu_press(&mut self, message: Message, conn: &mut BackEndConnection) {
         match message {
             Message::MenuAccountPress => self.menu_state = MenuState::account(conn),
-            Message::MenuAppearancePress => self.menu_state = MenuState::appearance(selected_theme),
+            Message::MenuAppearancePress => self.menu_state = MenuState::Appearance,
             Message::MenuNetworkPress => self.menu_state = MenuState::network(conn),
             Message::MenuBackupPress => self.menu_state = MenuState::backup(conn),
             Message::MenuContactsPress => self.menu_state = MenuState::contacts(conn),
@@ -291,7 +164,6 @@ impl Settings {
             _ => (),
         }
     }
-
     fn handle_settings_route_msg(
         &mut self,
         message: SettingsRouterMessage,
@@ -349,8 +221,122 @@ impl Settings {
 
         router_message
     }
+}
 
-    pub fn view(&self) -> Element<Message> {
+impl Route for Settings {
+    type Message = Message;
+    fn subscription(&self) -> Subscription<Self::Message> {
+        let menu_subs = match &self.menu_state {
+            MenuState::Network { state } => state.subscription().map(Message::NetworkMessage),
+            _ => Subscription::none(),
+        };
+        Subscription::batch(vec![menu_subs, self.modal_state.subscription()])
+    }
+    fn backend_event(
+        &mut self,
+        event: BackendEvent,
+        conn: &mut BackEndConnection,
+    ) -> RouterCommand<Self::Message> {
+        let commands = RouterCommand::new();
+
+        self.modal_state.backend_event(event.clone(), conn);
+
+        match &mut self.menu_state {
+            MenuState::About { state } => {
+                state.backend_event(event, conn);
+            }
+            MenuState::Account { state } => {
+                state.backend_event(event, conn);
+            }
+            MenuState::Appearance => {}
+            MenuState::Network { state } => {
+                state.backend_event(event, conn);
+            }
+            MenuState::Backup { state } => {
+                state.backend_event(event, conn);
+            }
+            MenuState::Contacts { state } => {
+                state.backend_event(event, conn);
+            }
+        }
+
+        commands
+    }
+    fn update(
+        &mut self,
+        message: Message,
+        conn: &mut BackEndConnection,
+    ) -> RouterCommand<Self::Message> {
+        let mut commands = RouterCommand::new();
+
+        match message {
+            Message::AccountMessage(msg) => {
+                if let MenuState::Account { state } = &mut self.menu_state {
+                    match msg {
+                        account::Message::RelaysConfirmationPress(acc_resp) => {
+                            if let Some(acc_resp) = acc_resp {
+                                self.modal_state =
+                                    ModalState::RelaysConfirmation(RelaysConfirmation::new(
+                                        &acc_resp.confirmed_relays,
+                                        &acc_resp.all_relays,
+                                    ))
+                            }
+                        }
+                        other => state.update(other, conn),
+                    }
+                }
+            }
+            Message::AboutMessage(msg) => {
+                if let MenuState::About { state } = &mut self.menu_state {
+                    let cmd = state.update(msg);
+                    commands.push(cmd.map(Message::AboutMessage))
+                }
+            }
+            Message::NetworkMessage(msg) => {
+                if let MenuState::Network { state } = &mut self.menu_state {
+                    if let Some(received_msg) = state.update(msg, conn) {
+                        if let Some(router_message) =
+                            self.handle_settings_route_msg(received_msg, conn)
+                        {
+                            commands.change_route(router_message);
+                        }
+                    }
+                }
+            }
+            Message::BackupMessage(msg) => {
+                if let MenuState::Backup { state } = &mut self.menu_state {
+                    let cmd = state.update(msg, conn);
+                    commands.push(cmd.map(Message::BackupMessage));
+                }
+            }
+            Message::ContactsMessage(msg) => {
+                if let Some(router_message) = self.handle_contacts_message(msg, conn) {
+                    commands.change_route(router_message)
+                }
+            }
+            Message::NavEscPress => commands.change_route(RouterMessage::GoToChat),
+            Message::MenuAccountPress
+            | Message::MenuAppearancePress
+            | Message::MenuNetworkPress
+            | Message::MenuBackupPress
+            | Message::MenuContactsPress
+            | Message::MenuAboutPress => {
+                self.handle_menu_press(message, conn);
+            }
+            Message::LogoutPress => {
+                conn.send(net::ToBackend::Logout);
+                commands.change_route(RouterMessage::GoToLogout)
+            }
+            other => {
+                let cmd = self.modal_state.update(other, conn);
+                commands.push(cmd);
+            }
+        }
+
+        commands
+    }
+
+    fn view(&self, selected_theme: Option<style::Theme>) -> Element<Self::Message> {
         let account_btn =
             create_menu_button("Account", &self.menu_state, 0, Message::MenuAccountPress);
         let appearance_btn = create_menu_button(
@@ -394,7 +380,7 @@ impl Settings {
         .width(Length::Fixed(MENU_WIDTH))
         .padding([10, 5]);
 
-        let view_ct = container(self.menu_state.view())
+        let view_ct = container(self.menu_state.view(selected_theme))
             .style(style::Container::ChatContainer)
             .padding([20, 0, 0, 20])
             .height(Length::Fill)

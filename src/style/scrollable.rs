@@ -29,7 +29,7 @@ impl scrollable::StyleSheet for Theme {
     fn dragging(&self, style: &Self::Style) -> scrollable::Scrollbar {
         scrollable::Scrollbar {
             scroller: scrollable::Scroller {
-                color: self.pallete().text_color,
+                color: self.palette().text_color,
                 ..self.hovered(style, true).scroller
             },
             ..self.hovered(style, true)
@@ -38,18 +38,18 @@ impl scrollable::StyleSheet for Theme {
     fn hovered(&self, style: &Self::Style, is_mouse_over_scrollbar: bool) -> scrollable::Scrollbar {
         if is_mouse_over_scrollbar {
             scrollable::Scrollbar {
-                background: self.pallete().hovered_bg_scrollbar_mo.into(),
+                background: self.palette().hovered_bg_scrollbar_mo.into(),
                 scroller: scrollable::Scroller {
-                    color: self.pallete().hovered_bg_scroller_mo,
+                    color: self.palette().hovered_bg_scroller_mo,
                     ..self.active(style).scroller
                 },
                 ..self.active(style)
             }
         } else {
             scrollable::Scrollbar {
-                background: self.pallete().hovered_bg_scrollbar.into(),
+                background: self.palette().hovered_bg_scrollbar.into(),
                 scroller: scrollable::Scroller {
-                    color: self.pallete().hovered_bg_scroller,
+                    color: self.palette().hovered_bg_scroller,
                     ..self.active(style).scroller
                 },
                 ..self.active(style)

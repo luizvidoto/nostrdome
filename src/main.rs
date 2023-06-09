@@ -17,14 +17,10 @@ use components::inform_card;
 use dotenv::dotenv;
 use iced::{executor, subscription, window, Application, Command, Settings};
 use net::{backend_connect, BackEndConnection, BackendEvent};
-// use tracing_appender::{non_blocking, rolling};
 use tracing_subscriber::{
     fmt::SubscriberBuilder, prelude::__tracing_subscriber_SubscriberExt, EnvFilter,
 };
-use views::{
-    settings::{self, appearance},
-    Router,
-};
+use views::Router;
 use widget::Element;
 
 #[derive(Debug, Clone)]
@@ -88,7 +84,10 @@ impl Application for App {
     fn view(&self) -> Element<Self::Message> {
         match &self.state {
             AppState::Loading => inform_card("Loading App", "Please wait...").into(),
-            AppState::Loaded { router, .. } => router.view().map(Message::RouterMessage).into(),
+            AppState::Loaded { router, .. } => router
+                .view(self.color_theme)
+                .map(Message::RouterMessage)
+                .into(),
         }
     }
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
@@ -109,18 +108,12 @@ impl Application for App {
                 }
             }
             Message::RouterMessage(msg) => {
-                if let AppState::Loaded { router, conn } = &mut self.state {
-                    if let views::Message::SettingsMsg(settings_msg) = msg.clone() {
-                        if let settings::Message::AppearanceMessage(appearance_msg) = settings_msg {
-                            if let appearance::Message::ChangeTheme(theme) = appearance_msg {
-                                self.color_theme = Some(theme);
-                            }
-                        }
-                    }
+                if let views::Message::ChangeTheme(theme) = &msg {
+                    self.color_theme = Some(theme.clone());
+                }
 
-                    return router
-                        .update(msg, conn, self.color_theme)
-                        .map(Message::RouterMessage);
+                if let AppState::Loaded { router, conn } = &mut self.state {
+                    return router.update(msg, conn).map(Message::RouterMessage);
                 }
             }
             Message::BackEndEvent(event) => {

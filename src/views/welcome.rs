@@ -1,6 +1,6 @@
 use iced::alignment::Horizontal;
 use iced::widget::{button, column, container, image, row, text, Space};
-use iced::{Alignment, Command, Length, Subscription};
+use iced::{Alignment, Length, Subscription};
 use iced_aw::{Card, Modal};
 
 use crate::components::text_input_group::TextInputGroup;
@@ -15,7 +15,8 @@ use rand::{thread_rng, Rng};
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
-use super::RouterMessage;
+use super::route::Route;
+use super::{RouterCommand, RouterMessage};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -374,19 +375,6 @@ pub struct State {
     pub step_view: StepView,
 }
 impl State {
-    pub fn subscription(&self) -> Subscription<Message> {
-        match &self.step_view {
-            StepView::Relays { relays_added, .. } => {
-                if relays_added.is_empty() {
-                    iced::Subscription::none()
-                } else {
-                    iced::time::every(Duration::from_millis(TICK_INTERVAL_MILLIS))
-                        .map(|_| Message::Tick)
-                }
-            }
-            _ => iced::Subscription::none(),
-        }
-    }
     pub fn new() -> Self {
         Self {
             step_view: StepView::Welcome,
@@ -409,14 +397,30 @@ impl State {
             StepView::LoadingClient => {}
         }
     }
+}
 
-    pub fn update(
+impl Route for State {
+    type Message = Message;
+    fn subscription(&self) -> Subscription<Self::Message> {
+        match &self.step_view {
+            StepView::Relays { relays_added, .. } => {
+                if relays_added.is_empty() {
+                    iced::Subscription::none()
+                } else {
+                    iced::time::every(Duration::from_millis(TICK_INTERVAL_MILLIS))
+                        .map(|_| Message::Tick)
+                }
+            }
+            _ => iced::Subscription::none(),
+        }
+    }
+    fn update(
         &mut self,
         message: Message,
         conn: &mut BackEndConnection,
-    ) -> (Command<Message>, Option<RouterMessage>) {
-        let mut router_message = None;
-        let command = Command::none();
+    ) -> RouterCommand<Self::Message> {
+        let mut command = RouterCommand::new();
+
         match message {
             Message::Tick => {
                 conn.send(ToBackend::GetRelayInformation);
@@ -435,7 +439,7 @@ impl State {
             }
             Message::Logout => {
                 conn.send(ToBackend::Logout);
-                router_message = Some(RouterMessage::GoToLogout);
+                command.change_route(RouterMessage::GoToLogout);
             }
             Message::ToNextStep => self.to_next_step(conn),
             Message::ToPreviousStep => self.to_previous_step(conn),
@@ -500,15 +504,15 @@ impl State {
                 }
             }
         }
-        (command, router_message)
+        command
     }
-    pub fn backend_event(
+
+    fn backend_event(
         &mut self,
         event: BackendEvent,
         conn: &mut BackEndConnection,
-    ) -> (Command<Message>, Option<RouterMessage>) {
-        let command = Command::none();
-        let mut router_message = None;
+    ) -> RouterCommand<Self::Message> {
+        let mut command = RouterCommand::new();
 
         match &mut self.step_view {
             StepView::Relays {
@@ -550,15 +554,16 @@ impl State {
             StepView::Welcome => (),
             StepView::LoadingClient => match event {
                 BackendEvent::FinishedPreparing => {
-                    router_message = Some(RouterMessage::GoToChat);
+                    command.change_route(RouterMessage::GoToChat);
                 }
                 _ => (),
             },
         }
 
-        (command, router_message)
+        command
     }
-    pub fn view(&self) -> Element<Message> {
+
+    fn view(&self, _selected_theme: Option<style::Theme>) -> Element<Self::Message> {
         self.step_view.view()
     }
 }

@@ -14,13 +14,13 @@ impl iced_aw::card::StyleSheet for Theme {
             border_radius: 4.0,
             border_width: 1.0,
             border_color: Color::TRANSPARENT,
-            head_background: self.pallete().chat_search_input_bg.into(),
-            head_text_color: self.pallete().text_color.into(),
-            body_background: self.pallete().background.into(),
-            body_text_color: self.pallete().text_color,
-            foot_background: self.pallete().background.into(),
-            foot_text_color: self.pallete().text_color,
-            close_color: self.pallete().text_color,
+            head_background: self.palette().chat_search_input_bg.into(),
+            head_text_color: self.palette().text_color.into(),
+            body_background: self.palette().background.into(),
+            body_text_color: self.palette().text_color,
+            foot_background: self.palette().background.into(),
+            foot_text_color: self.palette().text_color,
+            close_color: self.palette().text_color,
         }
     }
 }

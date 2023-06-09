@@ -6,7 +6,7 @@ use crate::consts::NOSTRTALK_VERSION;
 use crate::icon::signal_icon;
 use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
-use crate::views::RouterMessage;
+use crate::views::{RouterCommand, RouterMessage};
 use crate::widget::Element;
 
 #[derive(Debug, Clone)]
@@ -44,14 +44,14 @@ impl StatusBar {
         &mut self,
         message: Message,
         conn: &mut BackEndConnection,
-    ) -> (Command<Message>, Option<RouterMessage>) {
-        let mut router_message = None;
+    ) -> RouterCommand<Message> {
+        let mut command = RouterCommand::new();
         match message {
-            Message::GoToAbout => router_message = Some(RouterMessage::GoToAbout),
-            Message::GoToNetwork => router_message = Some(RouterMessage::GoToNetwork),
+            Message::GoToAbout => command.change_route(RouterMessage::GoToAbout),
+            Message::GoToNetwork => command.change_route(RouterMessage::GoToNetwork),
             Message::Tick => conn.send(net::ToBackend::GetRelayStatusList),
         }
-        (Command::none(), router_message)
+        command
     }
     pub fn subscription(&self) -> Subscription<Message> {
         iced::time::every(std::time::Duration::from_millis(TICK_INTERVAL_MILLIS))

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use iced::widget::{button, column, container, image, row, text, tooltip, Space};
-use iced::{clipboard, Length, Subscription};
+use iced::{clipboard, Length};
 use iced_native::widget::text_input;
 
 use crate::components::common_scrollable;
@@ -13,6 +13,8 @@ use crate::types::{ChannelResult, PrefixedId};
 use crate::views::RouterCommand;
 use crate::widget::Rule;
 use crate::{icon::search_icon, style, widget::Element};
+
+use super::route::Route;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -33,14 +35,14 @@ impl State {
             searching: false,
         }
     }
-    pub(crate) fn subscription(&self) -> Subscription<Message> {
-        Subscription::none()
-    }
-    pub(crate) fn update(
+}
+impl Route for State {
+    type Message = Message;
+    fn update(
         &mut self,
         message: Message,
         conn: &mut BackEndConnection,
-    ) -> RouterCommand<Message> {
+    ) -> RouterCommand<Self::Message> {
         let mut commands = RouterCommand::new();
         match message {
             Message::CopyChannelId(id) => {
@@ -57,11 +59,11 @@ impl State {
         }
         commands
     }
-    pub(crate) fn backend_event(
+    fn backend_event(
         &mut self,
         event: BackendEvent,
         conn: &mut BackEndConnection,
-    ) -> RouterCommand<Message> {
+    ) -> RouterCommand<Self::Message> {
         let commands = RouterCommand::new();
 
         match event {
@@ -108,7 +110,7 @@ impl State {
 
         commands
     }
-    pub fn view(&self) -> Element<Message> {
+    fn view(&self, _selected_theme: Option<style::Theme>) -> Element<Self::Message> {
         let title = title("Find Channels");
 
         let searching_text = if self.searching {

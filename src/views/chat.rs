@@ -21,6 +21,7 @@ use self::chat_list_container::ChatListContainer;
 use self::contact_list::ContactList;
 
 use super::modal::{basic_contact, relays_confirmation, ContactDetails, RelaysConfirmation};
+use super::route::Route;
 use super::{RouterCommand, RouterMessage};
 
 static CONTACTS_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
@@ -148,52 +149,6 @@ impl State {
         }
     }
 
-    pub fn view(&self) -> Element<Message> {
-        // --- FIRST SPLIT ---
-        let first_split = self
-            .contact_list
-            .view(
-                &CONTACTS_SCROLLABLE_ID,
-                &self.chats,
-                self.show_only_profile,
-                self.active_idx,
-            )
-            .map(Message::ContactListMsg);
-
-        // ---
-        // --- SECOND SPLIT ---
-        let second_split = self
-            .chat_list_container
-            .view(
-                &CHAT_SCROLLABLE_ID,
-                &CHAT_INPUT_ID,
-                &self.messages,
-                self.active_chat(),
-            )
-            .map(Message::ChatListContainerMsg);
-
-        let main_content = iced_aw::split::Split::new(
-            first_split,
-            second_split,
-            self.ver_divider_position,
-            iced_aw::split::Axis::Vertical,
-            Message::OnVerResize,
-        )
-        .spacing(1.0)
-        .min_size_second(300);
-
-        let float = FloatingElement::new(main_content, || {
-            make_context_menu(&self.last_relays_response)
-        })
-        .on_esc(Message::CloseCtxMenu)
-        .backdrop(Message::CloseCtxMenu)
-        .anchor(Anchor::NorthWest)
-        .offset(self.context_menu_position)
-        .hide(self.hide_context_menu);
-
-        self.modal_state.view(float)
-    }
-
     fn handle_focus_contact(
         &mut self,
         conn: &mut BackEndConnection,
@@ -319,12 +274,61 @@ impl State {
         self.msgs_scroll_offset = scrollable::RelativeOffset::END;
         scrollable::snap_to(CHAT_SCROLLABLE_ID.clone(), self.msgs_scroll_offset)
     }
+}
 
-    pub fn backend_event(
+impl Route for State {
+    type Message = Message;
+    fn view(&self, _selected_theme: Option<style::Theme>) -> Element<Self::Message> {
+        // --- FIRST SPLIT ---
+        let first_split = self
+            .contact_list
+            .view(
+                &CONTACTS_SCROLLABLE_ID,
+                &self.chats,
+                self.show_only_profile,
+                self.active_idx,
+            )
+            .map(Message::ContactListMsg);
+
+        // ---
+        // --- SECOND SPLIT ---
+        let second_split = self
+            .chat_list_container
+            .view(
+                &CHAT_SCROLLABLE_ID,
+                &CHAT_INPUT_ID,
+                &self.messages,
+                self.active_chat(),
+            )
+            .map(Message::ChatListContainerMsg);
+
+        let main_content = iced_aw::split::Split::new(
+            first_split,
+            second_split,
+            self.ver_divider_position,
+            iced_aw::split::Axis::Vertical,
+            Message::OnVerResize,
+        )
+        .spacing(1.0)
+        .min_size_second(300);
+
+        let float = FloatingElement::new(main_content, || {
+            make_context_menu(&self.last_relays_response)
+        })
+        .on_esc(Message::CloseCtxMenu)
+        .backdrop(Message::CloseCtxMenu)
+        .anchor(Anchor::NorthWest)
+        .offset(self.context_menu_position)
+        .hide(self.hide_context_menu);
+
+        self.modal_state.view(float)
+    }
+
+    fn backend_event(
         &mut self,
         event: BackendEvent,
         conn: &mut BackEndConnection,
-    ) -> RouterCommand<Message> {
+    ) -> RouterCommand<Self::Message> {
         let mut commands = RouterCommand::new();
 
         self.modal_state.backend_event(event.clone(), conn);
@@ -506,11 +510,11 @@ impl State {
         commands
     }
 
-    pub fn update(
+    fn update(
         &mut self,
         message: Message,
         conn: &mut BackEndConnection,
-    ) -> RouterCommand<Message> {
+    ) -> RouterCommand<Self::Message> {
         let mut commands = RouterCommand::new();
 
         match message {

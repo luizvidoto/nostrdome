@@ -1,7 +1,7 @@
 use iced::{
     alignment,
     widget::{button, column, container, row, text, Space},
-    Command, Length,
+    Length,
 };
 use nostr::{prelude::FromSkStr, Keys};
 
@@ -12,7 +12,7 @@ use crate::{
     widget::Element,
 };
 
-use super::RouterMessage;
+use super::{route::Route, RouterCommand, RouterMessage};
 
 #[derive(Debug, Clone)]
 pub struct BasicProfile {
@@ -87,41 +87,42 @@ impl State {
             is_profile_pic_invalid: false,
         }
     }
+}
+impl Route for State {
+    type Message = Message;
 
-    pub fn backend_event(
+    fn backend_event(
         &mut self,
         event: BackendEvent,
         conn: &mut BackEndConnection,
-    ) -> (Command<Message>, Option<RouterMessage>) {
-        let mut router_message = None;
-        let command = Command::none();
+    ) -> RouterCommand<Self::Message> {
+        let mut command = RouterCommand::new();
 
         match event {
             BackendEvent::LoginSuccess => {
                 conn.send(ToBackend::QueryFirstLogin);
             }
             BackendEvent::FinishedPreparing => {
-                router_message = Some(RouterMessage::GoToChat);
+                command.change_route(RouterMessage::GoToChat);
             }
             BackendEvent::FirstLoginSuccess => {
-                router_message = Some(RouterMessage::GoToWelcome);
+                command.change_route(RouterMessage::GoToWelcome);
             }
             BackendEvent::CreateAccountSuccess => {
-                router_message = Some(RouterMessage::GoToWelcome);
+                command.change_route(RouterMessage::GoToWelcome);
             }
             _ => (),
         }
 
-        (command, router_message)
+        command
     }
 
-    pub fn update(
+    fn update(
         &mut self,
         message: Message,
         conn: &mut BackEndConnection,
-    ) -> (Command<Message>, Option<RouterMessage>) {
-        let router_message = None;
-        let command = Command::none();
+    ) -> RouterCommand<Self::Message> {
+        let command = RouterCommand::new();
 
         match self {
             State::ChooseAccount => match message {
@@ -169,10 +170,10 @@ impl State {
             },
         }
 
-        (command, router_message)
+        command
     }
 
-    pub fn view(&self) -> Element<Message> {
+    fn view(&self, _selected_theme: Option<style::Theme>) -> Element<Self::Message> {
         let content: Element<_> = match self {
             State::ChooseAccount => {
                 let page_title = title("Sign In").center_x();
