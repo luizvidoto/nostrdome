@@ -1,3 +1,5 @@
+use crate::utils::lighten_color;
+
 use super::Theme;
 use iced::widget::text_input;
 use iced::Color;
@@ -77,7 +79,7 @@ impl text_input::StyleSheet for Theme {
         self.palette().grayish
     }
     fn selection_color(&self, _style: &Self::Style) -> Color {
-        self.palette().primary_lighter
+        lighten_color(self.palette().primary, 0.1)
     }
     fn disabled_color(&self, _style: &Self::Style) -> Color {
         self.palette().grayish

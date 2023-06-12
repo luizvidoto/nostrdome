@@ -3,6 +3,7 @@ use crate::{
     components::chat_contact::ChatContact,
     db::{DbContact, MessageStatus},
     net::ImageKind,
+    style::Theme,
     types::ChannelMetadata,
 };
 use chrono::{DateTime, Local, NaiveDateTime, Offset};
@@ -161,6 +162,9 @@ pub fn relay_doc_or_err(doc: &str, index: &str) -> Result<RelayInformationDocume
 pub fn message_status_or_err(status: i32, index: &str) -> Result<MessageStatus, sqlx::Error> {
     MessageStatus::from_i32(status).map_err(|e| handle_decode_error(e, index))
 }
+pub fn theme_or_err(theme: u8, index: &str) -> Result<Theme, sqlx::Error> {
+    u8::try_into(theme).map_err(|e| handle_decode_error(e, index))
+}
 
 pub fn chat_matches_search(chat: &ChatContact, search: &str) -> bool {
     let selected_name = chat.contact.select_name();
@@ -205,6 +209,20 @@ pub fn add_ellipsis_trunc(s: &str, max_length: usize) -> String {
     } else {
         s.to_string()
     }
+}
+
+pub fn lighten_color(mut color: iced_style::Color, amount: f32) -> iced_style::Color {
+    color.r = (color.r + amount).min(1.0);
+    color.g = (color.g + amount).min(1.0);
+    color.b = (color.b + amount).min(1.0);
+    color
+}
+
+pub fn darken_color(mut color: iced_style::Color, amount: f32) -> iced_style::Color {
+    color.r = (color.r - amount).max(0.0);
+    color.g = (color.g - amount).max(0.0);
+    color.b = (color.b - amount).max(0.0);
+    color
 }
 
 pub fn qr_code_handle(code: &str) -> Result<Handle, Error> {

@@ -76,4 +76,7 @@ pub enum Error {
 
     #[error("{0}")]
     FromUrlParseError(#[from] url::ParseError),
+
+    #[error("Not found theme with id: {0}")]
+    NotFoundTheme(u8),
 }

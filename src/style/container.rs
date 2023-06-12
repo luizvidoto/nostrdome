@@ -1,3 +1,5 @@
+use crate::utils::darken_color;
+
 use super::Theme;
 use iced::widget::container;
 use iced::Color;
@@ -63,7 +65,7 @@ impl container::StyleSheet for Theme {
                 ..def
             },
             Container::SentMessage => container::Appearance {
-                background: self.palette().primary_darker.into(),
+                background: darken_color(self.palette().primary, 0.2).into(),
                 text_color: Color::WHITE.into(),
                 border_radius: 10.0,
                 ..def

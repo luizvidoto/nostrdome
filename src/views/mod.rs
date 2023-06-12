@@ -17,6 +17,7 @@ mod logout;
 pub(crate) mod modal;
 mod route;
 pub(crate) mod settings;
+mod theme_styling;
 pub(crate) mod welcome;
 
 pub struct RouterCommand<M> {
@@ -74,12 +75,12 @@ pub enum RouterMessage {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    ChangeTheme(style::Theme),
     HomeMsg(home::Message),
     SettingsMsg(settings::Message),
     LoginMsg(login::Message),
     LogoutMsg(logout::Message),
     WelcomeMsg(welcome::Message),
+    ThemeStylingMsg(theme_styling::Message),
 }
 pub struct Router {
     previous_state: Option<ViewState>,
@@ -232,18 +233,11 @@ impl ViewState {
     }
 }
 
-fn map_settings_msg(msg: settings::Message) -> Message {
-    match msg {
-        settings::Message::ChangeTheme(theme) => Message::ChangeTheme(theme),
-        other => Message::SettingsMsg(other),
-    }
-}
-
 impl Route for ViewState {
     type Message = Message;
     fn subscription(&self) -> Subscription<Self::Message> {
         match self {
-            ViewState::Settings { state } => state.subscription().map(map_settings_msg),
+            ViewState::Settings { state } => state.subscription().map(Message::SettingsMsg),
             ViewState::Home { state } => state.subscription().map(Message::HomeMsg),
             ViewState::Welcome { state } => state.subscription().map(Message::WelcomeMsg),
             _ => Subscription::none(),
@@ -255,7 +249,7 @@ impl Route for ViewState {
             Self::Home { state } => state.view(selected_theme).map(Message::HomeMsg),
             Self::Login { state } => state.view(selected_theme).map(Message::LoginMsg),
             Self::Logout { state } => state.view(selected_theme).map(Message::LogoutMsg),
-            Self::Settings { state } => state.view(selected_theme).map(map_settings_msg),
+            Self::Settings { state } => state.view(selected_theme).map(Message::SettingsMsg),
         }
     }
     fn backend_event(
@@ -266,7 +260,9 @@ impl Route for ViewState {
         match self {
             ViewState::Logout { state } => state.backend_event(event, conn).map(Message::LogoutMsg),
             ViewState::Home { state } => state.backend_event(event, conn).map(Message::HomeMsg),
-            ViewState::Settings { state } => state.backend_event(event, conn).map(map_settings_msg),
+            ViewState::Settings { state } => {
+                state.backend_event(event, conn).map(Message::SettingsMsg)
+            }
             ViewState::Welcome { state } => {
                 state.backend_event(event, conn).map(Message::WelcomeMsg)
             }

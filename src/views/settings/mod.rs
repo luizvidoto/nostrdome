@@ -155,12 +155,30 @@ impl Settings {
     }
     fn handle_menu_press(&mut self, message: Message, conn: &mut BackEndConnection) {
         match message {
-            Message::MenuAccountPress => self.menu_state = MenuState::account(conn),
-            Message::MenuAppearancePress => self.menu_state = MenuState::Appearance,
-            Message::MenuNetworkPress => self.menu_state = MenuState::network(conn),
-            Message::MenuBackupPress => self.menu_state = MenuState::backup(conn),
-            Message::MenuContactsPress => self.menu_state = MenuState::contacts(conn),
-            Message::MenuAboutPress => self.menu_state = MenuState::about(conn),
+            Message::MenuAccountPress => match self.menu_state {
+                MenuState::Account { .. } => (),
+                _ => self.menu_state = MenuState::account(conn),
+            },
+            Message::MenuAppearancePress => match self.menu_state {
+                MenuState::Appearance { .. } => (),
+                _ => self.menu_state = MenuState::Appearance,
+            },
+            Message::MenuNetworkPress => match self.menu_state {
+                MenuState::Network { .. } => (),
+                _ => self.menu_state = MenuState::network(conn),
+            },
+            Message::MenuBackupPress => match self.menu_state {
+                MenuState::Backup { .. } => (),
+                _ => self.menu_state = MenuState::backup(conn),
+            },
+            Message::MenuContactsPress => match self.menu_state {
+                MenuState::Contacts { .. } => (),
+                _ => self.menu_state = MenuState::contacts(conn),
+            },
+            Message::MenuAboutPress => match self.menu_state {
+                MenuState::About { .. } => (),
+                _ => self.menu_state = MenuState::about(conn),
+            },
             _ => (),
         }
     }
@@ -270,6 +288,9 @@ impl Route for Settings {
         let mut commands = RouterCommand::new();
 
         match message {
+            Message::ChangeTheme(theme) => {
+                conn.send(net::ToBackend::SetTheme(theme));
+            }
             Message::AccountMessage(msg) => {
                 if let MenuState::Account { state } = &mut self.menu_state {
                     match msg {

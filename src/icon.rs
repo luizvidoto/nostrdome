@@ -20,6 +20,10 @@ fn regular_icon(unicode: char) -> Text<'static> {
         .size(20)
 }
 
+pub fn wand_icon() -> Text<'static> {
+    solid_icon('\u{E2CA}')
+}
+
 pub fn refresh_icon() -> Text<'static> {
     solid_icon('\u{F021}')
 }

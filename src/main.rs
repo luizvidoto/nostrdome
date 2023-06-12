@@ -108,16 +108,17 @@ impl Application for App {
                 }
             }
             Message::RouterMessage(msg) => {
-                if let views::Message::ChangeTheme(theme) = &msg {
-                    self.color_theme = Some(theme.clone());
-                }
-
                 if let AppState::Loaded { router, conn } = &mut self.state {
                     return router.update(msg, conn).map(Message::RouterMessage);
                 }
             }
             Message::BackEndEvent(event) => {
                 tracing::trace!("Backend event: {:?}", event);
+
+                if let BackendEvent::ThemeChanged(theme) = &event {
+                    self.color_theme = Some(theme.to_owned());
+                }
+
                 match event {
                     BackendEvent::ShutdownDone => {
                         return window::close();

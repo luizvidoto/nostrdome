@@ -1,10 +1,10 @@
-use iced::widget::{button, column, container, row, Space};
+use iced::widget::{button, column, container, row, Rule, Space};
 use iced::{alignment, Length, Subscription};
 use status_bar::StatusBar;
 
-use crate::components::status_bar;
+use crate::components::{common_scrollable, invisible_scrollable, status_bar};
 use crate::db::DbContact;
-use crate::icon::settings_icon;
+use crate::icon::{settings_icon, wand_icon};
 use crate::net::{BackEndConnection, BackendEvent};
 
 use crate::widget::Text;
@@ -15,16 +15,18 @@ use crate::{
 };
 
 use super::route::Route;
-use super::{chat, find_channels, RouterCommand, RouterMessage};
+use super::{chat, find_channels, theme_styling, RouterCommand, RouterMessage};
 
 #[derive(Debug, Clone)]
 pub enum Message {
     DMsPressed,
     FindChannelsPressed,
     SettingsPressed,
+    ThemeStylingMsg(theme_styling::Message),
     DmsMessage(chat::Message),
     FindChannelsMessage(find_channels::Message),
     StatusBarMessage(status_bar::Message),
+    ThemeStylingPressed,
 }
 pub struct State {
     active_view: ViewState,
@@ -86,6 +88,14 @@ impl Route for State {
         let mut commands = RouterCommand::new();
 
         match message {
+            Message::ThemeStylingPressed => match self.active_view {
+                ViewState::ThemeStyling { .. } => (),
+                _ => {
+                    self.active_view = ViewState::ThemeStyling {
+                        state: theme_styling::State::new(conn),
+                    }
+                }
+            },
             Message::DMsPressed => match self.active_view {
                 ViewState::DMs { .. } => (),
                 _ => {
@@ -117,6 +127,11 @@ impl Route for State {
         commands
     }
     fn view(&self, selected_theme: Option<style::Theme>) -> Element<Self::Message> {
+        let theme_styling_btn = make_menu_btn(
+            self.active_view.is_theme_styling(),
+            wand_icon,
+            Message::ThemeStylingPressed,
+        );
         let dm_btn = make_menu_btn(self.active_view.is_dms(), home_icon, Message::DMsPressed);
         let find_ch_btn = make_menu_btn(
             self.active_view.is_find_channel(),
@@ -124,12 +139,17 @@ impl Route for State {
             Message::FindChannelsPressed,
         );
         let settings_btn = make_menu_btn(false, settings_icon, Message::SettingsPressed);
+        let spacer = container(Rule::horizontal(2))
+            .padding([0, 10])
+            .width(Length::Fill);
+
         let nav_bar = container(
             column![
-                dm_btn,
-                find_ch_btn,
-                Space::with_height(Length::Fill),
-                settings_btn
+                container(invisible_scrollable(
+                    column![dm_btn, spacer, find_ch_btn, theme_styling_btn,].spacing(2)
+                ),)
+                .height(Length::Fill),
+                settings_btn,
             ]
             .spacing(2),
         )
@@ -183,6 +203,7 @@ fn make_menu_btn<'a, M: 'a + Clone>(
 }
 
 pub enum ViewState {
+    ThemeStyling { state: theme_styling::State },
     DMs { state: chat::State },
     FindChannel { state: find_channels::State },
 }
@@ -199,6 +220,13 @@ impl ViewState {
             _ => false,
         }
     }
+
+    fn is_theme_styling(&self) -> bool {
+        match self {
+            ViewState::ThemeStyling { .. } => true,
+            _ => false,
+        }
+    }
 }
 impl Route for ViewState {
     type Message = Message;
@@ -209,6 +237,11 @@ impl Route for ViewState {
     ) -> RouterCommand<Self::Message> {
         let commands = RouterCommand::new();
         match message {
+            Message::ThemeStylingMsg(dms_msg) => {
+                if let ViewState::ThemeStyling { state } = self {
+                    return state.update(dms_msg, conn).map(Message::ThemeStylingMsg);
+                }
+            }
             Message::DmsMessage(dms_msg) => {
                 if let ViewState::DMs { state } = self {
                     return state.update(dms_msg, conn).map(Message::DmsMessage);
@@ -222,6 +255,7 @@ impl Route for ViewState {
                 }
             }
             Message::StatusBarMessage(_) => (),
+            Message::ThemeStylingPressed => (),
             Message::SettingsPressed => (),
             Message::FindChannelsPressed => (),
             Message::DMsPressed => (),
@@ -235,6 +269,9 @@ impl Route for ViewState {
         conn: &mut BackEndConnection,
     ) -> RouterCommand<Self::Message> {
         match self {
+            ViewState::ThemeStyling { state } => state
+                .backend_event(event, conn)
+                .map(Message::ThemeStylingMsg),
             ViewState::DMs { state } => state.backend_event(event, conn).map(Message::DmsMessage),
             ViewState::FindChannel { state } => state
                 .backend_event(event, conn)
@@ -243,6 +280,7 @@ impl Route for ViewState {
     }
     fn subscription(&self) -> Subscription<Self::Message> {
         match self {
+            ViewState::ThemeStyling { state } => state.subscription().map(Message::ThemeStylingMsg),
             ViewState::DMs { state } => state.subscription().map(Message::DmsMessage),
             ViewState::FindChannel { state } => {
                 state.subscription().map(Message::FindChannelsMessage)
@@ -251,6 +289,9 @@ impl Route for ViewState {
     }
     fn view(&self, selected_theme: Option<style::Theme>) -> Element<Self::Message> {
         match self {
+            ViewState::ThemeStyling { state } => {
+                state.view(selected_theme).map(Message::ThemeStylingMsg)
+            }
             ViewState::DMs { state } => state.view(selected_theme).map(Message::DmsMessage),
             ViewState::FindChannel { state } => {
                 state.view(selected_theme).map(Message::FindChannelsMessage)

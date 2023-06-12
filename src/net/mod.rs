@@ -42,6 +42,7 @@ use crate::net::filters::messages_filter;
 use crate::net::filters::user_metadata_filter;
 use crate::net::ntp::spawn_ntp_request;
 use crate::net::reqwest_client::fetch_latest_version;
+use crate::style;
 use crate::types::BackendState;
 use crate::types::ChannelResult;
 use crate::types::ChatMessage;
@@ -640,6 +641,8 @@ pub enum BackendEvent {
     ImageDownloaded(ImageDownloaded),
 
     // ---  ---
+    ThemeChanged(style::Theme),
+    GotTheme(style::Theme),
     GotKeys(Keys),
     GotChatMessages(DbContact, Vec<ChatMessage>),
     GotRelayResponses {
@@ -733,6 +736,8 @@ pub enum ToBackend {
     FetchLatestVersion,
     QueryFirstLogin,
     PrepareClient,
+    SetTheme(style::Theme),
+    GetTheme,
 
     FetchRelayResponsesChatMsg(ChatMessage),
     FetchRelayResponsesUserProfile,
@@ -901,6 +906,16 @@ pub async fn process_message(
             }
         }
         // -----------
+        ToBackend::GetTheme => {
+            let pool = &backend.db_client.pool;
+            let theme = UserConfig::fetch(pool).await?.theme;
+            _ = output.send(BackendEvent::GotTheme(theme)).await;
+        }
+        ToBackend::SetTheme(theme) => {
+            let pool = &backend.db_client.pool;
+            UserConfig::change_theme(pool, theme).await?;
+            _ = output.send(BackendEvent::ThemeChanged(theme)).await;
+        }
         ToBackend::SyncWithNTP => {
             spawn_ntp_request(task_tx.clone());
         }

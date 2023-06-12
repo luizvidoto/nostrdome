@@ -1,5 +1,7 @@
-use crate::net::ntp::{
-    correct_time_with_offset, system_now_microseconds, system_time_to_naive_utc,
+use crate::{
+    net::ntp::{correct_time_with_offset, system_now_microseconds, system_time_to_naive_utc},
+    style::Theme,
+    utils::theme_or_err,
 };
 
 use chrono::NaiveDateTime;
@@ -16,21 +18,44 @@ pub enum Error {
 
     #[error("Error converting to NaiveDateTime UTC: {0}")]
     ErrorConvertingToNaiveUtc(String),
+
+    #[error("Not found theme with id: {0}")]
+    NotFoundTheme(u8),
 }
 
 #[derive(Debug, Clone)]
 pub struct UserConfig {
     pub has_logged_in: bool,
     pub ntp_offset: i64,
+    pub theme: Theme,
 }
 
 impl UserConfig {
+    pub async fn fetch(pool: &SqlitePool) -> Result<UserConfig, Error> {
+        let query = "SELECT * FROM user_config WHERE id = 1;";
+        let user_config: UserConfig = sqlx::query_as(query).fetch_one(pool).await?;
+        Ok(user_config)
+    }
+    pub(crate) async fn change_theme(
+        pool: &sqlx::Pool<sqlx::Sqlite>,
+        theme: Theme,
+    ) -> Result<(), Error> {
+        tracing::debug!("setup_user_config");
+        let query = r#"
+            UPDATE user_config 
+            SET theme = ?
+            WHERE id = 1;
+        "#;
+        let theme: u8 = theme.into();
+        sqlx::query(query).bind(theme).execute(pool).await?;
+        Ok(())
+    }
     pub async fn setup_user_config(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         tracing::debug!("setup_user_config");
         let query = r#"
             INSERT INTO user_config 
-                (id, has_logged_in, ntp_offset) 
-            VALUES (1, 0, 0);
+                (id, has_logged_in, ntp_offset, theme) 
+            VALUES (1, 0, 0, 0);
         "#;
         sqlx::query(query).execute(pool).await?;
         Ok(())
@@ -96,9 +121,12 @@ impl UserConfig {
 
 impl sqlx::FromRow<'_, SqliteRow> for UserConfig {
     fn from_row(row: &'_ SqliteRow) -> Result<Self, sqlx::Error> {
+        let theme: u8 = row.try_get("theme")?;
+        let theme = theme_or_err(theme, "theme")?;
         Ok(Self {
             has_logged_in: row.try_get::<bool, &str>("has_logged_in")?,
             ntp_offset: row.try_get::<i64, &str>("ntp_offset")?,
+            theme,
         })
     }
 }

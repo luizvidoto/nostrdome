@@ -186,11 +186,11 @@ const INITIAL_SETUP: [&str; 8] = [
     include_str!("../../migrations/1_setup.sql"),
     include_str!("../../migrations/2_event.sql"),
     include_str!("../../migrations/3_relay.sql"),
-    include_str!("../../migrations/4_tag.sql"),
     include_str!("../../migrations/5_contact.sql"),
     include_str!("../../migrations/6_message.sql"),
     include_str!("../../migrations/7_user_config.sql"),
     include_str!("../../migrations/8_relay_response.sql"),
+    include_str!("../../migrations/10_subscribed_channel.sql"),
 ];
 
 const CACHE_SETUP: [&str; 4] = [
