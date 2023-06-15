@@ -12,6 +12,7 @@ pub(crate) mod utils;
 pub(crate) mod views;
 pub(crate) mod widget;
 pub(crate) use crate::error::Error;
+mod config;
 
 use components::inform_card;
 use dotenv::dotenv;
@@ -32,9 +33,19 @@ pub enum Message {
 pub enum AppState {
     Loading,
     Loaded {
+        already_sent_shutdown: bool,
         conn: BackEndConnection,
         router: Router,
     },
+}
+impl AppState {
+    fn loaded(conn: BackEndConnection, router: Router) -> AppState {
+        Self::Loaded {
+            already_sent_shutdown: false,
+            conn,
+            router,
+        }
+    }
 }
 
 pub struct App {
@@ -49,10 +60,11 @@ impl Application for App {
     type Flags = ();
 
     fn new(_flags: Self::Flags) -> (Self, Command<Message>) {
+        let config = config::Config::load();
         (
             Self {
                 state: AppState::Loading,
-                color_theme: Some(style::Theme::default()),
+                color_theme: Some(config.theme),
             },
             Command::none(),
         )
@@ -99,17 +111,31 @@ impl Application for App {
                             AppState::Loading => {
                                 return window::close();
                             }
-                            AppState::Loaded { conn, .. } => {
-                                // window::close();
-                                conn.send(net::ToBackend::Shutdown);
+                            AppState::Loaded {
+                                conn,
+                                already_sent_shutdown: shutdown_sent,
+                                ..
+                            } => {
+                                tracing::info!("Shutting down backend");
+                                if *shutdown_sent {
+                                    return window::close();
+                                } else {
+                                    *shutdown_sent = true;
+                                    if let Err(_e) = conn.send(net::ToBackend::Shutdown) {
+                                        return window::close();
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
             Message::RouterMessage(msg) => {
-                if let AppState::Loaded { router, conn } = &mut self.state {
-                    return router.update(msg, conn).map(Message::RouterMessage);
+                if let AppState::Loaded { router, conn, .. } = &mut self.state {
+                    match router.update(msg, conn) {
+                        Ok(cmd) => return cmd.map(Message::RouterMessage),
+                        Err(_e) => return window::close(),
+                    }
                 }
             }
             Message::BackEndEvent(event) => {
@@ -125,13 +151,14 @@ impl Application for App {
                     }
                     BackendEvent::Connected(mut conn) => {
                         let router = Router::new(&mut conn);
-                        self.state = AppState::Loaded { conn, router };
+                        self.state = AppState::loaded(conn, router);
                     }
                     other => match &mut self.state {
                         AppState::Loaded { router, conn, .. } => {
-                            return router
-                                .backend_event(other, conn)
-                                .map(Message::RouterMessage);
+                            match router.backend_event(other, conn) {
+                                Ok(cmd) => return cmd.map(Message::RouterMessage),
+                                Err(_e) => return window::close(),
+                            }
                         }
                         _ => (),
                     },
@@ -147,6 +174,24 @@ impl Application for App {
 async fn main() {
     dotenv().ok();
 
+    setup_logger();
+
+    App::run(Settings {
+        exit_on_close_request: false,
+        id: Some(String::from("nostrtalk")),
+        window: window::Settings {
+            size: (APP_WIDTH, APP_HEIGHT),
+            min_size: Some((APP_MIN_WIDTH, APP_MIN_HEIGHT)),
+            position: window::Position::Centered,
+            ..window::Settings::default()
+        },
+        antialiasing: true,
+        ..Default::default()
+    })
+    .expect("Failed to run app");
+}
+
+fn setup_logger() {
     // Cria um filtro de ambiente que define o nível de log padrão para todas as bibliotecas como ERROR e o nível de log do seu aplicativo como INFO
     let filter = EnvFilter::from_default_env()
         .add_directive("nostrtalk=info".parse().unwrap())
@@ -166,20 +211,6 @@ async fn main() {
         .expect("Failed to set global default subscriber");
 
     tracing::info!("Starting up");
-
-    App::run(Settings {
-        exit_on_close_request: false,
-        id: Some(String::from("nostrtalk")),
-        window: window::Settings {
-            size: (APP_WIDTH, APP_HEIGHT),
-            min_size: Some((APP_MIN_WIDTH, APP_MIN_HEIGHT)),
-            position: window::Position::Centered,
-            ..window::Settings::default()
-        },
-        antialiasing: true,
-        ..Default::default()
-    })
-    .expect("Failed to run app");
 }
 
 const APP_WIDTH: u32 = 800;

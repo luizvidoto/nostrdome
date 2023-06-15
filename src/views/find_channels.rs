@@ -1,26 +1,26 @@
 use std::collections::HashMap;
 
-use iced::widget::{button, column, container, image, row, text, tooltip, Space};
-use iced::{clipboard, Length};
+use iced::widget::{button, column, container, image, row, text, Space};
+use iced::Length;
 use iced_native::widget::text_input;
 
 use crate::components::common_scrollable;
 use crate::components::text::title;
 use crate::consts::{MEDIUM_CHANNEL_IMG_HEIGHT, MEDIUM_CHANNEL_IMG_WIDTH, YMD_FORMAT};
-use crate::icon::copy_icon;
+use crate::error::BackendClosed;
 use crate::net::{BackEndConnection, BackendEvent, ToBackend};
 use crate::types::{ChannelResult, PrefixedId};
 use crate::views::RouterCommand;
 use crate::widget::Rule;
 use crate::{icon::search_icon, style, widget::Element};
 
-use super::route::Route;
+use super::home::HomeRouterMessage;
 
 #[derive(Debug, Clone)]
 pub enum Message {
     SearchInputChanged(String),
     SubmitPress,
-    CopyChannelId(nostr::EventId),
+    ChannelPressed(ChannelResult),
 }
 pub struct State {
     search_results: HashMap<PrefixedId, ChannelResult>,
@@ -35,18 +35,14 @@ impl State {
             searching: false,
         }
     }
-}
-impl Route for State {
-    type Message = Message;
-    fn update(
+    pub fn update(
         &mut self,
         message: Message,
         conn: &mut BackEndConnection,
-    ) -> RouterCommand<Self::Message> {
-        let mut commands = RouterCommand::new();
+    ) -> Result<Option<HomeRouterMessage>, BackendClosed> {
         match message {
-            Message::CopyChannelId(id) => {
-                commands.push(clipboard::write(id.to_hex()));
+            Message::ChannelPressed(result) => {
+                return Ok(Some(HomeRouterMessage::GoToChannel(result)));
             }
             Message::SearchInputChanged(text) => {
                 self.search_input_value = text;
@@ -54,16 +50,17 @@ impl Route for State {
             Message::SubmitPress => {
                 self.searching = false;
                 self.search_results = HashMap::new();
-                conn.send(ToBackend::FindChannels(self.search_input_value.clone()))
+                conn.send(ToBackend::FindChannels(self.search_input_value.clone()))?;
             }
         }
-        commands
+
+        Ok(None)
     }
-    fn backend_event(
+    pub fn backend_event(
         &mut self,
         event: BackendEvent,
         conn: &mut BackEndConnection,
-    ) -> RouterCommand<Self::Message> {
+    ) -> Result<RouterCommand<Message>, BackendClosed> {
         let commands = RouterCommand::new();
 
         match event {
@@ -76,9 +73,9 @@ impl Route for State {
             BackendEvent::EOSESearchChannels(_url) => {
                 self.searching = false;
             }
-            BackendEvent::SearchChannelMetaUpdate(channel_id, cache) => {
+            BackendEvent::SearchChannelCacheUpdated(channel_id, cache) => {
                 if let Some(result) = self.search_results.get_mut(&channel_id) {
-                    result.update_cache(cache, conn);
+                    result.update_cache(cache, conn)?;
                 }
             }
             BackendEvent::SearchChannelMessage(channel_id, pubkey) => {
@@ -108,9 +105,9 @@ impl Route for State {
             _ => (),
         }
 
-        commands
+        Ok(commands)
     }
-    fn view(&self, _selected_theme: Option<style::Theme>) -> Element<Self::Message> {
+    pub fn view(&self, _selected_theme: Option<style::Theme>) -> Element<Message> {
         let title = title("Find Channels");
 
         let searching_text = if self.searching {
@@ -139,7 +136,12 @@ impl Route for State {
         let results_container = self
             .search_results
             .iter()
-            .fold(column![], |acc, (_, result)| acc.push(make_results(result)));
+            .fold(column![], |acc, (_, result)| {
+                acc.push(channel_card(
+                    result,
+                    Message::ChannelPressed(result.to_owned()),
+                ))
+            });
 
         common_scrollable(
             container(column![
@@ -155,7 +157,7 @@ impl Route for State {
     }
 }
 
-fn make_results<'a>(channel: &ChannelResult) -> Element<'a, Message> {
+fn channel_card<'a, M: 'a + Clone>(channel: &ChannelResult, on_channel_press: M) -> Element<'a, M> {
     let image_container = container(image(channel.image_handle.to_owned()))
         .width(MEDIUM_CHANNEL_IMG_WIDTH)
         .height(MEDIUM_CHANNEL_IMG_HEIGHT)
@@ -172,16 +174,6 @@ fn make_results<'a>(channel: &ChannelResult) -> Element<'a, Message> {
     ))
     .max_height(MEDIUM_CHANNEL_IMG_HEIGHT - BOTTOM_ROW_HEIGHT - 10);
 
-    let copy_btn = tooltip(
-        button(copy_icon().size(14))
-            .padding(2)
-            .on_press(Message::CopyChannelId(channel.full_id.to_owned()))
-            .style(style::Button::Primary),
-        "Copy Channel Id",
-        tooltip::Position::Top,
-    )
-    .style(style::Container::TooltipBg);
-
     let bottom_row_ct = container(
         row![
             text(format!("Members: {}", &channel.members.len())).size(14),
@@ -190,7 +182,6 @@ fn make_results<'a>(channel: &ChannelResult) -> Element<'a, Message> {
                 channel.created_at().format(YMD_FORMAT)
             ))
             .size(14),
-            copy_btn
         ]
         .spacing(4),
     )
@@ -218,7 +209,10 @@ fn make_results<'a>(channel: &ChannelResult) -> Element<'a, Message> {
 
     container(
         column![
-            row![image_container, channel_about, loading_ct].spacing(20),
+            button(row![image_container, channel_about, loading_ct].spacing(20))
+                .padding(0)
+                .style(style::Button::Invisible)
+                .on_press(on_channel_press),
             Rule::horizontal(10)
         ]
         .spacing(10),

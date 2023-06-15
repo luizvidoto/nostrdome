@@ -4,6 +4,15 @@ use thiserror::Error;
 /// Errors that can occur in the nostrtalk crate
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("{0}")]
+    FromConfigError(#[from] crate::config::Error),
+
+    #[error("{0}")]
+    FromDbChannelMessageError(#[from] crate::db::channel_message::Error),
+
+    #[error("{0}")]
+    FromChannelSubscriptionError(#[from] crate::db::channel_subscription::Error),
+
     #[error("SendError: {0}")]
     FromSendError(#[from] mpsc::SendError),
 
@@ -77,6 +86,14 @@ pub enum Error {
     #[error("{0}")]
     FromUrlParseError(#[from] url::ParseError),
 
-    #[error("Not found theme with id: {0}")]
-    NotFoundTheme(u8),
+    #[error("Closed backend channel")]
+    ClosedBackend(#[from] BackendClosed),
+}
+
+#[derive(Error, Debug)]
+pub struct BackendClosed;
+impl std::fmt::Display for BackendClosed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(Backend channel closed)")
+    }
 }

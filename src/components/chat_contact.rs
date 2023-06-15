@@ -6,6 +6,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::consts::YMD_FORMAT;
 use crate::db::{DbContact, ImageDownloaded};
+use crate::error::BackendClosed;
 use crate::net::{self, BackEndConnection, ImageSize};
 use crate::style;
 use crate::types::ChatMessage;
@@ -87,17 +88,21 @@ pub struct ChatContact {
 }
 
 impl ChatContact {
-    pub fn new(id: i32, db_contact: &DbContact, conn: &mut BackEndConnection) -> Self {
-        conn.send(net::ToBackend::FetchChatInfo(db_contact.clone()));
+    pub fn new(
+        id: i32,
+        db_contact: &DbContact,
+        conn: &mut BackEndConnection,
+    ) -> Result<Self, BackendClosed> {
+        conn.send(net::ToBackend::FetchChatInfo(db_contact.clone()))?;
         let size = ImageSize::Small;
-        let profile_img_handle = db_contact.profile_image(size, conn);
-        Self {
+        let profile_img_handle = db_contact.profile_image(size, conn)?;
+        Ok(Self {
             id,
             mode: CardMode::Full,
             contact: db_contact.clone(),
             profile_img_handle,
             chat_info: ChatInfo::default(),
-        }
+        })
     }
     pub fn view(&self, active_id: Option<i32>) -> Element<MessageWrapper> {
         let size = ImageSize::Small;
@@ -203,9 +208,14 @@ impl ChatContact {
         let path = image.sized_image(ImageSize::Small);
         self.profile_img_handle = Handle::from_path(path);
     }
-    pub fn update_contact(&mut self, db_contact: DbContact, conn: &mut BackEndConnection) {
-        self.profile_img_handle = db_contact.profile_image(ImageSize::Small, conn);
+    pub fn update_contact(
+        &mut self,
+        db_contact: DbContact,
+        conn: &mut BackEndConnection,
+    ) -> Result<(), BackendClosed> {
+        self.profile_img_handle = db_contact.profile_image(ImageSize::Small, conn)?;
         self.contact = db_contact;
+        Ok(())
     }
     pub fn small_mode(&mut self) {
         self.mode = CardMode::Small;

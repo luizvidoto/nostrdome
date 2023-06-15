@@ -24,6 +24,7 @@ pub enum SubName {
     Messages,
     SearchChannels,
     SearchChannelsDetails(PrefixedId),
+    Channels,
 }
 impl SubName {
     pub fn src_channel_details(channel_id: &nostr::EventId) -> Self {
@@ -36,6 +37,7 @@ impl SubName {
             "ContactListMetadata" => Some(SubName::ContactListMetadata),
             "UserMetadata" => Some(SubName::UserMetadata),
             "Messages" => Some(SubName::Messages),
+            "Channels" => Some(SubName::Channels),
             "SearchChannels" => Some(SubName::SearchChannels),
             _ => {
                 if str.starts_with("SrcChannelDts_") {
@@ -56,6 +58,7 @@ impl std::fmt::Display for SubName {
             SubName::ContactListMetadata => write!(f, "ContactListMetadata"),
             SubName::UserMetadata => write!(f, "UserMetadata"),
             SubName::Messages => write!(f, "Messages"),
+            SubName::Channels => write!(f, "Channels"),
             SubName::SearchChannels => write!(f, "SearchChannels"),
             SubName::SearchChannelsDetails(prefixed) => {
                 write!(f, "SrcChannelDts_{}", &prefixed)

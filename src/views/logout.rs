@@ -1,4 +1,5 @@
 use crate::components::inform_card;
+use crate::error::BackendClosed;
 use crate::net::{BackEndConnection, BackendEvent};
 use crate::style;
 use crate::widget::Element;
@@ -21,13 +22,13 @@ impl Route for State {
         &mut self,
         event: BackendEvent,
         _conn: &mut BackEndConnection,
-    ) -> RouterCommand<Self::Message> {
+    ) -> Result<RouterCommand<Self::Message>, BackendClosed> {
         let mut command = RouterCommand::new();
         match event {
             BackendEvent::LogoutSuccess => command.change_route(RouterMessage::GoToLogin),
             _ => (),
         }
-        command
+        Ok(command)
     }
 
     fn view(&self, _selected_theme: Option<style::Theme>) -> Element<'_, Self::Message> {

@@ -1,12 +1,13 @@
 use iced::{
     alignment,
     widget::{button, column, container, row, text, Space},
-    Length,
+    Alignment, Length,
 };
 use nostr::{prelude::FromSkStr, Keys};
 
 use crate::{
     components::{text::title, text_input_group::TextInputGroup},
+    error::BackendClosed,
     net::{BackEndConnection, BackendEvent, ToBackend},
     style,
     widget::Element,
@@ -95,12 +96,12 @@ impl Route for State {
         &mut self,
         event: BackendEvent,
         conn: &mut BackEndConnection,
-    ) -> RouterCommand<Self::Message> {
+    ) -> Result<RouterCommand<Self::Message>, BackendClosed> {
         let mut command = RouterCommand::new();
 
         match event {
             BackendEvent::LoginSuccess => {
-                conn.send(ToBackend::QueryFirstLogin);
+                conn.send(ToBackend::QueryFirstLogin)?;
             }
             BackendEvent::FinishedPreparing => {
                 command.change_route(RouterMessage::GoToChat);
@@ -114,14 +115,14 @@ impl Route for State {
             _ => (),
         }
 
-        command
+        Ok(command)
     }
 
     fn update(
         &mut self,
         message: Message,
         conn: &mut BackEndConnection,
-    ) -> RouterCommand<Self::Message> {
+    ) -> Result<RouterCommand<Self::Message>, BackendClosed> {
         let command = RouterCommand::new();
 
         match self {
@@ -144,7 +145,7 @@ impl Route for State {
                 }
                 Message::ToChooseAccount => *self = Self::new(),
                 Message::CreateAccountSubmit(profile) => {
-                    conn.send(ToBackend::CreateAccount(profile.into()));
+                    conn.send(ToBackend::CreateAccount(profile.into()))?;
                 }
                 _ => (),
             },
@@ -158,7 +159,7 @@ impl Route for State {
                 }
                 Message::SubmitPress(secret_key) => match Keys::from_sk_str(&secret_key) {
                     Ok(keys) => {
-                        conn.send(ToBackend::LoginWithSK(keys));
+                        conn.send(ToBackend::LoginWithSK(keys))?;
                     }
                     Err(e) => {
                         tracing::error!("Invalid secret key: {}", e);
@@ -170,42 +171,15 @@ impl Route for State {
             },
         }
 
-        command
+        Ok(command)
     }
 
     fn view(&self, _selected_theme: Option<style::Theme>) -> Element<Self::Message> {
         let content: Element<_> = match self {
             State::ChooseAccount => {
                 let page_title = title("Sign In").center_x();
-                let create_acc_btn = button(
-                    container(
-                        text("Create Nostr Account")
-                            .horizontal_alignment(alignment::Horizontal::Center)
-                            .vertical_alignment(alignment::Vertical::Center),
-                    )
-                    .center_x()
-                    .center_y()
-                    .width(Length::Fill)
-                    .height(Length::Fill),
-                )
-                .on_press(Message::ToCreateAccount)
-                .width(Length::Fill)
-                .height(Length::Fill);
-
-                let import_acc_btn = button(
-                    container(
-                        text("Import With Keys")
-                            .horizontal_alignment(alignment::Horizontal::Center)
-                            .vertical_alignment(alignment::Vertical::Center),
-                    )
-                    .center_x()
-                    .center_y()
-                    .width(Length::Fill)
-                    .height(Length::Fill),
-                )
-                .on_press(Message::ToImportAccount)
-                .width(Length::Fill)
-                .height(Length::Fill);
+                let create_acc_btn = big_button("Create Nostr Account", Message::ToCreateAccount);
+                let import_acc_btn = big_button("Import With Keys", Message::ToImportAccount);
 
                 let buttons = row![create_acc_btn, import_acc_btn]
                     .height(100.0)
@@ -231,9 +205,10 @@ impl Route for State {
                 );
 
                 let back_btn = button("Back")
-                    .style(style::Button::MenuBtn)
+                    .padding(10)
+                    .style(style::Button::Invisible)
                     .on_press(Message::ToChooseAccount);
-                let mut submit_btn = button("Submit");
+                let mut submit_btn = button("Submit").padding(10).style(style::Button::Primary);
 
                 if *is_profile_pic_invalid {
                     profile_pic_input = profile_pic_input.invalid("Invalid profile picture URL");
@@ -243,8 +218,9 @@ impl Route for State {
                     ));
                 }
 
-                let buttons =
-                    row![back_btn, Space::with_width(Length::Fill), submit_btn].spacing(10);
+                let buttons = row![back_btn, Space::with_width(Length::Fill), submit_btn]
+                    .align_items(Alignment::Center)
+                    .spacing(10);
                 column![
                     title("Create Nostr Account"),
                     name_input.build(),
@@ -272,12 +248,16 @@ impl Route for State {
                 }
 
                 let back_btn = button("Back")
-                    .style(style::Button::MenuBtn)
+                    .style(style::Button::Invisible)
+                    .padding(10)
                     .on_press(Message::ToChooseAccount);
-                let submit_btn =
-                    button("Submit").on_press(Message::SubmitPress(secret_key_input.clone()));
-                let buttons =
-                    row![back_btn, Space::with_width(Length::Fill), submit_btn].spacing(10);
+                let submit_btn = button("Submit")
+                    .padding(10)
+                    .style(style::Button::Primary)
+                    .on_press(Message::SubmitPress(secret_key_input.clone()));
+                let buttons = row![back_btn, Space::with_width(Length::Fill), submit_btn]
+                    .align_items(Alignment::Center)
+                    .spacing(10);
                 column![title("Login"), secret_input.build(), buttons]
                     .spacing(20)
                     .into()
@@ -287,14 +267,33 @@ impl Route for State {
         let form = container(content)
             .width(400.0)
             .padding(30)
-            .style(style::Container::ContactList);
+            .style(style::Container::Frame);
 
         container(form)
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x()
             .center_y()
-            .style(style::Container::ChatContainer)
+            .style(style::Container::Background)
             .into()
     }
+}
+
+fn big_button(title: &str, message: Message) -> Element<'static, Message> {
+    button(
+        container(
+            text(title)
+                .horizontal_alignment(alignment::Horizontal::Center)
+                .vertical_alignment(alignment::Vertical::Center),
+        )
+        .center_x()
+        .center_y()
+        .width(Length::Fill)
+        .height(Length::Fill),
+    )
+    .on_press(message)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(style::Button::Primary)
+    .into()
 }

@@ -1,59 +1,60 @@
 use super::Theme;
 use iced::widget::scrollable;
-use iced::Color;
+use iced::{color, Background, Color};
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Default, Debug, Clone, Copy)]
 pub enum Scrollable {
     #[default]
-    Default,
+    Description,
+    Dark,
 }
 
-const SCROLLABLE_BORDER_RADIUS: f32 = 4.0;
 impl scrollable::StyleSheet for Theme {
     type Style = Scrollable;
 
-    fn active(&self, _style: &Self::Style) -> scrollable::Scrollbar {
-        scrollable::Scrollbar {
-            background: Color::TRANSPARENT.into(),
-            border_radius: SCROLLABLE_BORDER_RADIUS,
-            border_width: 1.0,
+    fn active(&self, style: &Self::Style) -> scrollable::Scrollbar {
+        let from_appearance = |c: Color, d: Color| scrollable::Scrollbar {
+            background: Some(Background::Color(c)),
+            border_radius: 5.0,
+            border_width: 0.0,
             border_color: Color::TRANSPARENT,
             scroller: scrollable::Scroller {
-                color: Color::TRANSPARENT,
-                border_radius: SCROLLABLE_BORDER_RADIUS,
+                color: d,
+                border_radius: 5.0,
                 border_width: 1.0,
-                border_color: Color::TRANSPARENT,
+                border_color: self.palette().base.foreground,
             },
+        };
+        //
+        let color = (
+            self.palette().base.background,
+            self.palette().base.foreground,
+        );
+        match style {
+            Scrollable::Description => from_appearance(color.0, color.1),
+            Scrollable::Dark => from_appearance(color.1, color.0),
         }
     }
-    fn dragging(&self, style: &Self::Style) -> scrollable::Scrollbar {
+
+    fn hovered(&self, style: &Self::Style, hovered: bool) -> scrollable::Scrollbar {
         scrollable::Scrollbar {
             scroller: scrollable::Scroller {
-                color: self.palette().text_color,
-                ..self.hovered(style, true).scroller
+                color: if hovered {
+                    self.palette().normal.primary
+                } else {
+                    self.active(style).scroller.color
+                },
+                ..self.active(style).scroller
             },
-            ..self.hovered(style, true)
+            ..self.active(style)
         }
     }
-    fn hovered(&self, style: &Self::Style, is_mouse_over_scrollbar: bool) -> scrollable::Scrollbar {
-        if is_mouse_over_scrollbar {
-            scrollable::Scrollbar {
-                background: self.palette().hovered_bg_scrollbar_mo.into(),
-                scroller: scrollable::Scroller {
-                    color: self.palette().hovered_bg_scroller_mo,
-                    ..self.active(style).scroller
-                },
-                ..self.active(style)
-            }
-        } else {
-            scrollable::Scrollbar {
-                background: self.palette().hovered_bg_scrollbar.into(),
-                scroller: scrollable::Scroller {
-                    color: self.palette().hovered_bg_scroller,
-                    ..self.active(style).scroller
-                },
-                ..self.active(style)
-            }
+
+    fn dragging(&self, style: &Self::Style) -> scrollable::Scrollbar {
+        let hovered = self.hovered(style, true);
+        scrollable::Scrollbar {
+            scroller: scrollable::Scroller { ..hovered.scroller },
+            ..hovered
         }
     }
 }

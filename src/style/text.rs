@@ -1,24 +1,44 @@
-use super::Theme;
+use super::{ColorPalette, Theme};
 use iced::widget::text;
 use iced::Color;
+use ns_client::RelayStatus;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub enum Text {
     #[default]
     Default,
     Inverted,
+    Normal,
     Primary,
     Danger,
-    ChatMessageStatus,
-    ChatMessageDate,
     Placeholder,
-
-    RelayStatusInitialized,
-    RelayStatusConnected,
-    RelayStatusConnecting,
-    RelayStatusDisconnected,
-    RelayStatusTerminated,
-    RelayStatusLoading,
+    Color(Color),
+    Alpha(f32),
+    RelayStatus(Option<RelayStatus>),
+}
+impl Text {
+    fn relay_status(palette: ColorPalette, status: Option<RelayStatus>) -> text::Appearance {
+        match status {
+            // Text::RelayStatusInitialized => text::Appearance {
+            //     color: Color::from_rgb8(76, 175, 80).into(),
+            // },
+            Some(RelayStatus::Disconnected) => text::Appearance {
+                color: palette.normal.secondary.into(),
+            },
+            Some(RelayStatus::Connected) => text::Appearance {
+                color: palette.normal.success.into(),
+            },
+            Some(RelayStatus::Connecting) => text::Appearance {
+                color: palette.normal.primary.into(),
+            },
+            Some(RelayStatus::Terminated) => text::Appearance {
+                color: palette.normal.error.into(),
+            },
+            None => text::Appearance {
+                color: palette.base.text.into(),
+            },
+        }
+    }
 }
 
 impl text::StyleSheet for Theme {
@@ -26,43 +46,31 @@ impl text::StyleSheet for Theme {
 
     fn appearance(&self, style: Self::Style) -> text::Appearance {
         match style {
-            Text::Default => text::Appearance { color: None },
+            Text::Default => text::Appearance::default(),
             Text::Inverted => text::Appearance {
-                color: self.palette().background.into(),
+                color: self.palette().base.background.into(),
+            },
+            Text::Normal => text::Appearance {
+                color: self.palette().base.text.into(),
             },
             Text::Primary => text::Appearance {
-                color: self.palette().primary.into(),
+                color: self.palette().normal.primary.into(),
             },
             Text::Danger => text::Appearance {
-                color: self.palette().danger.into(),
-            },
-            Text::ChatMessageStatus => text::Appearance {
-                color: self.palette().primary.into(),
-            },
-            Text::ChatMessageDate => text::Appearance {
-                color: self.palette().primary_opaque.into(),
+                color: self.palette().normal.error.into(),
             },
             Text::Placeholder => text::Appearance {
-                color: self.palette().grayish.into(),
+                color: self.palette().base.comment.into(),
             },
-            Text::RelayStatusInitialized => text::Appearance {
-                color: Color::from_rgb8(76, 175, 80).into(),
-            },
-            Text::RelayStatusConnected => text::Appearance {
-                color: Color::from_rgb8(27, 94, 32).into(),
-            },
-            Text::RelayStatusConnecting => text::Appearance {
-                color: Color::from_rgb8(255, 235, 59).into(),
-            },
-            Text::RelayStatusDisconnected => text::Appearance {
-                color: Color::from_rgb8(255, 152, 0).into(),
-            },
-            Text::RelayStatusTerminated => text::Appearance {
-                color: Color::from_rgb8(229, 57, 53).into(),
-            },
-            Text::RelayStatusLoading => text::Appearance {
-                color: Color::from_rgb8(220, 220, 220).into(),
-            },
+            Text::Color(c) => text::Appearance { color: Some(c) },
+            Text::Alpha(a) => {
+                let mut color = self.palette().base.text;
+                color.a = a;
+                text::Appearance {
+                    color: color.into(),
+                }
+            }
+            Text::RelayStatus(status_opt) => Text::relay_status(self.palette(), status_opt),
         }
     }
 }

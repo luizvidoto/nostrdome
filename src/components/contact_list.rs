@@ -45,7 +45,7 @@ impl ContactList {
             let contact_list = chats
                 .iter()
                 .filter(|chat| chat_matches_search(&chat, &self.search_input))
-                .fold(column![].spacing(0), |col, chat| {
+                .fold(column![].padding(8).spacing(4), |col, chat| {
                     col.push(chat.view(active_idx).map(|m| match m.message {
                         chat_contact::Message::ContactPress(idx) => Message::ContactPress(idx),
                     }))
@@ -73,7 +73,7 @@ impl ContactList {
         container(column![search_container, contact_list])
             .height(Length::Fill)
             .width(Length::Fill)
-            .style(style::Container::ContactList)
+            .style(style::Container::Frame)
             .into()
     }
 }

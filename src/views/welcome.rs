@@ -6,6 +6,7 @@ use iced_aw::{Card, Modal};
 use crate::components::text_input_group::TextInputGroup;
 use crate::components::{common_scrollable, inform_card, relay_row, RelayRow};
 use crate::consts::{NOSTR_RESOURCES_LINK, RELAYS_IMAGE, RELAY_SUGGESTIONS, WELCOME_IMAGE};
+use crate::error::BackendClosed;
 use crate::icon::{regular_circle_icon, solid_circle_icon};
 use crate::net::{BackEndConnection, BackendEvent, ToBackend};
 use crate::style;
@@ -123,23 +124,23 @@ pub enum StepView {
     LoadingClient,
 }
 impl StepView {
-    fn relays_view(conn: &mut BackEndConnection) -> Self {
-        conn.send(ToBackend::FetchRelays);
+    fn relays_view(conn: &mut BackEndConnection) -> Result<Self, BackendClosed> {
+        conn.send(ToBackend::FetchRelays)?;
 
         let relays_suggestion: Vec<_> = RELAY_SUGGESTIONS
             .iter()
             .filter_map(|s| nostr::Url::parse(s).ok())
             .collect();
 
-        Self::Relays {
+        Ok(Self::Relays {
             relays_suggestion,
             relays_added: vec![],
             add_relay_modal: ModalState::Off,
-        }
+        })
     }
-    fn loading_client(conn: &mut BackEndConnection) -> StepView {
-        conn.send(ToBackend::PrepareClient);
-        Self::LoadingClient
+    fn loading_client(conn: &mut BackEndConnection) -> Result<StepView, BackendClosed> {
+        conn.send(ToBackend::PrepareClient)?;
+        Ok(Self::LoadingClient)
     }
     fn get_step(&self) -> u8 {
         match self {
@@ -380,14 +381,17 @@ impl State {
             step_view: StepView::Welcome,
         }
     }
-    fn to_next_step(&mut self, conn: &mut BackEndConnection) {
+    fn to_next_step(&mut self, conn: &mut BackEndConnection) -> Result<(), BackendClosed> {
         match &self.step_view {
             StepView::Welcome => {
-                self.step_view = StepView::relays_view(conn);
+                self.step_view = StepView::relays_view(conn)?;
             }
-            StepView::Relays { .. } => self.step_view = StepView::loading_client(conn),
+            StepView::Relays { .. } => {
+                self.step_view = StepView::loading_client(conn)?;
+            }
             StepView::LoadingClient => {}
         }
+        Ok(())
     }
     fn to_previous_step(&mut self, _conn: &mut BackEndConnection) {
         match &self.step_view {
@@ -418,12 +422,12 @@ impl Route for State {
         &mut self,
         message: Message,
         conn: &mut BackEndConnection,
-    ) -> RouterCommand<Self::Message> {
+    ) -> Result<RouterCommand<Self::Message>, BackendClosed> {
         let mut command = RouterCommand::new();
 
         match message {
             Message::Tick => {
-                conn.send(ToBackend::GetRelayInformation);
+                conn.send(ToBackend::GetRelayInformation)?;
             }
             Message::OpenLink(url) => {
                 if let Err(e) = webbrowser::open(url) {
@@ -433,26 +437,28 @@ impl Route for State {
             Message::RelayMessage(msg) => {
                 if let StepView::Relays { relays_added, .. } = &mut self.step_view {
                     if let Some(row) = relays_added.iter_mut().find(|r| r.id == msg.from) {
-                        let _ = row.update(msg.message, conn);
+                        let _ = row.update(msg.message, conn)?;
                     }
                 }
             }
             Message::Logout => {
-                conn.send(ToBackend::Logout);
+                conn.send(ToBackend::Logout)?;
                 command.change_route(RouterMessage::GoToLogout);
             }
-            Message::ToNextStep => self.to_next_step(conn),
+            Message::ToNextStep => {
+                self.to_next_step(conn)?;
+            }
             Message::ToPreviousStep => self.to_previous_step(conn),
             Message::AddRelay(relay_url) => {
                 if let StepView::Relays { .. } = &mut self.step_view {
-                    conn.send(ToBackend::AddRelay(relay_url));
+                    conn.send(ToBackend::AddRelay(relay_url))?;
                 }
             }
             Message::AddAllRelays => {
                 if let StepView::Relays { .. } = &mut self.step_view {
                     for relay_url in RELAY_SUGGESTIONS {
                         if let Ok(relay_url) = nostr::Url::parse(relay_url) {
-                            conn.send(ToBackend::AddRelay(relay_url));
+                            conn.send(ToBackend::AddRelay(relay_url))?;
                         }
                     }
                 }
@@ -488,7 +494,7 @@ impl Route for State {
                 {
                     match nostr::Url::parse(&relay_url) {
                         Ok(url) => {
-                            conn.send(ToBackend::AddRelay(url));
+                            conn.send(ToBackend::AddRelay(url))?;
                             add_relay_modal.close();
                         }
                         Err(_e) => add_relay_modal.error(),
@@ -504,14 +510,14 @@ impl Route for State {
                 }
             }
         }
-        command
+        Ok(command)
     }
 
     fn backend_event(
         &mut self,
         event: BackendEvent,
-        conn: &mut BackEndConnection,
-    ) -> RouterCommand<Self::Message> {
+        _conn: &mut BackEndConnection,
+    ) -> Result<RouterCommand<Self::Message>, BackendClosed> {
         let mut command = RouterCommand::new();
 
         match &mut self.step_view {
@@ -525,7 +531,7 @@ impl Route for State {
                         .iter_mut()
                         .find(|row| row.db_relay.url == db_relay.url)
                     {
-                        let _ = row.update(relay_row::Message::RelayUpdated(db_relay), conn);
+                        row.relay_updated(db_relay);
                     } else {
                         tracing::warn!("Got information for unknown relay: {}", db_relay.url);
                     }
@@ -538,12 +544,12 @@ impl Route for State {
                     *relays_added = db_relays
                         .into_iter()
                         .enumerate()
-                        .map(|(idx, db_relay)| RelayRow::new(idx as i32, db_relay, conn))
+                        .map(|(idx, db_relay)| RelayRow::new(idx as i32, db_relay))
                         .collect();
                 }
                 BackendEvent::RelayCreated(db_relay) => {
                     relays_suggestion.retain(|url| url != &db_relay.url);
-                    relays_added.push(RelayRow::new(relays_added.len() as i32, db_relay, conn));
+                    relays_added.push(RelayRow::new(relays_added.len() as i32, db_relay));
                 }
                 BackendEvent::RelayDeleted(url) => {
                     relays_added.retain(|row| &row.db_relay.url != &url);
@@ -560,7 +566,7 @@ impl Route for State {
             },
         }
 
-        command
+        Ok(command)
     }
 
     fn view(&self, _selected_theme: Option<style::Theme>) -> Element<Self::Message> {

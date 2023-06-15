@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use crate::{
     consts::default_channel_image,
     db::{ChannelCache, ImageDownloaded},
+    error::BackendClosed,
     net::{BackEndConnection, ImageKind, ImageSize, ToBackend},
 };
 use chrono::NaiveDateTime;
@@ -16,7 +17,7 @@ use super::PrefixedId;
 #[derive(Debug, Clone)]
 pub struct ChannelResult {
     pub id: PrefixedId,
-    pub full_id: EventId,
+    pub channel_id: EventId,
     pub relay_url: Url,
     pub cache: ChannelCache,
     pub members: HashSet<XOnlyPublicKey>,
@@ -41,7 +42,7 @@ impl ChannelResult {
 
         let cache = Self {
             id: PrefixedId::new(&ns_event.id.to_hex()),
-            full_id: ns_event.id,
+            channel_id: ns_event.id,
             relay_url: url,
             cache,
             members,
@@ -61,7 +62,11 @@ impl ChannelResult {
     pub fn message(&mut self, pubkey: XOnlyPublicKey) {
         self.members.insert(pubkey);
     }
-    pub fn update_cache(&mut self, new_cache: ChannelCache, conn: &mut BackEndConnection) {
+    pub fn update_cache(
+        &mut self,
+        new_cache: ChannelCache,
+        conn: &mut BackEndConnection,
+    ) -> Result<(), BackendClosed> {
         if let Some(image) = &new_cache.image_cache {
             self.update_image(image);
         } else {
@@ -69,14 +74,15 @@ impl ChannelResult {
                 conn.send(ToBackend::DownloadImage {
                     image_url: image_url.to_owned(),
                     kind: ImageKind::Channel,
-                    identifier: self.full_id.to_string(),
+                    identifier: self.channel_id.to_string(),
                     event_hash: new_cache.last_event_hash().to_owned(),
-                });
+                })?;
             } else {
                 tracing::info!("Channel don't have image");
             }
         }
         self.cache = new_cache;
+        Ok(())
     }
     pub fn update_image(&mut self, image: &ImageDownloaded) {
         let path = image.sized_image(IMAGE_SIZE);

@@ -64,6 +64,24 @@ impl ProfileCache {
         Ok(result)
     }
 
+    // pub async fn fetch_channel_members(
+    //     cache_pool: &SqlitePool,
+    //     channel_id: &EventId,
+    // ) -> Result<Vec<Self>, Error> {
+    //     let sql = r#"
+    //         SELECT profile_meta_cache.*
+    //         FROM channel_member_map
+    //         INNER JOIN profile_meta_cache ON channel_member_map.public_key = profile_meta_cache.public_key
+    //         WHERE channel_member_map.channel_id = ?;
+    //     "#;
+    //     let members = sqlx::query_as::<_, Self>(sql)
+    //         .bind(channel_id.to_string())
+    //         .fetch_all(cache_pool)
+    //         .await?;
+
+    //     Ok(members)
+    // }
+
     pub async fn insert(cache_pool: &SqlitePool, db_event: &DbEvent) -> Result<u64, Error> {
         let metadata = nostr::Metadata::from_json(&db_event.content)
             .map_err(|_| Error::JsonToMetadata(db_event.content.clone()))?;

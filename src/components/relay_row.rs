@@ -1,4 +1,5 @@
 use crate::db::DbRelay;
+use crate::error::BackendClosed;
 use crate::icon::{
     delete_icon, exclamation_icon, file_icon_regular, refresh_icon, solid_circle_icon,
 };
@@ -16,7 +17,6 @@ pub enum Message {
     ToggleRead,
     ToggleWrite,
     OpenRelayDocument(DbRelay),
-    RelayUpdated(DbRelay),
     ReconnectRelay,
 }
 #[derive(Debug, Clone)]
@@ -36,34 +36,35 @@ pub struct RelayRow {
 }
 
 impl RelayRow {
-    pub fn new(id: i32, db_relay: DbRelay, _conn: &mut BackEndConnection) -> Self {
+    pub fn new(id: i32, db_relay: DbRelay) -> Self {
         Self { id, db_relay }
+    }
+
+    pub fn relay_updated(&mut self, db_relay: DbRelay) {
+        self.db_relay = db_relay;
     }
 
     pub fn update(
         &mut self,
         message: Message,
         conn: &mut BackEndConnection,
-    ) -> Command<MessageWrapper> {
+    ) -> Result<Command<MessageWrapper>, BackendClosed> {
         match message {
             Message::OpenRelayDocument(_db_relay) => (),
-            Message::RelayUpdated(db_relay) => {
-                self.db_relay = db_relay;
-            }
             Message::ReconnectRelay => {
-                conn.send(net::ToBackend::ReconnectRelay(self.db_relay.url.to_owned()));
+                conn.send(net::ToBackend::ReconnectRelay(self.db_relay.url.to_owned()))?;
             }
             Message::DeleteRelay => {
-                conn.send(net::ToBackend::DeleteRelay(self.db_relay.url.to_owned()));
+                conn.send(net::ToBackend::DeleteRelay(self.db_relay.url.to_owned()))?;
             }
             Message::ToggleRead => {
-                conn.send(net::ToBackend::ToggleRelayRead(self.db_relay.to_owned()));
+                conn.send(net::ToBackend::ToggleRelayRead(self.db_relay.to_owned()))?;
             }
             Message::ToggleWrite => {
-                conn.send(net::ToBackend::ToggleRelayWrite(self.db_relay.to_owned()));
+                conn.send(net::ToBackend::ToggleRelayWrite(self.db_relay.to_owned()))?;
             }
         }
-        Command::none()
+        Ok(Command::none())
     }
 
     fn seconds_since_last_conn(&self) -> Element<'static, MessageWrapper> {
@@ -106,6 +107,7 @@ impl RelayRow {
                 .center_x()
                 .width(Length::Fixed(ACTION_ICON_WIDTH))
         ]
+        .spacing(5)
         .into()
     }
 
@@ -184,6 +186,7 @@ impl RelayRow {
                 reconnect_btn,
                 delete_btn,
             ]
+            .spacing(5)
             .align_items(alignment::Alignment::Center),
         )
         // queria um hover para cada linha da tabela
@@ -209,29 +212,20 @@ impl RelayRow {
 
     fn relay_status_icon<'a>(&'a self) -> (Text<'a>, String) {
         if let Some(information) = &self.db_relay.information {
-            let status_icon = match information.status {
-                RelayStatus::Connected => solid_circle_icon()
+            (
+                solid_circle_icon()
                     .size(16)
-                    .style(style::Text::RelayStatusConnected),
-                RelayStatus::Connecting => solid_circle_icon()
+                    .style(style::Text::RelayStatus(Some(information.status))),
+                information.status.to_string(),
+            )
+        } else {
+            (
+                solid_circle_icon()
                     .size(16)
-                    .style(style::Text::RelayStatusConnecting),
-                RelayStatus::Disconnected => solid_circle_icon()
-                    .size(16)
-                    .style(style::Text::RelayStatusDisconnected),
-                RelayStatus::Terminated => solid_circle_icon()
-                    .size(16)
-                    .style(style::Text::RelayStatusTerminated),
-            };
-            return (status_icon, information.status.to_string());
+                    .style(style::Text::RelayStatus(None)),
+                "Loading".into(),
+            )
         }
-
-        (
-            solid_circle_icon()
-                .size(16)
-                .style(style::Text::RelayStatusLoading),
-            "Loading".into(),
-        )
     }
 
     pub fn relay_welcome(&self) -> Element<MessageWrapper> {

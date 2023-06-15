@@ -3,7 +3,7 @@ use crate::{
     components::chat_contact::ChatContact,
     db::{DbContact, MessageStatus},
     net::ImageKind,
-    style::Theme,
+    style::{Theme, ThemeType},
     types::ChannelMetadata,
 };
 use chrono::{DateTime, Local, NaiveDateTime, Offset};
@@ -181,12 +181,24 @@ pub fn from_naive_utc_to_local(naive_utc: NaiveDateTime) -> DateTime<Local> {
     DateTime::from_utc(naive_utc, Local::now().offset().fix())
 }
 
+pub fn channel_id_from_tags(tags: &[nostr::Tag]) -> Option<nostr::EventId> {
+    tags.iter().find_map(|tag| {
+        if let nostr::Tag::Event(event_id, _, _) = tag {
+            Some(event_id.to_owned())
+        } else {
+            None
+        }
+    })
+}
+
 pub fn contact_matches_search_full(contact: &DbContact, search: &str) -> bool {
-    let pubkey_matches = contact
+    let ct_pubkey = contact
         .pubkey()
-        .to_string()
-        .to_lowercase()
-        .contains(&search.to_lowercase());
+        .to_bech32()
+        .unwrap_or(contact.pubkey().to_string());
+
+    let pubkey_matches = ct_pubkey.to_lowercase().contains(&search.to_lowercase());
+
     let petname_matches = contact.get_petname().map_or(false, |petname| {
         petname.to_lowercase().contains(&search.to_lowercase())
     });
@@ -211,14 +223,21 @@ pub fn add_ellipsis_trunc(s: &str, max_length: usize) -> String {
     }
 }
 
-pub fn lighten_color(mut color: iced_style::Color, amount: f32) -> iced_style::Color {
+pub fn change_color_by_type(theme_type: ThemeType, color: iced::Color, amount: f32) -> iced::Color {
+    match theme_type {
+        ThemeType::Light => darken_color(color, amount),
+        ThemeType::Dark => lighten_color(color, amount),
+    }
+}
+
+pub fn lighten_color(mut color: iced::Color, amount: f32) -> iced::Color {
     color.r = (color.r + amount).min(1.0);
     color.g = (color.g + amount).min(1.0);
     color.b = (color.b + amount).min(1.0);
     color
 }
 
-pub fn darken_color(mut color: iced_style::Color, amount: f32) -> iced_style::Color {
+pub fn darken_color(mut color: iced::Color, amount: f32) -> iced::Color {
     color.r = (color.r - amount).max(0.0);
     color.g = (color.g - amount).max(0.0);
     color.b = (color.b - amount).max(0.0);

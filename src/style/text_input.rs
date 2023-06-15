@@ -1,5 +1,3 @@
-use crate::utils::lighten_color;
-
 use super::Theme;
 use iced::widget::text_input;
 use iced::Color;
@@ -15,73 +13,86 @@ pub enum TextInput {
 
 impl text_input::StyleSheet for Theme {
     type Style = TextInput;
+
     fn active(&self, style: &Self::Style) -> text_input::Appearance {
-        let chat_search = text_input::Appearance {
-            background: self.palette().chat_search_input_bg.into(),
-            border_color: self.palette().background,
-            border_radius: 4.0,
+        let def = text_input::Appearance {
+            background: self.palette().base.background.into(),
+            border_radius: 8.0,
             border_width: 1.0,
-            icon_color: self.palette().text_color,
+            border_color: self.palette().base.foreground,
+            icon_color: self.palette().base.background,
         };
+
+        let chat_src = text_input::Appearance {
+            background: self.palette().base.background.into(),
+            border_radius: 8.0,
+            border_width: 1.0,
+            border_color: self.palette().base.foreground,
+            icon_color: self.palette().base.foreground,
+        };
+
         match style {
-            TextInput::Default => text_input::Appearance {
-                background: self.palette().background.into(),
-                border_color: self.palette().background,
-                border_radius: 4.0,
-                border_width: 1.0,
-                icon_color: self.palette().text_color,
-            },
-            TextInput::ChatSearch => chat_search,
+            TextInput::Default => def,
+            TextInput::ChatSearch => chat_src,
             TextInput::Invalid => text_input::Appearance {
-                border_color: self.palette().danger,
-                ..chat_search
+                border_color: self.palette().normal.error,
+                icon_color: self.palette().normal.error,
+                ..chat_src
             },
             TextInput::Invisible => text_input::Appearance {
                 background: Color::TRANSPARENT.into(),
                 border_radius: 0.0,
                 border_width: 0.0,
                 border_color: Color::TRANSPARENT,
-                icon_color: self.palette().text_color,
+                icon_color: self.palette().base.background,
             },
         }
     }
+
     fn focused(&self, style: &Self::Style) -> text_input::Appearance {
+        let def = text_input::Appearance {
+            background: self.palette().base.foreground.into(),
+            border_radius: 8.0,
+            border_width: 1.2,
+            border_color: self.palette().normal.primary,
+            icon_color: self.palette().base.foreground,
+        };
         match style {
-            TextInput::Default => self.active(style),
-            TextInput::ChatSearch => text_input::Appearance {
-                border_color: self.palette().text_color,
-                ..self.active(style)
-            },
+            TextInput::Default => def,
+            TextInput::ChatSearch => def,
             TextInput::Invalid => self.active(style),
             TextInput::Invisible => self.active(style),
         }
     }
-    fn disabled(&self, style: &Self::Style) -> text_input::Appearance {
+
+    fn disabled(&self, _style: &Self::Style) -> text_input::Appearance {
         text_input::Appearance {
-            ..self.active(style)
+            background: self.palette().base.foreground.into(),
+            border_radius: 8.0,
+            border_width: 1.0,
+            border_color: self.palette().base.foreground,
+            icon_color: self.palette().base.foreground,
         }
     }
-    fn hovered(&self, style: &Self::Style) -> text_input::Appearance {
-        match style {
-            TextInput::Default => self.active(style),
-            TextInput::ChatSearch => text_input::Appearance {
-                border_color: self.palette().text_color,
-                ..self.active(style)
-            },
-            TextInput::Invalid => self.active(style),
-            TextInput::Invisible => self.active(style),
-        }
-    }
-    fn value_color(&self, _style: &Self::Style) -> Color {
-        self.palette().text_color
-    }
+
     fn placeholder_color(&self, _style: &Self::Style) -> Color {
-        self.palette().grayish
+        self.palette().base.comment
     }
+
+    fn value_color(&self, _style: &Self::Style) -> Color {
+        self.palette().base.text
+    }
+
     fn selection_color(&self, _style: &Self::Style) -> Color {
-        lighten_color(self.palette().primary, 0.1)
+        self.palette().normal.secondary
     }
+
+    /// Produces the style of an hovered text input.
+    fn hovered(&self, style: &Self::Style) -> text_input::Appearance {
+        self.focused(style)
+    }
+
     fn disabled_color(&self, _style: &Self::Style) -> Color {
-        self.palette().grayish
+        self.palette().base.comment
     }
 }

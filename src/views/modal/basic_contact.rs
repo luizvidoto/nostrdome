@@ -1,20 +1,23 @@
 use std::fmt::Debug;
 
-use crate::components::common_scrollable;
 use crate::components::text_input_group::TextInputGroup;
+use crate::components::{card, common_scrollable};
 use crate::consts::{MEDIUM_PROFILE_IMG_HEIGHT, MEDIUM_PROFILE_IMG_WIDTH, YMD_FORMAT};
 use crate::db::DbContact;
+use crate::error::BackendClosed;
 use crate::icon::{copy_icon, edit_icon};
 use crate::net::{self, BackEndConnection, BackendEvent, ImageSize};
 use crate::utils::{from_naive_utc_to_local, hide_string};
 use iced::widget::{button, column, container, image, row, text, tooltip, Space};
 use iced::{alignment, clipboard};
 use iced::{Alignment, Command, Length};
-use iced_aw::{Card, Modal};
+use iced_aw::Modal;
 use nostr::prelude::ToBech32;
 
 use crate::style;
 use crate::widget::{Element, Rule};
+
+use super::ModalView;
 
 pub enum Mode {
     Edit,
@@ -34,7 +37,7 @@ pub enum CMessage<M: Clone + Debug> {
     CopyPubkey,
     DeleteContact,
 }
-pub struct ContactDetails {
+pub struct ContactDetails<M: Clone + Debug> {
     db_contact: Option<DbContact>,
     petname_input: String,
     pubkey_input: String,
@@ -44,8 +47,9 @@ pub struct ContactDetails {
     is_relay_invalid: bool,
     profile_img_handle: Option<image::Handle>,
     pubkey_hidden: String,
+    phantom: std::marker::PhantomData<M>,
 }
-impl ContactDetails {
+impl<M: Clone + Debug> ContactDetails<M> {
     pub(crate) fn new() -> Self {
         Self {
             db_contact: None,
@@ -57,14 +61,18 @@ impl ContactDetails {
             is_relay_invalid: false,
             profile_img_handle: None,
             pubkey_hidden: "".into(),
+            phantom: std::marker::PhantomData,
         }
     }
-    pub(crate) fn edit(db_contact: &DbContact, conn: &mut BackEndConnection) -> Self {
+    pub(crate) fn edit(
+        db_contact: &DbContact,
+        conn: &mut BackEndConnection,
+    ) -> Result<Self, BackendClosed> {
         let pubkey_input = db_contact
             .pubkey()
             .to_bech32()
             .unwrap_or(db_contact.pubkey().to_string());
-        Self {
+        Ok(Self {
             pubkey_hidden: hide_string(&pubkey_input, 16),
             db_contact: Some(db_contact.to_owned()),
             petname_input: db_contact.get_petname().unwrap_or_else(|| "".into()),
@@ -76,21 +84,73 @@ impl ContactDetails {
             mode: Mode::Edit,
             is_pub_invalid: false,
             is_relay_invalid: false,
-            profile_img_handle: Some(db_contact.profile_image(ImageSize::Medium, conn)),
-        }
+            profile_img_handle: Some(db_contact.profile_image(ImageSize::Medium, conn)?),
+            phantom: std::marker::PhantomData,
+        })
     }
-    pub(crate) fn viewer(db_contact: &DbContact, conn: &mut BackEndConnection) -> Self {
-        // if let Some(cache) = db_contact.get_profile_cache() {
-        //     conn.send(net::ToBackend::GetDbEventWithHash(cache.event_hash));
-        // }
-        let mut details = Self::edit(db_contact, conn);
+    pub(crate) fn viewer(
+        db_contact: &DbContact,
+        conn: &mut BackEndConnection,
+    ) -> Result<Self, BackendClosed> {
+        let mut details = Self::edit(db_contact, conn)?;
         details.mode = Mode::View;
-        details
+        Ok(details)
     }
-    pub fn view<'a, M: 'a + Clone + Debug>(
+
+    pub(crate) fn handle_submit_contact(
+        &mut self,
+        conn: &mut BackEndConnection,
+    ) -> Result<bool, BackendClosed> {
+        let submit_result = match &self.db_contact {
+            Some(db_contact) => DbContact::edit_contact(
+                db_contact.to_owned(),
+                &self.petname_input,
+                &self.rec_relay_input,
+            ),
+            None => DbContact::new_from_submit(
+                &self.pubkey_input,
+                &self.petname_input,
+                &self.rec_relay_input,
+            ),
+        };
+
+        match submit_result {
+            Ok(db_contact) => {
+                match self.mode {
+                    Mode::Edit => conn.send(net::ToBackend::UpdateContact(db_contact))?,
+                    Mode::Add => conn.send(net::ToBackend::AddContact(db_contact))?,
+                    Mode::View => Result::Ok(())?,
+                }
+
+                // *self = Self::Off;
+                return Ok(true);
+            }
+            Err(e) => {
+                tracing::error!("Error: {:?}", e);
+                match e {
+                    crate::db::contact::Error::InvalidPublicKey => {
+                        self.is_pub_invalid = true;
+                    }
+                    crate::db::contact::Error::InvalidRelayUrl(_) => {
+                        self.is_relay_invalid = true;
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        Ok(false)
+    }
+}
+
+impl<M: Clone + Debug + 'static + Send> ModalView for ContactDetails<M> {
+    type UnderlayMessage = M;
+    type Message = CMessage<M>;
+
+    fn view<'a>(
         &'a self,
-        underlay: impl Into<Element<'a, M>>,
-    ) -> Element<'a, CMessage<M>> {
+        underlay: impl Into<Element<'a, Self::UnderlayMessage>>,
+    ) -> Element<'a, Self::Message> {
         let underlay_component = underlay.into().map(CMessage::UnderlayMessage);
 
         Modal::new(true, underlay_component, move || {
@@ -152,7 +212,7 @@ impl ContactDetails {
                         text("Contact Name"),
                         container(text(petname_text))
                             .padding([2, 8])
-                            .style(style::Container::ChatSearchCopy),
+                            .style(style::Container::Frame),
                     ]
                     .spacing(2);
                     let copy_btn = tooltip(
@@ -183,156 +243,87 @@ impl ContactDetails {
                         text("Recommended Relay"),
                         container(text(rec_relay_text))
                             .padding([2, 8])
-                            .style(style::Container::ChatSearchCopy),
+                            .style(style::Container::Frame),
                     ]
                     .spacing(2);
                     let middle = column![pubkey_group, petname_group, relay_group].spacing(4);
-
-                    let profile_top: Element<_> = if let Some(contact) = &self.db_contact {
-                        if let Some(profile) = contact.get_profile_cache() {
-                            let image_container: Element<_> =
-                                if let Some(handle) = self.profile_img_handle.to_owned() {
-                                    image(handle).into()
-                                } else {
-                                    text("No image").into()
-                                };
-                            let image_container = container(image_container)
-                                .height(MEDIUM_PROFILE_IMG_HEIGHT as f32)
-                                .width(MEDIUM_PROFILE_IMG_WIDTH as f32);
-
-                            let profile_name_group = column![
-                                text("Profile Name"),
-                                container(text(profile.metadata.name.unwrap_or("".into())))
-                                    .padding([2, 8])
-                                    .style(style::Container::ChatSearchCopy),
-                            ]
-                            .spacing(2);
-                            let profile_username_group = column![
-                                text("Profile Username"),
-                                container(text(profile.metadata.display_name.unwrap_or("".into())))
-                                    .padding([2, 8])
-                                    .style(style::Container::ChatSearchCopy),
-                            ]
-                            .spacing(2);
-
-                            let last_update_group = column![
-                                text("Last Update"),
-                                container(text(
-                                    &from_naive_utc_to_local(profile.updated_at).format(YMD_FORMAT)
-                                ))
-                                .padding([2, 8])
-                                .style(style::Container::ChatSearchCopy),
-                            ]
-                            .spacing(2);
-
-                            let recv_from_relay_group = column![
-                                text("Received From"),
-                                container(text(profile.from_relay))
-                                    .padding([2, 8])
-                                    .style(style::Container::ChatSearchCopy),
-                            ]
-                            .spacing(2);
-
-                            let image_row = row![
-                                image_container,
-                                column![
-                                    profile_name_group,
-                                    profile_username_group,
-                                    last_update_group,
-                                    recv_from_relay_group
-                                ]
-                                .padding([0, 10])
-                                .spacing(10)
-                            ];
-                            let divider = container(Rule::horizontal(2))
-                                .padding(10)
-                                .width(Length::Fill);
-                            column![image_row, divider].into()
-                        } else {
-                            text("").into()
-                        }
-                    } else {
-                        text("").into()
-                    };
-
+                    let profile_top = make_profile_top_row(
+                        self.db_contact.as_ref(),
+                        self.profile_img_handle.as_ref(),
+                        CMessage::EditMode,
+                    );
                     column![profile_top, middle,].spacing(4).into()
                 }
             };
-            let modal_body = common_scrollable(modal_body);
-
-            let title: Element<_> = match self.mode {
-                Mode::Edit => text("Edit Contact").into(),
-                Mode::Add => text("Add Contact").into(),
-                Mode::View => row![
-                    text("Contact"),
-                    Space::with_width(Length::Fill),
-                    button(edit_icon().size(14)).on_press(CMessage::EditMode)
-                ]
-                .into(),
-            };
+            let modal_body = common_scrollable(container(modal_body).padding(20));
 
             let delete_btn: Element<_> = match self.mode {
-                Mode::Edit | Mode::View => {
-                    button(text("Delete").horizontal_alignment(alignment::Horizontal::Center))
-                        .width(Length::Fill)
-                        .on_press(CMessage::DeleteContact)
-                        .style(style::Button::Danger)
-                        .into()
-                }
-                Mode::Add => text("").into(),
+                Mode::Add => Space::with_width(Length::Fill).into(),
+                _ => button(text("Delete").horizontal_alignment(alignment::Horizontal::Center))
+                    .width(Length::Fill)
+                    .on_press(CMessage::DeleteContact)
+                    .style(style::Button::Danger)
+                    .into(),
+            };
+
+            let cancel_btn: Element<_> = match self.mode {
+                Mode::View => Space::with_width(Length::Fill).into(),
+                _ => button(text("Cancel").horizontal_alignment(alignment::Horizontal::Center))
+                    .style(style::Button::Bordered)
+                    .width(Length::Fill)
+                    .on_press(CMessage::CloseModal)
+                    .into(),
             };
 
             let buttons_row = row![
                 delete_btn,
-                button(text("Cancel").horizontal_alignment(alignment::Horizontal::Center),)
-                    .width(Length::Fill)
-                    .on_press(CMessage::CloseModal),
+                cancel_btn,
                 button(text("Ok").horizontal_alignment(alignment::Horizontal::Center),)
+                    .style(style::Button::Primary)
                     .width(Length::Fill)
                     .on_press(CMessage::SubmitContact)
             ]
             .spacing(10)
-            .padding(5)
             .width(Length::Fill);
 
-            Card::new(title, modal_body)
-                .foot(buttons_row)
-                .max_width(MODAL_WIDTH)
-                .on_close(CMessage::CloseModal)
-                .into()
+            card(modal_body, buttons_row).max_width(MODAL_WIDTH).into()
         })
         .backdrop(CMessage::CloseModal)
         .on_esc(CMessage::CloseModal)
         .into()
     }
 
-    pub fn backend_event(&mut self, event: BackendEvent, conn: &mut BackEndConnection) {
+    fn backend_event(
+        &mut self,
+        event: BackendEvent,
+        conn: &mut BackEndConnection,
+    ) -> Result<(), BackendClosed> {
         match event {
             BackendEvent::ImageDownloaded(image) => {
                 if let Some(db_contact) = &self.db_contact {
                     if db_contact.get_profile_event_hash() == Some(image.event_hash) {
                         self.profile_img_handle =
-                            Some(db_contact.profile_image(ImageSize::Medium, conn))
+                            Some(db_contact.profile_image(ImageSize::Medium, conn)?)
                     }
                 }
             }
             _ => (),
         }
+        Ok(())
     }
 
-    /// Returns true if modal is to be closed
-    pub(crate) fn update<'a, M: 'a + Clone + Debug>(
+    fn update(
         &mut self,
-        message: CMessage<M>,
+        message: Self::Message,
         conn: &mut BackEndConnection,
-    ) -> (Command<CMessage<M>>, bool) {
+    ) -> Result<(Command<Self::Message>, bool), BackendClosed> {
         let mut command = Command::none();
         match message {
             CMessage::DeleteContact => {
                 if let Some(contact) = &self.db_contact {
-                    conn.send(net::ToBackend::DeleteContact(contact.to_owned()));
+                    conn.send(net::ToBackend::DeleteContact(contact.to_owned()))?;
                 }
-                return (command, true);
+                return Ok((command, true));
             }
             CMessage::CopyPubkey => {
                 command = clipboard::write(self.pubkey_input.to_owned());
@@ -353,54 +344,92 @@ impl ContactDetails {
                 self.rec_relay_input = text;
                 self.is_relay_invalid = false;
             }
-            CMessage::SubmitContact => return (command, self.handle_submit_contact(conn)),
+            CMessage::SubmitContact => {
+                let is_close = self.handle_submit_contact(conn)?;
+                return Ok((command, is_close));
+            }
             CMessage::CloseModal => {
-                return (command, true);
+                return Ok((command, true));
             }
             CMessage::UnderlayMessage(_) => (),
         }
-        (command, false)
+
+        Ok((command, false))
     }
+}
 
-    pub(crate) fn handle_submit_contact(&mut self, conn: &mut BackEndConnection) -> bool {
-        let submit_result = match &self.db_contact {
-            Some(db_contact) => DbContact::edit_contact(
-                db_contact.to_owned(),
-                &self.petname_input,
-                &self.rec_relay_input,
-            ),
-            None => DbContact::new_from_submit(
-                &self.pubkey_input,
-                &self.petname_input,
-                &self.rec_relay_input,
-            ),
-        };
+fn make_profile_top_row<'a, M: 'a + Clone>(
+    db_contact: Option<&'a DbContact>,
+    img_handle: Option<&image::Handle>,
+    edit_press: M,
+) -> Element<'a, M> {
+    if let Some(contact) = db_contact {
+        if let Some(profile) = contact.get_profile_cache() {
+            let image_container: Element<_> = if let Some(handle) = img_handle {
+                image(handle.to_owned()).into()
+            } else {
+                text("No image").into()
+            };
 
-        match submit_result {
-            Ok(db_contact) => {
-                match self.mode {
-                    Mode::Edit => conn.send(net::ToBackend::UpdateContact(db_contact)),
-                    Mode::Add => conn.send(net::ToBackend::AddContact(db_contact)),
-                    Mode::View => (),
-                }
+            let image_container = container(image_container)
+                .height(MEDIUM_PROFILE_IMG_HEIGHT as f32)
+                .width(MEDIUM_PROFILE_IMG_WIDTH as f32);
 
-                // *self = Self::Off;
-                return true;
-            }
-            Err(e) => {
-                tracing::error!("Error: {:?}", e);
-                match e {
-                    crate::db::contact::Error::InvalidPublicKey => {
-                        self.is_pub_invalid = true;
-                    }
-                    crate::db::contact::Error::InvalidRelayUrl(_) => {
-                        self.is_relay_invalid = true;
-                    }
-                    _ => (),
-                }
-            }
+            let profile_name_group = column![
+                text("Profile Name"),
+                container(text(profile.metadata.name.unwrap_or("".into())))
+                    .padding([2, 8])
+                    .style(style::Container::Frame),
+            ]
+            .spacing(2);
+            let profile_username_group = column![
+                text("Profile Username"),
+                container(text(profile.metadata.display_name.unwrap_or("".into())))
+                    .padding([2, 8])
+                    .style(style::Container::Frame),
+            ]
+            .spacing(2);
+
+            let last_update_group = column![
+                text("Last Update"),
+                container(text(
+                    &from_naive_utc_to_local(profile.updated_at).format(YMD_FORMAT)
+                ))
+                .padding([2, 8])
+                .style(style::Container::Frame),
+            ]
+            .spacing(2);
+
+            let recv_from_relay_group = column![
+                text("Received From"),
+                container(text(profile.from_relay))
+                    .padding([2, 8])
+                    .style(style::Container::Frame),
+            ]
+            .spacing(2);
+
+            let image_row = row![
+                image_container,
+                column![
+                    profile_name_group,
+                    profile_username_group,
+                    last_update_group,
+                    recv_from_relay_group
+                ]
+                .padding([0, 10])
+                .spacing(10),
+                button(edit_icon().size(14)).on_press(edit_press)
+            ];
+            let divider = container(Rule::horizontal(2))
+                .padding(10)
+                .width(Length::Fill);
+
+            column![image_row, divider].into()
+        } else {
+            text("").into()
         }
-        false
+    } else {
+        text("").into()
     }
 }
 

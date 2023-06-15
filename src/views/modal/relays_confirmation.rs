@@ -1,4 +1,4 @@
-use crate::components::common_scrollable;
+use crate::components::{card, common_scrollable};
 use crate::db::{DbRelay, DbRelayResponse};
 use crate::net::BackEndConnection;
 use crate::style;
@@ -9,39 +9,50 @@ use iced::{Command, Length};
 use iced_aw::Modal;
 use std::fmt::Debug;
 
+use super::ModalView;
+
 #[derive(Debug, Clone)]
 pub enum CMessage<M: Clone + Debug> {
     CloseModal,
     UnderlayMessage(M),
 }
 
-pub struct RelaysConfirmation {
+pub struct RelaysConfirmation<M: Clone + Debug> {
     responses: Vec<DbRelayResponse>,
     all_relays: Vec<DbRelay>,
+    phantom: std::marker::PhantomData<M>,
 }
-impl RelaysConfirmation {
+impl<M: Clone + Debug> RelaysConfirmation<M> {
     pub fn new(responses: &[DbRelayResponse], all_relays: &[DbRelay]) -> Self {
         Self {
             responses: responses.to_vec(),
             all_relays: all_relays.to_vec(),
+            phantom: std::marker::PhantomData,
         }
     }
-    pub fn update<'a, M: 'a + Clone + Debug>(
-        &'a mut self,
-        message: CMessage<M>,
-        _conn: &mut BackEndConnection,
-    ) -> (Command<CMessage<M>>, bool) {
+}
+
+impl<M: Clone + Debug + 'static + Send> ModalView for RelaysConfirmation<M> {
+    type UnderlayMessage = M;
+    type Message = CMessage<M>;
+
+    fn update(
+        &mut self,
+        message: Self::Message,
+        conn: &mut BackEndConnection,
+    ) -> Result<(Command<Self::Message>, bool), crate::error::BackendClosed> {
         let command = Command::none();
         match message {
             CMessage::UnderlayMessage(_) => (),
-            CMessage::CloseModal => return (command, true),
+            CMessage::CloseModal => return Ok((command, true)),
         }
-        (command, false)
+        Ok((command, false))
     }
-    pub fn view<'a, M: 'a + Clone + Debug>(
+
+    fn view<'a>(
         &'a self,
-        underlay: impl Into<Element<'a, M>>,
-    ) -> Element<'a, CMessage<M>> {
+        underlay: impl Into<Element<'a, Self::UnderlayMessage>>,
+    ) -> Element<'a, Self::Message> {
         let underlay_component = underlay.into().map(CMessage::UnderlayMessage);
         Modal::new(true, underlay_component, move || {
             let title_txt = format!(
@@ -50,42 +61,28 @@ impl RelaysConfirmation {
                 self.all_relays.len()
             );
             let title = container(text(title_txt).size(22)).center_x();
-            let header = container(title)
-                .width(Length::Fill)
-                .height(HEADER_HEIGHT)
-                .align_y(alignment::Vertical::Top)
-                .center_x();
+
             let col = column![].spacing(10);
             let content = self
                 .responses
                 .iter()
                 .fold(col, |col, response| col.push(make_response_row(response)));
 
-            let card_body: Element<_> = container(common_scrollable(content))
-                .width(Length::Fill)
-                .center_x()
-                .center_y()
-                .into();
-            let card_footer = container(
+            let card_body = common_scrollable(
+                container(column![title, content].spacing(15))
+                    .center_x()
+                    .padding(20),
+            );
+
+            let card_footer =
                 row![
                     button(text("Ok").horizontal_alignment(alignment::Horizontal::Center),)
                         .width(Length::Fill)
                         .on_press(CMessage::CloseModal),
                 ]
-                .spacing(10),
-            )
-            .align_y(alignment::Vertical::Bottom)
-            .center_x()
-            .height(FOOTER_HEIGHT)
-            .width(Length::Fill);
+                .spacing(10);
 
-            container(column![header, card_body, card_footer].spacing(20))
-                .padding(10)
-                .max_width(MODAL_WIDTH)
-                .height(Length::Shrink)
-                .width(Length::Shrink)
-                .style(style::Container::Modal)
-                .into()
+            card(card_body, card_footer).max_width(MODAL_WIDTH).into()
         })
         .backdrop(CMessage::CloseModal)
         .on_esc(CMessage::CloseModal)
@@ -112,5 +109,3 @@ fn make_response_row<'a, M: 'a>(response: &DbRelayResponse) -> Element<'a, M> {
 }
 
 const MODAL_WIDTH: f32 = 300.0;
-const HEADER_HEIGHT: f32 = 60.0;
-const FOOTER_HEIGHT: f32 = 60.0;

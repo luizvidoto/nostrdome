@@ -104,7 +104,7 @@ pub struct DbMessage {
     pub id: i64,
     pub event_hash: EventId,
     pub encrypted_content: String,
-    pub contact_pubkey: XOnlyPublicKey,
+    pub chat_pubkey: XOnlyPublicKey,
     pub is_users: bool,
     pub created_at: chrono::NaiveDateTime,
     pub status: MessageStatus,
@@ -294,7 +294,7 @@ impl DbMessage {
         contact_pubkey: &XOnlyPublicKey,
         is_users: bool,
     ) -> Result<DbMessage, Error> {
-        tracing::info!("Insert confirmed message. ID: {}", db_event.event_hash);
+        tracing::debug!("Insert confirmed message. ID: {}", db_event.event_hash);
 
         match Self::fetch_by_hash(pool, &db_event.event_hash).await? {
             Some(mut db_message) => {
@@ -467,7 +467,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbMessage {
             encrypted_content: row.try_get::<String, &str>("content")?,
             is_users: row.try_get::<bool, &str>("is_users")?,
             event_hash,
-            contact_pubkey,
+            chat_pubkey: contact_pubkey,
             created_at,
             status,
             confirmation_info,

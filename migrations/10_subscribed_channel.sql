@@ -1,8 +1,8 @@
-CREATE TABLE IF NOT EXISTS subscribed_channel (
+CREATE TABLE IF NOT EXISTS channel_subscription (
     id INTEGER PRIMARY KEY,
-    channel_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL UNIQUE,
     subscribed_at INTEGER NOT NULL
 );
 
--- Relay Responses Indexes
-CREATE UNIQUE INDEX IF NOT EXISTS channel_id_index ON subscribed_channel(channel_id);
+-- Indexes
+CREATE UNIQUE INDEX IF NOT EXISTS channel_id_index ON channel_subscription(channel_id);

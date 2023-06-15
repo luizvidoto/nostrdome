@@ -3,6 +3,7 @@ use iced::Subscription;
 use iced::{alignment, Alignment, Command, Length};
 
 use crate::consts::NOSTRTALK_VERSION;
+use crate::error::BackendClosed;
 use crate::icon::signal_icon;
 use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
@@ -44,14 +45,16 @@ impl StatusBar {
         &mut self,
         message: Message,
         conn: &mut BackEndConnection,
-    ) -> RouterCommand<Message> {
+    ) -> Result<RouterCommand<Message>, BackendClosed> {
         let mut command = RouterCommand::new();
         match message {
             Message::GoToAbout => command.change_route(RouterMessage::GoToAbout),
             Message::GoToNetwork => command.change_route(RouterMessage::GoToNetwork),
-            Message::Tick => conn.send(net::ToBackend::GetRelayStatusList),
+            Message::Tick => {
+                conn.send(net::ToBackend::GetRelayStatusList)?;
+            }
         }
-        command
+        Ok(command)
     }
     pub fn subscription(&self) -> Subscription<Message> {
         iced::time::every(std::time::Duration::from_millis(TICK_INTERVAL_MILLIS))

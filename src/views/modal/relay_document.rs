@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 use crate::components::text::title;
-use crate::components::{common_scrollable, copy_btn};
+use crate::components::{card, common_scrollable, copy_btn};
 use crate::db::DbRelay;
+use crate::error::BackendClosed;
 use crate::net::{BackEndConnection, BackendEvent, ToBackend};
 use crate::style;
 use crate::utils::NipData;
@@ -11,12 +12,15 @@ use crate::widget::Element;
 use iced::widget::{button, column, container, row, text, Rule};
 use iced::{alignment, clipboard};
 use iced::{Alignment, Command, Length};
-use iced_aw::{Card, Modal};
+use iced_aw::Modal;
 use url::Url;
 
-pub struct RelayDocState {
+use super::ModalView;
+
+pub struct RelayDocState<M: Clone + Debug> {
     db_relay: DbRelay,
     nips_data: HashMap<u16, NipData>,
+    phantom: std::marker::PhantomData<M>,
 }
 
 #[derive(Debug, Clone)]
@@ -26,16 +30,26 @@ pub enum CMessage<M: Clone + Debug> {
     Copy(String),
     OpenLink(String),
 }
-impl RelayDocState {
-    pub fn new(db_relay: DbRelay, conn: &mut BackEndConnection) -> Self {
-        conn.send(ToBackend::FetchNipsData);
-        Self {
+impl<M: Clone + Debug> RelayDocState<M> {
+    pub fn new(db_relay: DbRelay, conn: &mut BackEndConnection) -> Result<Self, BackendClosed> {
+        conn.send(ToBackend::FetchNipsData)?;
+        Ok(Self {
             db_relay,
             nips_data: HashMap::new(),
-        }
+            phantom: std::marker::PhantomData,
+        })
     }
+}
 
-    pub(crate) fn backend_event(&mut self, event: BackendEvent, _conn: &mut BackEndConnection) {
+impl<M: Clone + Debug + 'static + Send> ModalView for RelayDocState<M> {
+    type UnderlayMessage = M;
+    type Message = CMessage<M>;
+
+    fn backend_event(
+        &mut self,
+        event: BackendEvent,
+        conn: &mut BackEndConnection,
+    ) -> Result<(), BackendClosed> {
         match event {
             BackendEvent::GotNipsData(nips) => {
                 let mut nips_data = HashMap::new();
@@ -46,18 +60,43 @@ impl RelayDocState {
             }
             _ => (),
         }
+        Ok(())
     }
-    pub fn view<'a, M: 'a + Clone + Debug>(
+    fn update(
+        &mut self,
+        message: Self::Message,
+        conn: &mut BackEndConnection,
+    ) -> Result<(Command<Self::Message>, bool), BackendClosed> {
+        let mut command = Command::none();
+        match message {
+            CMessage::UnderlayMessage(_) => (),
+            CMessage::Copy(text) => {
+                command = clipboard::write(text);
+            }
+            CMessage::CloseModal => {
+                return Ok((command, true));
+            }
+            CMessage::OpenLink(link) => match Url::parse(&link) {
+                Ok(parsed_link) => {
+                    if let Err(e) = webbrowser::open(parsed_link.as_str()) {
+                        tracing::error!("Failed to open browser: {}", e);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to open link: {}", e);
+                }
+            },
+        }
+        Ok((command, false))
+    }
+    fn view<'a>(
         &'a self,
-        underlay: impl Into<Element<'a, M>>,
-    ) -> Element<'a, CMessage<M>> {
+        underlay: impl Into<Element<'a, Self::UnderlayMessage>>,
+    ) -> Element<'a, Self::Message> {
         let underlay_component = underlay.into().map(CMessage::UnderlayMessage);
 
         Modal::new(true, underlay_component, move || {
-            let page_title = title("Relay Document");
-            let page_subtitle = text(&self.db_relay.url.to_string()).size(24);
-
-            let modal_body: Element<_> = if let Some(information) = &self.db_relay.information {
+            let card_body: Element<_> = if let Some(information) = &self.db_relay.information {
                 if let Some(document) = &information.document {
                     let name_gp = column![
                         text("Name").size(24),
@@ -147,57 +186,26 @@ impl RelayDocState {
                 text("Relay has no information").into()
             };
 
-            let modal_foot =
+            let card_footer =
                 row![
                     button(text("Ok").horizontal_alignment(alignment::Horizontal::Center),)
                         .width(Length::Fill)
                         .on_press(CMessage::CloseModal)
                 ]
                 .spacing(10)
-                .height(50)
                 .width(Length::Fill);
-            let modal_body = container(common_scrollable(modal_body));
-            let modal_head = column![page_title, page_subtitle].spacing(5).height(100);
 
-            Card::new(modal_head, modal_body)
-                .foot(modal_foot)
-                .max_height(MODAL_MAX_HEIGHT)
-                .max_width(MODAL_WIDTH)
-                .on_close(CMessage::CloseModal)
-                .into()
+            let page_title = title("Relay Document");
+            let page_subtitle = text(&self.db_relay.url.to_string()).size(24);
+
+            let card_body = common_scrollable(card_body);
+            let card_body = column![page_title, page_subtitle, card_body].spacing(5);
+
+            card(card_body, card_footer).max_width(MODAL_WIDTH).into()
         })
         .backdrop(CMessage::CloseModal)
         .on_esc(CMessage::CloseModal)
         .into()
-    }
-
-    /// Returns true if modal is to be closed
-    pub(crate) fn update<'a, M: 'a + Clone + Debug>(
-        &mut self,
-        message: CMessage<M>,
-        _conn: &mut BackEndConnection,
-    ) -> (Command<CMessage<M>>, bool) {
-        let mut command = Command::none();
-        match message {
-            CMessage::UnderlayMessage(_) => (),
-            CMessage::Copy(text) => {
-                command = clipboard::write(text);
-            }
-            CMessage::CloseModal => {
-                return (command, true);
-            }
-            CMessage::OpenLink(link) => match Url::parse(&link) {
-                Ok(parsed_link) => {
-                    if let Err(e) = webbrowser::open(parsed_link.as_str()) {
-                        tracing::error!("Failed to open browser: {}", e);
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Failed to open link: {}", e);
-                }
-            },
-        }
-        (command, false)
     }
 }
 
@@ -231,4 +239,3 @@ fn nip_row<'a, M: 'a + Clone + Debug>(nip: &'a NipData) -> Element<CMessage<M>> 
 }
 
 const MODAL_WIDTH: f32 = 500.0;
-const MODAL_MAX_HEIGHT: f32 = 300.0;

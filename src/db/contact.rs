@@ -1,6 +1,6 @@
 use chrono::{NaiveDateTime, Utc};
 use iced::widget::image::Handle;
-use nostr::prelude::FromBech32;
+use nostr::prelude::{FromBech32, ToBech32};
 use nostr::EventId;
 use nostr::{secp256k1::XOnlyPublicKey, Tag};
 use serde::{Deserialize, Serialize};
@@ -11,6 +11,7 @@ use url::Url;
 
 use crate::consts::default_profile_image;
 use crate::db::UserConfig;
+use crate::error::BackendClosed;
 use crate::net::{self, BackEndConnection, ImageKind, ImageSize};
 use crate::utils::millis_to_naive_or_err;
 use crate::utils::url_or_err;
@@ -223,7 +224,7 @@ impl DbContact {
             }
         }
 
-        self.pubkey().to_string()
+        self.pubkey().to_bech32().unwrap_or(self.pubkey.to_string())
     }
 
     fn update_relay_url(&mut self, relay_url: &str) -> Result<(), Error> {
@@ -232,12 +233,16 @@ impl DbContact {
         Ok(())
     }
 
-    pub fn profile_image(&self, size: ImageSize, conn: &mut BackEndConnection) -> Handle {
+    pub fn profile_image(
+        &self,
+        size: ImageSize,
+        conn: &mut BackEndConnection,
+    ) -> Result<Handle, BackendClosed> {
         if let Some(cache) = &self.profile_cache {
             let kind = ImageKind::Profile;
             if let Some(img_cache) = &cache.profile_pic_cache {
                 let path = img_cache.sized_image(size);
-                return Handle::from_path(path);
+                return Ok(Handle::from_path(path));
             } else {
                 if let Some(image_url) = &cache.metadata.picture {
                     conn.send(net::ToBackend::DownloadImage {
@@ -245,7 +250,7 @@ impl DbContact {
                         kind,
                         identifier: self.pubkey.to_string(),
                         event_hash: cache.event_hash.to_owned(),
-                    });
+                    })?;
                 } else {
                     tracing::info!("Contact don't have profile image");
                 }
@@ -254,7 +259,7 @@ impl DbContact {
             tracing::info!("no profile cache for contact: {}", self.pubkey.to_string());
         }
 
-        Handle::from_memory(default_profile_image(size))
+        Ok(Handle::from_memory(default_profile_image(size)))
     }
 
     pub async fn fetch_basic(pool: &SqlitePool) -> Result<Vec<DbContact>, Error> {

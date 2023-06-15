@@ -1,8 +1,9 @@
-use iced::widget::{column, radio};
+use iced::widget::{column, container, radio, row, scrollable, scrollable::Properties, text};
+use iced::Alignment;
 
 use crate::{
     components::text::title,
-    style::{self, AppPalette, Theme},
+    style::{self},
     widget::Element,
 };
 
@@ -12,49 +13,59 @@ pub enum Message {
 }
 pub fn view(selected_theme: Option<style::Theme>) -> Element<'static, Message> {
     let title = title("Appearance");
-    let radio_buttons = column![
-        radio(
-            "Light",
-            RadioTheme::from(style::Theme::Light),
-            selected_theme.map(RadioTheme::from),
-            |radio_theme| Message::ChangeTheme(radio_theme.into())
-        ),
-        radio(
-            "Dark",
-            RadioTheme::from(style::Theme::Dark),
-            selected_theme.map(RadioTheme::from),
-            |radio_theme| Message::ChangeTheme(radio_theme.into())
-        ),
-    ];
+    let light_themes =
+        style::Theme::LIGHT
+            .into_iter()
+            .fold(row![].padding([20, 0]).spacing(5), |row, t| {
+                row.push(vertical_radio(
+                    t.to_string(),
+                    t,
+                    selected_theme,
+                    Message::ChangeTheme,
+                ))
+            });
+    let light_themes = scrollable(light_themes).horizontal_scroll(Properties::default());
+    let light_themes = column![text("Light Themes").size(24), light_themes].spacing(10);
 
-    column![title, radio_buttons].spacing(10).into()
+    let dark_themes =
+        style::Theme::DARK
+            .into_iter()
+            .fold(row![].padding([20, 0]).spacing(5), |row, t| {
+                row.push(vertical_radio(
+                    t.to_string(),
+                    t,
+                    selected_theme,
+                    Message::ChangeTheme,
+                ))
+            });
+    let dark_themes = scrollable(dark_themes).horizontal_scroll(Properties::default());
+    let dark_themes = column![text("Dark Themes").size(24), dark_themes].spacing(10);
+
+    column![title, light_themes, dark_themes].spacing(20).into()
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct RadioTheme(u8);
-
-impl PartialEq for RadioTheme {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
+fn vertical_radio<V, Message: 'static>(
+    label: impl Into<String>,
+    value: V,
+    selected: Option<V>,
+    on_click: impl FnOnce(V) -> Message,
+) -> Element<'static, Message>
+where
+    Message: Clone,
+    V: Copy + Eq,
+{
+    container(
+        column![
+            radio("", value, selected, on_click).spacing(0),
+            text(label.into()),
+        ]
+        .align_items(Alignment::Center)
+        .spacing(2),
+    )
+    .center_x()
+    .center_y()
+    .width(RADIO_WIDTH)
+    .into()
 }
 
-impl Eq for RadioTheme {}
-
-impl From<Theme> for RadioTheme {
-    fn from(theme: Theme) -> Self {
-        let theme_num: u8 = theme.into();
-        Self(theme_num)
-    }
-}
-
-impl Into<Theme> for RadioTheme {
-    fn into(self) -> Theme {
-        match self.0 {
-            0 => Theme::Light,
-            1 => Theme::Dark,
-            2 => Theme::Custom(AppPalette::default()), // Just an example, replace this with actual custom palette
-            _ => unreachable!(),                       // Can only be 0, 1, or 2
-        }
-    }
-}
+const RADIO_WIDTH: u16 = 100;

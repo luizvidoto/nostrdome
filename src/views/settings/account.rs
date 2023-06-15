@@ -6,6 +6,7 @@ use crate::components::common_scrollable;
 use crate::components::text::title;
 use crate::components::text_input_group::TextInputGroup;
 use crate::db::{DbRelay, DbRelayResponse};
+use crate::error::BackendClosed;
 use crate::icon::satellite_icon;
 use crate::net::{BackEndConnection, BackendEvent, ToBackend};
 use crate::style;
@@ -59,10 +60,10 @@ pub struct State {
     relays_response: Option<AccountRelaysResponse>,
 }
 impl State {
-    pub fn new(conn: &mut BackEndConnection) -> Self {
-        conn.send(ToBackend::GetUserProfileMeta);
-        conn.send(ToBackend::FetchRelayResponsesUserProfile);
-        Self {
+    pub fn new(conn: &mut BackEndConnection) -> Result<Self, BackendClosed> {
+        conn.send(ToBackend::GetUserProfileMeta)?;
+        conn.send(ToBackend::FetchRelayResponsesUserProfile)?;
+        Ok(Self {
             name: "".into(),
             user_name: "".into(),
             picture_url: "".into(),
@@ -76,15 +77,19 @@ impl State {
             website_url_is_invalid: false,
             banner_url_is_invalid: false,
             relays_response: None,
-        }
+        })
     }
 
-    pub fn backend_event(&mut self, event: BackendEvent, conn: &mut BackEndConnection) {
+    pub fn backend_event(
+        &mut self,
+        event: BackendEvent,
+        conn: &mut BackEndConnection,
+    ) -> Result<(), BackendClosed> {
         match event {
             BackendEvent::ConfirmedMetadata { is_user, .. } => {
                 if is_user {
-                    conn.send(ToBackend::GetUserProfileMeta);
-                    conn.send(ToBackend::FetchRelayResponsesUserProfile);
+                    conn.send(ToBackend::GetUserProfileMeta)?;
+                    conn.send(ToBackend::FetchRelayResponsesUserProfile)?;
                 }
             }
             BackendEvent::GotRelayResponsesUserProfile {
@@ -109,9 +114,14 @@ impl State {
             }
             _ => (),
         }
+        Ok(())
     }
 
-    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
+    pub fn update(
+        &mut self,
+        message: Message,
+        conn: &mut BackEndConnection,
+    ) -> Result<(), BackendClosed> {
         match message {
             Message::RelaysConfirmationPress(_) => (),
             Message::ProfileNameChange(name) => self.name = name,
@@ -135,10 +145,11 @@ impl State {
             Message::SavePress => {
                 let meta = self.make_meta();
                 if self.all_valid() {
-                    conn.send(ToBackend::UpdateUserProfileMeta(meta))
+                    conn.send(ToBackend::UpdateUserProfileMeta(meta))?;
                 }
             }
         }
+        Ok(())
     }
 
     fn make_meta(&mut self) -> Metadata {
@@ -195,7 +206,7 @@ impl State {
                 ))
                 .style(style::Button::MenuBtn)
                 .padding(5),
-                "Account On Relays",
+                "Profile Confirmations",
                 tooltip::Position::Left,
             )
             .style(style::Container::TooltipBg)

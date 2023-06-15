@@ -10,6 +10,7 @@ use crate::components::chat_contact::{ChatContact, CARD_HEIGHT};
 use crate::components::floating_element::{Anchor, FloatingElement, Offset};
 use crate::components::{chat_contact, chat_list_container, contact_list};
 use crate::db::{DbContact, DbRelay, DbRelayResponse};
+use crate::error::BackendClosed;
 use crate::icon::{copy_icon, reply_icon, satellite_icon};
 use crate::net::{BackEndConnection, BackendEvent, ToBackend};
 use crate::style;
@@ -20,7 +21,9 @@ use once_cell::sync::Lazy;
 use self::chat_list_container::ChatListContainer;
 use self::contact_list::ContactList;
 
-use super::modal::{basic_contact, relays_confirmation, ContactDetails, RelaysConfirmation};
+use super::modal::{
+    basic_contact, relays_confirmation, ContactDetails, ModalView, RelaysConfirmation,
+};
 use super::route::Route;
 use super::{RouterCommand, RouterMessage};
 
@@ -33,12 +36,15 @@ static CHAT_INPUT_ID: Lazy<text_input::Id> = Lazy::new(text_input::Id::unique);
 
 pub enum ModalState {
     Off,
-    BasicProfile(ContactDetails),
-    RelaysConfirmation(RelaysConfirmation),
+    BasicProfile(ContactDetails<Message>),
+    RelaysConfirmation(RelaysConfirmation<Message>),
 }
 impl ModalState {
-    pub fn basic_profile(contact: &DbContact, conn: &mut BackEndConnection) -> Self {
-        Self::BasicProfile(ContactDetails::viewer(contact, conn))
+    pub fn basic_profile(
+        contact: &DbContact,
+        conn: &mut BackEndConnection,
+    ) -> Result<Self, BackendClosed> {
+        Ok(Self::BasicProfile(ContactDetails::viewer(contact, conn)?))
     }
     pub fn view<'a>(&'a self, underlay: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
         match self {
@@ -51,10 +57,15 @@ impl ModalState {
                 .map(|m| Message::BasicContactMessage(Box::new(m))),
         }
     }
-    fn backend_event(&mut self, event: BackendEvent, conn: &mut BackEndConnection) {
+    fn backend_event(
+        &mut self,
+        event: BackendEvent,
+        conn: &mut BackEndConnection,
+    ) -> Result<(), BackendClosed> {
         if let ModalState::BasicProfile(state) = self {
-            state.backend_event(event, conn)
+            state.backend_event(event, conn)?
         }
+        Ok(())
     }
 }
 
@@ -95,9 +106,9 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(conn: &mut BackEndConnection) -> Self {
-        conn.send(ToBackend::FetchContacts);
-        Self {
+    pub fn new(conn: &mut BackEndConnection) -> Result<Self, BackendClosed> {
+        conn.send(ToBackend::FetchContacts)?;
+        Ok(Self {
             contact_list: ContactList::new(),
             chat_list_container: ChatListContainer::new(),
 
@@ -115,12 +126,15 @@ impl State {
             chat_message_pressed: None,
             last_relays_response: None,
             focus_pubkey: None,
-        }
+        })
     }
-    pub(crate) fn chat_to(db_contact: DbContact, conn: &mut BackEndConnection) -> Self {
-        let mut state = Self::new(conn);
+    pub(crate) fn chat_to(
+        db_contact: DbContact,
+        conn: &mut BackEndConnection,
+    ) -> Result<Self, BackendClosed> {
+        let mut state = Self::new(conn)?;
         state.focus_pubkey = Some(db_contact.pubkey().to_owned());
-        state
+        Ok(state)
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -152,7 +166,7 @@ impl State {
     fn handle_focus_contact(
         &mut self,
         conn: &mut BackEndConnection,
-    ) -> Option<Vec<Command<Message>>> {
+    ) -> Result<Option<Vec<Command<Message>>>, BackendClosed> {
         if let Some(pubkey) = self.focus_pubkey.take() {
             let idx = self
                 .chats
@@ -165,16 +179,16 @@ impl State {
                 .position(|c| c.contact.pubkey() == &pubkey);
             match (idx, position) {
                 (Some(idx), Some(position)) => {
-                    let mut commands = vec![self.set_active_contact(idx, conn)];
+                    let mut commands = vec![self.set_active_contact(idx, conn)?];
                     let list_height: f32 = self.chats.iter().map(|c| c.height()).sum();
                     let offset = calculate_scroll_offset(position, list_height, CARD_HEIGHT);
                     commands.push(scrollable::snap_to(CONTACTS_SCROLLABLE_ID.clone(), offset));
-                    Some(commands)
+                    Ok(Some(commands))
                 }
-                _ => None,
+                _ => Ok(None),
             }
         } else {
-            None
+            Ok(None)
         }
     }
 
@@ -191,15 +205,19 @@ impl State {
     }
 
     /// If it finds a contact, focus the text input chat.
-    fn set_active_contact(&mut self, idx: i32, conn: &mut BackEndConnection) -> Command<Message> {
+    fn set_active_contact(
+        &mut self,
+        idx: i32,
+        conn: &mut BackEndConnection,
+    ) -> Result<Command<Message>, BackendClosed> {
         if let Some(chat) = self.chats.iter().find(|c| c.id == idx) {
-            conn.send(ToBackend::FetchMessages(chat.contact.to_owned()));
+            conn.send(ToBackend::FetchMessages(chat.contact.to_owned()))?;
             self.messages = vec![];
             self.chat_list_container.update_dm_msg("".into());
             self.active_idx = Some(idx);
-            return text_input::focus(CHAT_INPUT_ID.clone());
+            return Ok(text_input::focus(CHAT_INPUT_ID.clone()));
         }
-        Command::none()
+        Ok(Command::none())
     }
 
     fn calculate_ctx_menu_pos(&mut self, point: iced_native::Point) {
@@ -242,7 +260,7 @@ impl State {
         db_contact: DbContact,
         chat_message: ChatMessage,
         conn: &mut BackEndConnection,
-    ) -> Command<Message> {
+    ) -> Result<Command<Message>, BackendClosed> {
         let active_chatting = self.active_matches(&db_contact);
 
         // push into chat messages
@@ -264,7 +282,7 @@ impl State {
                 "New message for a contact not in the list?? {:?}",
                 &db_contact
             );
-            let new_chat = ChatContact::new(self.chats.len() as i32, &db_contact, conn);
+            let new_chat = ChatContact::new(self.chats.len() as i32, &db_contact, conn)?;
             self.chats.push(new_chat);
         }
 
@@ -272,7 +290,10 @@ impl State {
 
         // scroll to end
         self.msgs_scroll_offset = scrollable::RelativeOffset::END;
-        scrollable::snap_to(CHAT_SCROLLABLE_ID.clone(), self.msgs_scroll_offset)
+        Ok(scrollable::snap_to(
+            CHAT_SCROLLABLE_ID.clone(),
+            self.msgs_scroll_offset,
+        ))
     }
 }
 
@@ -328,10 +349,10 @@ impl Route for State {
         &mut self,
         event: BackendEvent,
         conn: &mut BackEndConnection,
-    ) -> RouterCommand<Self::Message> {
+    ) -> Result<RouterCommand<Self::Message>, BackendClosed> {
         let mut commands = RouterCommand::new();
 
-        self.modal_state.backend_event(event.clone(), conn);
+        self.modal_state.backend_event(event.clone(), conn)?;
 
         match event {
             BackendEvent::ImageDownloaded(image) => {
@@ -345,11 +366,11 @@ impl Route for State {
             }
             BackendEvent::ContactCreated(db_contact) => {
                 let id = self.chats.len() as i32;
-                self.chats
-                    .push(chat_contact::ChatContact::new(id, &db_contact, conn));
+                let new_chat = chat_contact::ChatContact::new(id, &db_contact, conn)?;
+                self.chats.push(new_chat);
                 conn.send(ToBackend::FetchContactWithMetadata(
                     db_contact.pubkey().to_owned(),
-                ));
+                ))?;
             }
             BackendEvent::ContactUpdated(db_contact) => {
                 if let Some(contact_card) = self
@@ -357,9 +378,9 @@ impl Route for State {
                     .iter_mut()
                     .find(|c| c.contact.pubkey() == db_contact.pubkey())
                 {
-                    contact_card.update_contact(db_contact, conn);
+                    contact_card.update_contact(db_contact, conn)?;
                 } else {
-                    let new_chat = ChatContact::new(self.chats.len() as i32, &db_contact, conn);
+                    let new_chat = ChatContact::new(self.chats.len() as i32, &db_contact, conn)?;
                     self.chats.push(new_chat);
                 }
             }
@@ -372,7 +393,7 @@ impl Route for State {
             }
             BackendEvent::UpdatedMetadata(pubkey) => {
                 tracing::info!("Chat got updatedmetadata: {}", pubkey.to_string());
-                conn.send(ToBackend::FetchContactWithMetadata(pubkey));
+                conn.send(ToBackend::FetchContactWithMetadata(pubkey))?;
             }
             BackendEvent::GotSingleContact(_pubkey, db_contact) => {
                 tracing::info!("Chat got single_contact: {:?}", db_contact);
@@ -382,7 +403,7 @@ impl Route for State {
                         .iter_mut()
                         .find(|c| c.contact.pubkey() == db_contact.pubkey())
                     {
-                        contact_card.update_contact(db_contact, conn);
+                        contact_card.update_contact(db_contact, conn)?;
                     } else {
                         tracing::info!(
                             "GotSingleContact for someone not in the list?? {:?}",
@@ -392,13 +413,13 @@ impl Route for State {
                 }
             }
             BackendEvent::GotContacts(db_contacts) => {
-                self.chats = db_contacts
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, c)| chat_contact::ChatContact::new(idx as i32, c, conn))
-                    .collect();
+                self.chats = vec![];
+                for (idx, c) in db_contacts.iter().enumerate() {
+                    self.chats
+                        .push(chat_contact::ChatContact::new(idx as i32, c, conn)?);
+                }
 
-                if let Some(cmds) = self.handle_focus_contact(conn) {
+                if let Some(cmds) = self.handle_focus_contact(conn)? {
                     cmds.into_iter().for_each(|c| commands.push(c));
                 }
             }
@@ -444,7 +465,7 @@ impl Route for State {
                     .find(|message| message.msg_id == chat_message.msg_id)
                 {
                     message.confirm_msg(&chat_message);
-                    conn.send(ToBackend::MessageSeen(message.msg_id))
+                    conn.send(ToBackend::MessageSeen(message.msg_id))?;
                 }
             }
             BackendEvent::PendingDM(db_contact, chat_message)
@@ -453,7 +474,7 @@ impl Route for State {
                 db_contact,
                 ..
             } => {
-                let cmd = self.handle_new_message(db_contact, chat_message, conn);
+                let cmd = self.handle_new_message(db_contact, chat_message, conn)?;
                 commands.push(cmd);
             }
 
@@ -507,14 +528,14 @@ impl Route for State {
             _ => (),
         };
 
-        commands
+        Ok(commands)
     }
 
     fn update(
         &mut self,
         message: Message,
         conn: &mut BackEndConnection,
-    ) -> RouterCommand<Self::Message> {
+    ) -> Result<RouterCommand<Self::Message>, BackendClosed> {
         let mut commands = RouterCommand::new();
 
         match message {
@@ -557,7 +578,7 @@ impl Route for State {
                             return self.update(message, conn);
                         }
                         other => {
-                            let (cmd, close_modal) = state.update(other, conn);
+                            let (cmd, close_modal) = state.update(other, conn)?;
                             if close_modal {
                                 commands.push(self.close_modal())
                             }
@@ -574,7 +595,7 @@ impl Route for State {
                             return self.update(message, conn);
                         }
                         other => {
-                            let (cmd, close_modal) = state.update(other, conn);
+                            let (cmd, close_modal) = state.update(other, conn)?;
                             if close_modal {
                                 commands.push(self.close_modal())
                             }
@@ -609,7 +630,7 @@ impl Route for State {
                             conn.send(ToBackend::SendDM(
                                 chat_contact.contact.to_owned(),
                                 dm_msg.clone(),
-                            ));
+                            ))?;
                             self.chat_list_container.update_dm_msg("".into());
                         }
                         _ => (),
@@ -637,22 +658,26 @@ impl Route for State {
                                 conn.send(ToBackend::FetchMoreMessages(
                                     contact,
                                     first_message.to_owned(),
-                                ));
+                                ))?;
                             }
                         }
                     }
                 }
                 chat_list_container::Message::OpenContactProfile => {
                     if let Some(chat_contact) = self.active_chat() {
-                        self.modal_state = ModalState::basic_profile(&chat_contact.contact, conn);
+                        self.modal_state = ModalState::basic_profile(&chat_contact.contact, conn)?;
                     }
                 }
                 chat_list_container::Message::ChatRightClick(msg, point) => {
-                    conn.send(ToBackend::FetchRelayResponsesChatMsg(msg.clone()));
+                    conn.send(ToBackend::FetchRelayResponsesChatMsg(msg.clone()))?;
                     self.calculate_ctx_menu_pos(point);
                     self.hide_context_menu = false;
                     self.chat_message_pressed = Some(msg);
                 }
+                chat_list_container::Message::ChannelMenuPressed => {}
+                chat_list_container::Message::ChannelOpenModalPressed => {}
+                chat_list_container::Message::ChannelSearchPressed => {}
+                chat_list_container::Message::ChannelUserNamePressed(_) => {}
             },
 
             Message::ContactListMsg(ct_msg) => match ct_msg {
@@ -663,12 +688,12 @@ impl Route for State {
                     self.contact_list.search_input_change(text);
                 }
                 contact_list::Message::ContactPress(idx) => {
-                    commands.push(self.set_active_contact(idx, conn));
+                    commands.push(self.set_active_contact(idx, conn)?);
                 }
             },
         }
 
-        commands
+        Ok(commands)
     }
 }
 

@@ -6,6 +6,7 @@ use iced::{
 };
 
 use crate::{
+    error::BackendClosed,
     net::{BackEndConnection, ToBackend},
     widget::Element,
 };
@@ -51,12 +52,17 @@ impl AsyncFileImporter {
             .width(Length::Fill)
             .into()
     }
-    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
+    pub fn update(
+        &mut self,
+        message: Message,
+        conn: &mut BackEndConnection,
+    ) -> Result<(), BackendClosed> {
         match message {
-            Message::ChooseFile => conn.send(ToBackend::ChooseFile(self.file_filter.clone())),
+            Message::ChooseFile => conn.send(ToBackend::ChooseFile(self.file_filter.clone()))?,
             Message::UpdateFilePath(path) => {
                 self.file_input = path;
             }
         }
+        Ok(())
     }
 }

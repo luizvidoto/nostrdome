@@ -1,7 +1,7 @@
 use crate::components::chat_contact::ChatContact;
 use crate::components::{common_scrollable, Responsive};
 use crate::consts::YMD_FORMAT;
-use crate::icon::{file_icon_regular, send_icon};
+use crate::icon::{dots_vertical_icon, file_icon_regular, search_icon, send_icon};
 use crate::style;
 use crate::types::chat_message::{self, ChatMessage};
 use crate::utils::from_naive_utc_to_local;
@@ -9,6 +9,7 @@ use crate::widget::{Button, Container, Element};
 use chrono::{Datelike, NaiveDateTime};
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Length, Point, Size};
+use nostr::secp256k1::XOnlyPublicKey;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -18,6 +19,10 @@ pub enum Message {
     Scrolled(scrollable::RelativeOffset),
     OpenContactProfile,
     ChatRightClick(ChatMessage, Point),
+    ChannelOpenModalPressed,
+    ChannelSearchPressed,
+    ChannelMenuPressed,
+    ChannelUserNamePressed(XOnlyPublicKey),
 }
 
 pub struct ChatListContainer {
@@ -31,6 +36,37 @@ impl ChatListContainer {
     }
     pub fn update_dm_msg(&mut self, text: String) {
         self.dm_msg_input = text;
+    }
+    pub fn channel_view<'a>(
+        &'a self,
+        scrollable_id: &'a scrollable::Id,
+        chat_input_id: &'a text_input::Id,
+        messages: &'a [ChatMessage],
+        name: &str,
+        members: i32,
+    ) -> Element<'a, Message> {
+        let chat_messages = create_channel_content(scrollable_id, messages);
+        let message_input = text_input("Write a message...", &self.dm_msg_input)
+            .on_submit(Message::DMSentPress(self.dm_msg_input.clone()))
+            .on_input(Message::DMNMessageChange)
+            .id(chat_input_id.clone());
+
+        let send_btn = button(send_icon().style(style::Text::Primary))
+            .style(style::Button::Invisible)
+            .on_press(Message::DMSentPress(self.dm_msg_input.clone()));
+
+        let msg_input_row = container(row![message_input, send_btn].spacing(5))
+            .style(style::Container::Default)
+            .height(CHAT_INPUT_HEIGHT)
+            .padding([10, 5]);
+
+        container(column![
+            channel_navbar(name, members),
+            chat_messages,
+            msg_input_row
+        ])
+        .width(Length::Fill)
+        .into()
     }
     pub fn view<'a>(
         &'a self,
@@ -71,7 +107,7 @@ impl ChatListContainer {
             .center_y()
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(style::Container::ChatContainer)
+            .style(style::Container::Background)
             .into()
     }
 }
@@ -87,7 +123,7 @@ fn create_chat_content<'a>(
                 .center_y()
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .style(style::Container::ChatContainer)
+                .style(style::Container::Background)
                 .into();
         }
 
@@ -105,15 +141,13 @@ fn create_chat_content<'a>(
                 col = col.push(chat_day_divider(msg_date.clone()));
             }
 
-            col = col.push(msg.view().map(|m| match m {
-                chat_message::Message::ChatRightClick(msg, point) => {
-                    Message::ChatRightClick(msg, point)
-                }
-            }));
+            let msg_view = msg.view(false).map(map_chat_msgs);
+
+            col = col.push(msg_view);
 
             last_date = Some(msg_date);
         }
-        // col.into()
+
         let scrollable = common_scrollable(col)
             .height(Length::Fill)
             .id(scrollable_id.clone())
@@ -128,7 +162,7 @@ fn create_chat_content<'a>(
         .center_y()
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(style::Container::ChatContainer)
+        .style(style::Container::Background)
         .into()
 }
 
@@ -152,7 +186,7 @@ fn chat_navbar<'a>(active_contact: &'a ChatContact) -> Container<'a, Message> {
             .width(Length::Fill),
     )
     .height(NAVBAR_HEIGHT)
-    .style(style::Container::Default)
+    .style(style::Container::Foreground)
 }
 
 fn header_details<'a>(chat: &'a ChatContact) -> Button<'a, Message> {
@@ -168,7 +202,7 @@ fn header_details<'a>(chat: &'a ChatContact) -> Button<'a, Message> {
                 text(petname).size(20),
                 text(chat.contact.get_display_name().unwrap_or("".into()))
                     .size(14)
-                    .style(style::Text::ChatMessageStatus)
+                    .style(style::Text::Placeholder)
             ]
             .align_items(Alignment::End)
             .spacing(5)
@@ -195,6 +229,112 @@ fn header_action_buttons<'a>() -> Element<'a, Message> {
     .padding(10)
     .align_items(Alignment::End)
     .into()
+}
+
+fn create_channel_content<'a>(
+    scrollable_id: &'a scrollable::Id,
+    messages: &'a [ChatMessage],
+) -> Element<'a, Message> {
+    let lazy = Responsive::new(move |_size| {
+        if messages.is_empty() {
+            return container(text("No messages"))
+                .center_x()
+                .center_y()
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(style::Container::Background)
+                .into();
+        }
+
+        let mut col = column![];
+        let mut last_date: Option<NaiveDateTime> = None;
+        let mut previous_msg: Option<ChatMessage> = None;
+
+        for msg in messages {
+            let msg_date = msg.display_time;
+
+            if let Some(last) = last_date {
+                if last.day() != msg_date.day() {
+                    col = col.push(chat_day_divider(msg_date.clone()));
+                }
+            } else {
+                col = col.push(chat_day_divider(msg_date.clone()));
+            }
+
+            let show_name = msg.show_name(previous_msg);
+
+            let msg_view = msg.view(show_name).map(map_chat_msgs);
+
+            col = col.push(msg_view);
+
+            last_date = Some(msg_date);
+
+            previous_msg = Some(msg.clone());
+        }
+
+        let scrollable = common_scrollable(col)
+            .height(Length::Fill)
+            .id(scrollable_id.clone())
+            .on_scroll(Message::Scrolled);
+
+        scrollable.into()
+    })
+    .on_update(Message::GotChatSize);
+
+    container(lazy)
+        .center_x()
+        .center_y()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(style::Container::Background)
+        .into()
+}
+
+fn map_chat_msgs(message: chat_message::Message) -> Message {
+    match message {
+        chat_message::Message::ChatRightClick(msg, point) => Message::ChatRightClick(msg, point),
+        chat_message::Message::UserNameClick(author) => Message::ChannelUserNamePressed(author),
+    }
+}
+
+fn channel_navbar<'a>(name: &str, members: i32) -> Container<'a, Message> {
+    container(
+        row![
+            channel_header_details(name, members),
+            channel_header_action_buttons()
+        ]
+        .spacing(5)
+        .width(Length::Fill),
+    )
+    .height(NAVBAR_HEIGHT)
+    .style(style::Container::Foreground)
+}
+
+fn channel_header_details<'a>(name: &str, members: i32) -> Button<'a, Message> {
+    button(column![
+        text(name),
+        text(&format!("{} Members", members)).size(16)
+    ])
+    .padding([10, 0, 0, 10])
+    .style(style::Button::Invisible)
+    .on_press(Message::ChannelOpenModalPressed)
+    .height(Length::Fill)
+    .width(Length::Fill)
+}
+
+fn channel_header_action_buttons<'a>() -> Element<'a, Message> {
+    let src_btn = button(search_icon())
+        .style(style::Button::Invisible)
+        .on_press(Message::ChannelSearchPressed);
+
+    let menu_btn = button(dots_vertical_icon())
+        .style(style::Button::Invisible)
+        .on_press(Message::ChannelMenuPressed);
+
+    row![src_btn, menu_btn]
+        .padding(10)
+        .align_items(Alignment::End)
+        .into()
 }
 
 const NAVBAR_HEIGHT: f32 = 50.0;

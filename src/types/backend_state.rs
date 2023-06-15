@@ -42,13 +42,13 @@ impl PendingEvent {
 }
 
 pub struct BackendState {
-    pub db_client: Database,
     pub req_client: reqwest::Client,
     pub search_channel_ids: HashSet<EventId>,
     pub nostr: RelayPool,
     pub nips_data: Vec<NipData>,
     pub create_account: Option<BasicProfile>,
     pub pending_events: HashMap<EventId, PendingEvent>,
+    db_client: Database,
     ntp_offset: Option<i64>,
     ntp_server: Option<String>,
 }
@@ -93,10 +93,13 @@ impl BackendState {
     ) -> Result<(), Error> {
         tracing::debug!("send_profile");
         let pool = &self.db_client.pool;
+
         let builder = EventBuilder::set_metadata(metadata.clone());
         let ns_event = event_with_time(pool, keys, builder).await?;
         self.nostr.send_event(ns_event.clone())?;
+
         self.insert_pending(PendingEvent::new(ns_event));
+
         Ok(())
     }
 
@@ -105,11 +108,14 @@ impl BackendState {
         let pool = &self.db_client.pool;
         let list = DbContact::fetch_basic(&self.db_client.pool).await?;
         let c_list: Vec<Contact> = list.iter().map(|c| c.into()).collect();
+
         let builder = EventBuilder::set_contact_list(c_list);
         let ns_event = event_with_time(pool, keys, builder).await?;
         self.nostr.send_event(ns_event.clone())?;
+
         let pending_event = PendingEvent::new(ns_event);
         self.insert_pending(pending_event.clone());
+
         Ok(pending_event)
     }
 
@@ -121,12 +127,15 @@ impl BackendState {
     ) -> Result<PendingEvent, Error> {
         tracing::debug!("build_dm");
         let pool = &self.db_client.pool;
+
         let builder =
             EventBuilder::new_encrypted_direct_msg(&keys, db_contact.pubkey().to_owned(), content)?;
         let ns_event = event_with_time(pool, keys, builder).await?;
         self.nostr.send_event(ns_event.clone())?;
+
         let pending_event = PendingEvent::new(ns_event);
         self.insert_pending(pending_event.clone());
+
         Ok(pending_event)
     }
 
@@ -136,6 +145,14 @@ impl BackendState {
         self.db_client.cache_pool.close().await;
         self.nostr.shutdown()?;
         Ok(())
+    }
+
+    pub(crate) fn pool(&self) -> &SqlitePool {
+        &self.db_client.pool
+    }
+
+    pub(crate) fn cache_pool(&self) -> &SqlitePool {
+        &self.db_client.cache_pool
     }
 }
 

@@ -3,6 +3,7 @@ use iced::{Alignment, Length};
 
 use crate::components::{common_scrollable, contact_row, ContactRow};
 use crate::db::{DbRelay, DbRelayResponse};
+use crate::error::BackendClosed;
 use crate::icon::{import_icon, plus_icon, satellite_icon};
 use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
@@ -48,20 +49,24 @@ pub struct State {
     relays_response: Option<ContactsRelaysResponse>,
 }
 impl State {
-    pub fn new(conn: &mut BackEndConnection) -> Self {
-        conn.send(net::ToBackend::FetchContacts);
-        conn.send(net::ToBackend::FetchRelayResponsesContactList);
-        Self {
+    pub fn new(conn: &mut BackEndConnection) -> Result<Self, BackendClosed> {
+        conn.send(net::ToBackend::FetchContacts)?;
+        conn.send(net::ToBackend::FetchRelayResponsesContactList)?;
+        Ok(Self {
             contacts: vec![],
             search_contact_input: "".into(),
             relays_response: None,
-        }
+        })
     }
 
-    pub fn backend_event(&mut self, event: BackendEvent, conn: &mut BackEndConnection) {
+    pub fn backend_event(
+        &mut self,
+        event: BackendEvent,
+        conn: &mut BackEndConnection,
+    ) -> Result<(), BackendClosed> {
         match event {
             BackendEvent::ConfirmedContactList(_) => {
-                conn.send(net::ToBackend::FetchRelayResponsesContactList);
+                conn.send(net::ToBackend::FetchRelayResponsesContactList)?;
             }
             BackendEvent::GotRelayResponsesContactList {
                 responses,
@@ -74,7 +79,7 @@ impl State {
             }
             BackendEvent::UpdatedMetadata(pubkey) => {
                 if self.contacts.iter().any(|c| c.pubkey() == &pubkey) {
-                    conn.send(net::ToBackend::FetchContactWithMetadata(pubkey));
+                    conn.send(net::ToBackend::FetchContactWithMetadata(pubkey))?;
                 }
             }
             BackendEvent::GotSingleContact(_pubkey, db_contact) => {
@@ -98,50 +103,51 @@ impl State {
             | BackendEvent::ContactCreated(_)
             | BackendEvent::ContactUpdated(_)
             | BackendEvent::ContactDeleted(_) => {
-                conn.send(net::ToBackend::FetchContacts);
+                conn.send(net::ToBackend::FetchContacts)?;
             }
             _ => (),
         }
+        Ok(())
     }
 
     pub fn update(
         &mut self,
         message: Message,
         conn: &mut BackEndConnection,
-    ) -> Option<SettingsRouterMessage> {
+    ) -> Result<Option<SettingsRouterMessage>, BackendClosed> {
         match message {
             Message::SendMessageTo(_) => (),
             Message::RelaysConfirmationPress(_) => (),
             Message::OpenProfileModal(db_contact) => {
-                return Some(SettingsRouterMessage::OpenProfileModal(db_contact))
+                return Ok(Some(SettingsRouterMessage::OpenProfileModal(db_contact)));
             }
             Message::OpenAddContactModal => {
-                return Some(SettingsRouterMessage::OpenAddContactModal)
+                return Ok(Some(SettingsRouterMessage::OpenAddContactModal));
             }
             Message::OpenImportContactModal => {
-                return Some(SettingsRouterMessage::OpenImportContactModal)
+                return Ok(Some(SettingsRouterMessage::OpenImportContactModal));
             }
             Message::SearchContactInputChange(text) => self.search_contact_input = text,
             Message::ContactRowMessage(ct_msg) => match ct_msg {
                 // TODO: dont return a message, find a better way
                 contact_row::Message::SendMessageTo(contact) => {
-                    return Some(SettingsRouterMessage::RouterMessage(
+                    return Ok(Some(SettingsRouterMessage::RouterMessage(
                         RouterMessage::GoToChatTo(contact),
-                    ));
+                    )));
                 }
                 contact_row::Message::DeleteContact(contact) => {
-                    conn.send(net::ToBackend::DeleteContact(contact))
+                    conn.send(net::ToBackend::DeleteContact(contact))?;
                 }
                 contact_row::Message::EditContact(contact) => {
-                    return Some(SettingsRouterMessage::OpenEditContactModal(contact));
+                    return Ok(Some(SettingsRouterMessage::OpenEditContactModal(contact)));
                 }
             },
             Message::DeleteContact(contact) => {
-                conn.send(net::ToBackend::DeleteContact(contact));
+                conn.send(net::ToBackend::DeleteContact(contact))?;
             }
         }
 
-        None
+        Ok(None)
     }
 
     fn make_relays_response<'a>(&self) -> Element<'a, Message> {
@@ -164,7 +170,7 @@ impl State {
                 ))
                 .style(style::Button::MenuBtn)
                 .padding(5),
-                "Contact List On Relays",
+                "Contact List Confirmations",
                 tooltip::Position::Left,
             )
             .style(style::Container::TooltipBg)

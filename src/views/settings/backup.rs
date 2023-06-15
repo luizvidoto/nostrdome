@@ -1,6 +1,7 @@
 use crate::components::copy_btn;
 use crate::components::text::title;
 use crate::db::DbEvent;
+use crate::error::BackendClosed;
 use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::utils::hide_string;
 use crate::{db::DbContact, widget::Element};
@@ -42,11 +43,12 @@ pub struct State {
     keys: Option<Keys>,
 }
 impl State {
-    pub fn new(conn: &mut BackEndConnection) -> Self {
-        conn.send(net::ToBackend::FetchContacts);
-        conn.send(net::ToBackend::FetchAllMessageEvents);
-        conn.send(net::ToBackend::FetchKeys);
-        Self {
+    pub fn new(conn: &mut BackEndConnection) -> Result<Self, BackendClosed> {
+        conn.send(net::ToBackend::FetchContacts)?;
+        conn.send(net::ToBackend::FetchAllMessageEvents)?;
+        conn.send(net::ToBackend::FetchKeys)?;
+
+        Ok(Self {
             contacts: Vec::new(),
             messages: Vec::new(),
             contacts_state: LoadingState::Idle,
@@ -55,7 +57,7 @@ impl State {
             public_key_visible: false,
             secret_key_visible: false,
             keys: None,
-        }
+        })
     }
 
     pub fn backend_event(&mut self, event: BackendEvent, _conn: &mut BackEndConnection) {
@@ -80,19 +82,23 @@ impl State {
             _ => (),
         }
     }
-    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Command<Message> {
+    pub fn update(
+        &mut self,
+        message: Message,
+        conn: &mut BackEndConnection,
+    ) -> Result<Command<Message>, BackendClosed> {
         let mut commands = vec![];
 
         match message {
             Message::ExportContacts => {
                 self.contacts_state = LoadingState::Loading;
                 self.listening_to = Some(Listener::Contacts);
-                conn.send(net::ToBackend::ExportContacts);
+                conn.send(net::ToBackend::ExportContacts)?;
             }
             Message::ExportMessages => {
                 self.messages_state = LoadingState::Loading;
                 self.listening_to = Some(Listener::Messages);
-                conn.send(net::ToBackend::ExportMessages(self.messages.clone()));
+                conn.send(net::ToBackend::ExportMessages(self.messages.clone()))?;
             }
             Message::ShowPublicKey => {
                 self.public_key_visible = true;
@@ -130,7 +136,7 @@ impl State {
             }
         }
 
-        Command::batch(commands)
+        Ok(Command::batch(commands))
     }
 
     pub fn view(&self) -> Element<Message> {

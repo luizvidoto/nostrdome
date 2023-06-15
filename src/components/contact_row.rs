@@ -1,5 +1,6 @@
 use iced::widget::{button, container, row, text, tooltip};
 use iced::Length;
+use nostr::prelude::ToBech32;
 
 use crate::db::DbContact;
 use crate::icon::{delete_icon, edit_icon, reply_icon};
@@ -15,6 +16,7 @@ pub enum Message {
 }
 pub struct ContactRow {
     contact: DbContact,
+    pubkey: String,
 }
 
 impl From<ContactRow> for DbContact {
@@ -30,9 +32,13 @@ impl From<&ContactRow> for DbContact {
 }
 
 impl ContactRow {
-    pub fn from_db_contact(contact: &DbContact) -> Self {
+    pub fn from_db_contact(db_contact: &DbContact) -> Self {
         Self {
-            contact: contact.clone(),
+            contact: db_contact.clone(),
+            pubkey: db_contact
+                .pubkey()
+                .to_bech32()
+                .unwrap_or(db_contact.pubkey().to_string()),
         }
     }
     pub fn header<M: 'static>() -> Element<'static, M> {
@@ -58,8 +64,7 @@ impl ContactRow {
     }
     pub fn view(&self) -> Element<'static, Message> {
         row![
-            container(text(hide_string(&self.contact.pubkey().to_string(), 4)))
-                .width(Length::Fixed(PUBKEY_CELL_WIDTH)),
+            container(text(hide_string(&self.pubkey, 6))).width(Length::Fixed(PUBKEY_CELL_WIDTH)),
             container(text(&self.contact.get_petname().unwrap_or("".into())))
                 .width(Length::Fixed(NAME_CELL_WIDTH_MIN))
                 .max_width(NAME_CELL_WIDTH_MAX),
@@ -115,6 +120,6 @@ impl ContactRow {
 
 const EDIT_BTN_WIDTH: f32 = 30.0;
 const REMOVE_BTN_WIDTH: f32 = 30.0;
-const PUBKEY_CELL_WIDTH: f32 = 100.0;
+const PUBKEY_CELL_WIDTH: f32 = 120.0;
 const NAME_CELL_WIDTH_MIN: f32 = 100.0;
 const NAME_CELL_WIDTH_MAX: f32 = 200.0;

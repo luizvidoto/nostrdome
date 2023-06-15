@@ -2,6 +2,7 @@
 use iced::Subscription;
 
 use crate::{
+    error::BackendClosed,
     net::{BackEndConnection, BackendEvent},
     style,
     widget::Element,
@@ -20,16 +21,16 @@ pub trait Route: Sized {
         &mut self,
         event: BackendEvent,
         conn: &mut BackEndConnection,
-    ) -> RouterCommand<Self::Message> {
-        RouterCommand::new()
+    ) -> Result<RouterCommand<Self::Message>, BackendClosed> {
+        Ok(RouterCommand::new())
     }
 
     fn update(
         &mut self,
         message: Self::Message,
         conn: &mut BackEndConnection,
-    ) -> RouterCommand<Self::Message> {
-        RouterCommand::new()
+    ) -> Result<RouterCommand<Self::Message>, BackendClosed> {
+        Ok(RouterCommand::new())
     }
 
     fn view(&self, selected_theme: Option<style::Theme>) -> Element<'_, Self::Message>;

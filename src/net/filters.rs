@@ -13,6 +13,15 @@ fn to_secs(last_event: &Option<DbEvent>) -> u64 {
         .unwrap_or(0)
 }
 
+pub fn members_metadata_filter<'a, T: IntoIterator<Item = &'a XOnlyPublicKey>>(
+    members: T,
+) -> Filter {
+    Filter::new()
+        .authors(members.into_iter().map(|m| m.to_string()).collect())
+        .kind(Kind::Metadata)
+        .until(Timestamp::now())
+}
+
 pub fn contact_list_metadata_filter(
     contact_list: &[DbContact],
     last_event: &Option<DbEvent>,
@@ -33,6 +42,7 @@ pub fn contact_list_metadata_filter(
             .since(Timestamp::from(to_secs(last_event))),
     )
 }
+
 pub fn user_metadata_filter(pubkey: XOnlyPublicKey, last_event: &Option<DbEvent>) -> Filter {
     Filter::new()
         .author(pubkey.to_string())
@@ -81,12 +91,39 @@ pub fn channel_details_filter(channel_id: &nostr::EventId) -> Vec<Filter> {
         Filter::new()
             .kind(Kind::ChannelMetadata)
             .event(channel_id.to_owned())
+            .until(Timestamp::now())
             .limit(10),
         Filter::new()
             .kind(Kind::ChannelMessage)
             .event(channel_id.to_owned())
+            .until(Timestamp::now())
             .limit(CHANNEL_DETAILS_LIMIT),
     ]
 }
+
+pub fn subscribe_to_channels(
+    channels: &[nostr::EventId],
+    last_event: &Option<DbEvent>,
+) -> Vec<Filter> {
+    vec![
+        Filter::new()
+            .kind(Kind::ChannelMetadata)
+            .events(channels.to_vec())
+            .since(Timestamp::from(to_secs(last_event))),
+        Filter::new()
+            .kind(Kind::ChannelMessage)
+            .events(channels.to_vec())
+            .since(Timestamp::from(to_secs(last_event))),
+        Filter::new()
+            .kind(Kind::ChannelHideMessage)
+            .events(channels.to_vec())
+            .since(Timestamp::from(to_secs(last_event))),
+        Filter::new()
+            .kind(Kind::ChannelMuteUser)
+            .events(channels.to_vec())
+            .since(Timestamp::from(to_secs(last_event))),
+    ]
+}
+
 const CHANNEL_SEARCH_LIMIT: usize = 10;
 const CHANNEL_DETAILS_LIMIT: usize = 1000;
