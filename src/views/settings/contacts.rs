@@ -191,7 +191,7 @@ impl State {
             self.make_relays_response()
         ]
         .align_items(Alignment::Center)
-        .padding([0, 20, 0, 0])
+        .padding([20, 20, 0, 0])
         .spacing(10);
 
         let search_contact = text_input("Search", &self.search_contact_input)

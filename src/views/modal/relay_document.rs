@@ -198,7 +198,7 @@ impl<M: Clone + Debug + 'static + Send> ModalView for RelayDocState<M> {
             let page_title = title("Relay Document");
             let page_subtitle = text(&self.db_relay.url.to_string()).size(24);
 
-            let card_body = common_scrollable(card_body);
+            let card_body = common_scrollable(container(card_body).padding(20));
             let card_body = column![page_title, page_subtitle, card_body].spacing(5);
 
             card(card_body, card_footer).max_width(MODAL_WIDTH).into()

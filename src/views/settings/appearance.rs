@@ -16,7 +16,7 @@ pub fn view(selected_theme: Option<style::Theme>) -> Element<'static, Message> {
     let light_themes =
         style::Theme::LIGHT
             .into_iter()
-            .fold(row![].padding([20, 0]).spacing(5), |row, t| {
+            .fold(row![].padding([20, 0]).spacing(0), |row, t| {
                 row.push(vertical_radio(
                     t.to_string(),
                     t,
@@ -30,7 +30,7 @@ pub fn view(selected_theme: Option<style::Theme>) -> Element<'static, Message> {
     let dark_themes =
         style::Theme::DARK
             .into_iter()
-            .fold(row![].padding([20, 0]).spacing(5), |row, t| {
+            .fold(row![].padding([20, 0]).spacing(0), |row, t| {
                 row.push(vertical_radio(
                     t.to_string(),
                     t,
@@ -41,7 +41,10 @@ pub fn view(selected_theme: Option<style::Theme>) -> Element<'static, Message> {
     let dark_themes = scrollable(dark_themes).horizontal_scroll(Properties::default());
     let dark_themes = column![text("Dark Themes").size(24), dark_themes].spacing(10);
 
-    column![title, light_themes, dark_themes].spacing(20).into()
+    column![title, light_themes, dark_themes]
+        .spacing(20)
+        .padding([20, 0, 0, 0])
+        .into()
 }
 
 fn vertical_radio<V, Message: 'static>(

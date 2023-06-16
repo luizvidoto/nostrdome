@@ -180,7 +180,7 @@ impl State {
         };
 
         column![page_title, contacts_group, messages_group, keys_group]
-            .padding([0, 20, 0, 0])
+            .padding([20, 20, 0, 0])
             .spacing(10)
             .into()
     }

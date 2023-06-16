@@ -5,7 +5,7 @@ use crate::net::{BackEndConnection, ToBackend};
 use crate::style;
 use crate::widget::Element;
 use iced::alignment::Horizontal;
-use iced::widget::{button, row, text};
+use iced::widget::{button, container, row, text};
 use iced::{Command, Length};
 use iced_aw::Modal;
 use std::fmt::Debug;
@@ -86,7 +86,7 @@ impl<M: Clone + Debug + 'static + Send> ModalView for RelayBasic<M> {
                 add_relay_input = add_relay_input.invalid("Relay address is invalid");
             }
 
-            let card_body = add_relay_input.build();
+            let card_body = container(add_relay_input.build()).padding(20);
             let card_footer = row![
                 button(text("Cancel").horizontal_alignment(Horizontal::Center),)
                     .style(style::Button::Bordered)

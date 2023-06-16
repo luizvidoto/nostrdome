@@ -1,4 +1,4 @@
-use crate::utils::{change_color_by_type, darken_color};
+use crate::utils::{change_color_by_type, darken_color, lighten_color};
 
 use super::Theme;
 use iced::widget::container;
@@ -10,6 +10,7 @@ pub enum Container {
     Default,
     Background,
     Foreground,
+    ForegroundBordered,
     Bordered,
     CardBody,
     Frame,
@@ -63,6 +64,14 @@ impl container::StyleSheet for Theme {
             },
             Container::Foreground => container::Appearance {
                 background: self.palette().base.foreground.into(),
+                text_color: self.palette().base.text.into(),
+                ..def
+            },
+            Container::ForegroundBordered => container::Appearance {
+                background: self.palette().base.foreground.into(),
+                border_width: 1.0,
+                border_color: change_color_by_type(theme_type, self.palette().base.background, 0.1)
+                    .into(),
                 text_color: self.palette().base.text.into(),
                 ..def
             },

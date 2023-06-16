@@ -5,6 +5,7 @@ use ns_client::Subscription;
 use rfd::AsyncFileDialog;
 use serde::Serialize;
 use sqlx::SqlitePool;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::signal;
@@ -42,11 +43,11 @@ use crate::db::ProfileCache;
 use crate::db::TagInfo;
 use crate::db::UserConfig;
 use crate::error::BackendClosed;
+use crate::net::filters::channel_details_filter;
 use crate::net::filters::channel_search_filter;
 use crate::net::filters::contact_list_filter;
 use crate::net::filters::members_metadata_filter;
 use crate::net::filters::messages_filter;
-use crate::net::filters::subscribe_to_channels;
 use crate::net::filters::user_metadata_filter;
 use crate::net::ntp::spawn_ntp_request;
 use crate::net::reqwest_client::fetch_latest_version;
@@ -66,8 +67,8 @@ use crate::Error;
 mod filters;
 pub(crate) mod ntp;
 pub(crate) mod reqwest_client;
-use self::filters::channel_details_filter;
 use self::filters::contact_list_metadata_filter;
+use self::filters::search_channel_details_filter;
 use self::reqwest_client::download_image;
 pub(crate) use reqwest_client::{image_filename, ImageKind, ImageSize};
 
@@ -301,26 +302,35 @@ async fn handle_eose(
     // tracing::info!("EOSE {} - {}", &url, &subscription_id);
 
     if let Some(sub_type) = SubName::from_id(&subscription_id) {
-        let pool = backend.pool();
         match sub_type {
             SubName::ContactList => {
-                let contact_list = DbContact::fetch_basic(pool).await?;
-                let last_event = DbEvent::fetch_last_url(pool, &url).await?;
-                if let Some(filter) = contact_list_metadata_filter(&contact_list, &last_event) {
-                    let subscription = ns_client::Subscription::new(vec![filter])
-                        .with_id(SubName::ContactListMetadata.to_string());
-                    tracing::info!("contact_list_meta_sub: {:?}", subscription);
-                    backend.nostr.relay_subscribe(&url, &subscription)?;
+                let contact_list = DbContact::fetch_basic(backend.pool()).await?;
+                let last_event = DbEvent::fetch_last_url(backend.pool(), &url).await?;
+                let channels = ChannelSubscription::fetch(backend.pool()).await?;
+                let channels: Vec<_> = channels.into_iter().map(|c| c.channel_id).collect();
+
+                let mut all_members = HashSet::new();
+                // remove user from members?
+                for channel in &channels {
+                    let members = fetch_channel_members(backend.cache_pool(), channel).await?;
+                    all_members.extend(members);
                 }
+
+                let filter =
+                    contact_list_metadata_filter(&contact_list, all_members.iter(), &last_event);
+                let subscription = ns_client::Subscription::new(vec![filter])
+                    .with_id(SubName::ContactListMetadata.to_string());
+                tracing::debug!("contact_list_meta_sub: {:?}", subscription);
+                backend.nostr.relay_subscribe(&url, &subscription)?;
             }
             SubName::SearchChannels => {
-                // send search channels metadata now
+                // when eose of search_channels, fetch metadata
                 let actions_id = SubscriptionId::generate().to_string();
                 let actions: Vec<_> = backend
                     .search_channel_ids
                     .iter()
                     .map(|channel_id| {
-                        ns_client::Subscription::new(channel_details_filter(channel_id))
+                        ns_client::Subscription::new(search_channel_details_filter(channel_id))
                             .eose(Some(Duration::from_secs(5)))
                             .with_id(SubName::src_channel_details(channel_id).to_string())
                     })
@@ -502,7 +512,7 @@ async fn handle_relay_message(
             tracing::info!("Relay message: Notice: {}", message);
         }
         RelayMessage::Auth { challenge } => {
-            tracing::warn!("Relay message: Auth Challenge: {}", challenge);
+            backend.new_auth_event(keys, &url, challenge).await?;
         }
         RelayMessage::Count {
             subscription_id: _,
@@ -1378,7 +1388,7 @@ async fn update_channels_subscription(backend: &mut BackendState) -> Result<(), 
     let channels = ChannelSubscription::fetch(pool).await?;
     let channels: Vec<_> = channels.into_iter().map(|c| c.channel_id).collect();
 
-    let subscription = ns_client::Subscription::new(subscribe_to_channels(&channels, &last_event))
+    let subscription = ns_client::Subscription::new(channel_details_filter(&channels, &last_event))
         .with_id(SubName::Channels.to_string());
     backend.nostr.subscribe(&subscription)?;
 
@@ -1498,13 +1508,69 @@ pub async fn _create_channel(_client: &RelayPool) -> Result<BackendEvent, Error>
     todo!()
 }
 
-pub fn add_relays_and_connect(
-    backend: &mut BackendState,
-    keys: &Keys,
-    relays: &[DbRelay],
-    contact_list: &[DbContact],
-    last_event: Option<DbEvent>,
-) -> Result<(), Error> {
+// pub fn add_relays_and_connect(
+//     backend: &mut BackendState,
+//     keys: &Keys,
+//     relays: &[DbRelay],
+//     contact_list: &[DbContact],
+//     last_event: Option<DbEvent>,
+// ) -> Result<(), Error> {
+//     tracing::info!("Adding relays to client: {}", relays.len());
+
+//     // Only adds to the HashMap
+//     for r in relays {
+//         let opts = ns_client::RelayOptions::new(r.read, r.write);
+//         match backend.nostr.add_relay_with_opts(&r.url.to_string(), opts) {
+//             Ok(_) => tracing::debug!("Nostr Client Added Relay: {}", &r.url),
+//             Err(e) => tracing::error!("{}", e),
+//         }
+//     }
+
+//     let contact_list_sub =
+//         Subscription::new(vec![contact_list_filter(keys.public_key(), &last_event)])
+//             .with_id(SubName::ContactList.to_string());
+//     backend.nostr.subscribe(&contact_list_sub)?;
+
+//     let user_meta_sub =
+//         Subscription::new(vec![user_metadata_filter(keys.public_key(), &last_event)])
+//             .with_id(SubName::UserMetadata.to_string())
+//             .eose(Some(Duration::from_secs(30)));
+//     backend.nostr.subscribe(&user_meta_sub)?;
+
+//     let messages_sub = Subscription::new(messages_filter(keys.public_key(), &last_event))
+//         .with_id(SubName::Messages.to_string());
+//     backend.nostr.subscribe(&messages_sub)?;
+
+//     if let Some(filter) = contact_list_metadata_filter(contact_list, &last_event) {
+//         let contact_list_meta_sub =
+//             Subscription::new(vec![filter]).with_id(SubName::ContactListMetadata.to_string());
+//         tracing::debug!("contact_list_meta_sub: {:?}", contact_list_meta_sub);
+//         backend.nostr.subscribe(&contact_list_meta_sub)?;
+//     }
+
+//     Ok(())
+// }
+
+async fn prepare_client(keys: &Keys, backend: &mut BackendState) -> Result<(), Error> {
+    let pool = backend.pool();
+    let cache_pool = backend.cache_pool();
+
+    let relays = DbRelay::fetch(pool).await?;
+    let last_event = DbEvent::fetch_last(pool).await?;
+    let contact_list = DbContact::fetch_basic(pool).await?;
+
+    let channels = ChannelSubscription::fetch(pool).await?;
+    let channels: Vec<_> = channels.into_iter().map(|c| c.channel_id).collect();
+
+    let mut all_members = HashSet::new();
+    // remove user from members?
+    for channel in &channels {
+        let members = fetch_channel_members(cache_pool, channel).await?;
+        all_members.extend(members);
+    }
+
+    UserConfig::store_first_login(pool).await?;
+
     tracing::info!("Adding relays to client: {}", relays.len());
 
     // Only adds to the HashMap
@@ -1531,25 +1597,16 @@ pub fn add_relays_and_connect(
         .with_id(SubName::Messages.to_string());
     backend.nostr.subscribe(&messages_sub)?;
 
-    if let Some(filter) = contact_list_metadata_filter(contact_list, &last_event) {
-        let contact_list_meta_sub =
-            Subscription::new(vec![filter]).with_id(SubName::ContactListMetadata.to_string());
-        tracing::info!("contact_list_meta_sub: {:?}", contact_list_meta_sub);
-        backend.nostr.subscribe(&contact_list_meta_sub)?;
-    }
+    // além dos dados meta dos contatos, preciso também dos members dos canais em que estou inscrito
+    let filter = contact_list_metadata_filter(&contact_list, all_members.iter(), &last_event);
+    let contact_list_meta_sub =
+        Subscription::new(vec![filter]).with_id(SubName::ContactListMetadata.to_string());
+    tracing::debug!("contact_list_meta_sub: {:?}", contact_list_meta_sub);
+    backend.nostr.subscribe(&contact_list_meta_sub)?;
 
-    Ok(())
-}
-
-async fn prepare_client(keys: &Keys, backend: &mut BackendState) -> Result<(), Error> {
-    let pool = backend.pool();
-    let relays = DbRelay::fetch(pool).await?;
-    let last_event = DbEvent::fetch_last(pool).await?;
-    let contact_list = DbContact::fetch_basic(pool).await?;
-
-    UserConfig::store_first_login(pool).await?;
-
-    add_relays_and_connect(backend, &keys, &relays, &contact_list, last_event)?;
+    let filters = channel_details_filter(&channels, &last_event);
+    let channels_sub = Subscription::new(filters).with_id(SubName::Channels.to_string());
+    backend.nostr.subscribe(&channels_sub)?;
 
     if let Some(profile) = backend.create_account.take() {
         let profile_meta: Metadata = profile.into();

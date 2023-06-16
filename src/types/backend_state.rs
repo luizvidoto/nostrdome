@@ -4,6 +4,7 @@ use nostr::{Contact, EventBuilder, EventId, Keys, Metadata};
 use ns_client::RelayPool;
 use sqlx::SqlitePool;
 use thiserror::Error;
+use url::Url;
 
 use crate::{
     db::{Database, DbContact, UserConfig},
@@ -86,6 +87,24 @@ impl BackendState {
         self.ntp_offset = Some(offset);
         self.ntp_server = Some(server.to_owned());
     }
+    pub async fn new_auth_event<S>(
+        &mut self,
+        keys: &Keys,
+        relay_url: &Url,
+        challenge: S,
+    ) -> Result<(), Error>
+    where
+        S: Into<String>,
+    {
+        tracing::debug!("send_auth");
+        let pool = &self.db_client.pool;
+
+        let builder = EventBuilder::auth(challenge, relay_url.to_owned());
+        let ns_event = event_with_time(pool, keys, builder).await?;
+        self.nostr.send_auth(relay_url, ns_event)?;
+        Ok(())
+    }
+
     pub async fn new_profile_event(
         &mut self,
         keys: &Keys,

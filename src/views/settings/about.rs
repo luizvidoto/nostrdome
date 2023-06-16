@@ -101,7 +101,9 @@ impl State {
                 .width(Length::Fill)
                 .spacing(50),
         ]
+        .padding([20, 20, 0, 0])
         .spacing(10);
+
         container(common_scrollable(content))
             .width(Length::Fill)
             .into()

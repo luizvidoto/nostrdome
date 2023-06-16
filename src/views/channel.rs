@@ -212,13 +212,13 @@ impl Route for State {
             .fold(column![].spacing(5), |col, (_, member)| {
                 col.push(member_btn(member))
             });
-        let members_list = common_scrollable(
-            container(column![text("Members").size(24), members_list].spacing(10))
-                .padding(10)
-                .width(MEMBERS_LIST_WIDTH)
-                .height(Length::Fill)
-                .style(style::Container::Foreground),
-        );
+        let members_list = container(common_scrollable(
+            column![text("Members").size(24), members_list].spacing(10),
+        ))
+        .padding(10)
+        .height(Length::Fill)
+        .width(MEMBERS_LIST_WIDTH)
+        .style(style::Container::Foreground);
 
         let chat_view = self
             .chat_list_container

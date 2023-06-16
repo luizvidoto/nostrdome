@@ -22,25 +22,34 @@ pub fn members_metadata_filter<'a, T: IntoIterator<Item = &'a XOnlyPublicKey>>(
         .until(Timestamp::now())
 }
 
-pub fn contact_list_metadata_filter(
-    contact_list: &[DbContact],
+pub fn contact_list_metadata_filter<
+    'a,
+    C: IntoIterator<Item = &'a DbContact>,
+    M: IntoIterator<Item = &'a XOnlyPublicKey>,
+>(
+    contact_list: C,
+    members_pubkeys: M,
     last_event: &Option<DbEvent>,
-) -> Option<Filter> {
-    if contact_list.is_empty() {
-        return None;
-    }
-
-    let all_pubkeys = contact_list
-        .iter()
+) -> Filter {
+    let contacts_pubkeys = contact_list
+        .into_iter()
         .map(|c| c.pubkey().to_string())
         .collect::<Vec<_>>();
 
-    Some(
-        Filter::new()
-            .authors(all_pubkeys)
-            .kind(Kind::Metadata)
-            .since(Timestamp::from(to_secs(last_event))),
-    )
+    let members_pubkeys = members_pubkeys
+        .into_iter()
+        .map(|m| m.to_string())
+        .collect::<Vec<_>>();
+
+    let all_pubkeys: Vec<_> = contacts_pubkeys
+        .iter()
+        .chain(members_pubkeys.iter())
+        .collect();
+
+    Filter::new()
+        .authors(all_pubkeys)
+        .kind(Kind::Metadata)
+        .since(Timestamp::from(to_secs(last_event)))
 }
 
 pub fn user_metadata_filter(pubkey: XOnlyPublicKey, last_event: &Option<DbEvent>) -> Filter {
@@ -86,7 +95,7 @@ pub fn channel_search_filter(channel_id: &str) -> Filter {
     channel_filter
 }
 
-pub fn channel_details_filter(channel_id: &nostr::EventId) -> Vec<Filter> {
+pub fn search_channel_details_filter(channel_id: &nostr::EventId) -> Vec<Filter> {
     vec![
         Filter::new()
             .kind(Kind::ChannelMetadata)
@@ -101,7 +110,7 @@ pub fn channel_details_filter(channel_id: &nostr::EventId) -> Vec<Filter> {
     ]
 }
 
-pub fn subscribe_to_channels(
+pub fn channel_details_filter(
     channels: &[nostr::EventId],
     last_event: &Option<DbEvent>,
 ) -> Vec<Filter> {

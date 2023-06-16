@@ -317,7 +317,7 @@ impl State {
 
         container(
             column![title_group, form, footer_row]
-                .padding([0, 20, 0, 0])
+                .padding([20, 20, 0, 0])
                 .spacing(10),
         )
         .into()

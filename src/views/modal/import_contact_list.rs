@@ -126,7 +126,7 @@ impl<M: Clone + Debug + 'static + Send> ModalView for ImportContactList<M> {
             };
             let stats_row = row![found_contacts_txt];
 
-            let card_body = column![importer_cp, stats_row].spacing(4);
+            let card_body = column![importer_cp, stats_row].spacing(4).padding(20);
             let card_footer = row![
                 button(text("Cancel").horizontal_alignment(alignment::Horizontal::Center),)
                     .style(style::Button::Bordered)

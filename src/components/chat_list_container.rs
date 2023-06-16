@@ -307,7 +307,7 @@ fn channel_navbar<'a>(name: &str, members: i32) -> Container<'a, Message> {
         .width(Length::Fill),
     )
     .height(NAVBAR_HEIGHT)
-    .style(style::Container::Foreground)
+    .style(style::Container::ForegroundBordered)
 }
 
 fn channel_header_details<'a>(name: &str, members: i32) -> Button<'a, Message> {

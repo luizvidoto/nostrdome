@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use chrono::NaiveDateTime;
-use nostr::{secp256k1::XOnlyPublicKey, types::channel_id, EventId};
+use nostr::{secp256k1::XOnlyPublicKey, EventId};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 

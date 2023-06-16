@@ -206,7 +206,7 @@ impl State {
         container(common_scrollable(
             column![page_title, ntp_gp, relays_gp]
                 .spacing(10)
-                .padding([0, 20, 0, 0]),
+                .padding([20, 20, 0, 0]),
         ))
         .width(Length::Fill)
         .height(Length::Fill)

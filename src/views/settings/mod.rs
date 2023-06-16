@@ -416,7 +416,7 @@ impl Route for Settings {
         .padding([10, 5]);
 
         let view_ct = container(self.menu_state.view(selected_theme))
-            .padding([20, 0, 0, 20])
+            .padding([0, 0, 0, 20])
             .height(Length::Fill)
             .width(Length::FillPortion(3));
 

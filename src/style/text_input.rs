@@ -1,3 +1,5 @@
+use crate::utils::change_color_by_type;
+
 use super::Theme;
 use iced::widget::text_input;
 use iced::Color;
@@ -15,6 +17,7 @@ impl text_input::StyleSheet for Theme {
     type Style = TextInput;
 
     fn active(&self, style: &Self::Style) -> text_input::Appearance {
+        let theme_type = self.theme_meta().theme_type;
         let def = text_input::Appearance {
             background: self.palette().base.background.into(),
             border_radius: 8.0,
@@ -24,7 +27,8 @@ impl text_input::StyleSheet for Theme {
         };
 
         let chat_src = text_input::Appearance {
-            background: self.palette().base.background.into(),
+            background: change_color_by_type(theme_type, self.palette().base.background, 0.05)
+                .into(),
             border_radius: 8.0,
             border_width: 1.0,
             border_color: self.palette().base.foreground,

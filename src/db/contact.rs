@@ -252,11 +252,11 @@ impl DbContact {
                         event_hash: cache.event_hash.to_owned(),
                     })?;
                 } else {
-                    tracing::info!("Contact don't have profile image");
+                    tracing::debug!("Contact don't have profile image");
                 }
             }
         } else {
-            tracing::info!("no profile cache for contact: {}", self.pubkey.to_string());
+            tracing::debug!("no profile cache for contact: {}", self.pubkey.to_string());
         }
 
         Ok(Handle::from_memory(default_profile_image(size)))
