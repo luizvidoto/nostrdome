@@ -48,9 +48,11 @@ unicode-segmentation = "1.8.0"
 url = "2.3.1"
 webbrowser = "0.8.9"
 
-[dev.dependencies]
+[dev-dependencies]
 fake = { version = "2.5", features=['derive']}
 simplelog = "0.12.1"
+tempfile = "3.6.0"
+mockall = "0.11.4"
 
 [profile.release]
 panic = "abort" # Strip expensive panic clean-up logic

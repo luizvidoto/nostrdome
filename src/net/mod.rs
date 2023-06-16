@@ -39,8 +39,8 @@ use crate::db::DbMessage;
 use crate::db::DbRelay;
 use crate::db::DbRelayResponse;
 use crate::db::ImageDownloaded;
+use crate::db::MessageTagInfo;
 use crate::db::ProfileCache;
-use crate::db::TagInfo;
 use crate::db::UserConfig;
 use crate::error::BackendClosed;
 use crate::net::filters::channel_details_filter;
@@ -49,6 +49,9 @@ use crate::net::filters::contact_list_filter;
 use crate::net::filters::members_metadata_filter;
 use crate::net::filters::messages_filter;
 use crate::net::filters::user_metadata_filter;
+use crate::net::kind::handle_contact_list;
+use crate::net::kind::handle_dm;
+use crate::net::kind::received_contact_list;
 use crate::net::ntp::spawn_ntp_request;
 use crate::net::reqwest_client::fetch_latest_version;
 use crate::style;
@@ -59,14 +62,16 @@ use crate::types::PendingEvent;
 use crate::types::PrefixedId;
 use crate::types::SubName;
 use crate::utils::channel_id_from_tags;
-use crate::utils::ns_event_to_millis;
 use crate::utils::parse_nips_markdown;
 use crate::utils::NipData;
 use crate::views::login::BasicProfile;
 use crate::Error;
+
 mod filters;
+pub mod kind;
 pub(crate) mod ntp;
 pub(crate) mod reqwest_client;
+
 use self::filters::contact_list_metadata_filter;
 use self::filters::search_channel_details_filter;
 use self::reqwest_client::download_image;
@@ -356,7 +361,7 @@ async fn handle_eose(
     Ok(())
 }
 
-async fn handle_event(
+pub async fn handle_event(
     output: &mut futures::channel::mpsc::Sender<BackendEvent>,
     keys: &Keys,
     backend: &mut BackendState,
@@ -429,6 +434,11 @@ async fn handle_event(
                     handle_contact_list(output, keys, pool, &url, db_event).await?;
                 }
             }
+            Kind::EncryptedDirectMessage => {
+                let pool = backend.pool();
+                let cache_pool = backend.cache_pool();
+                handle_dm(output, pool, cache_pool, keys, &url, ns_event).await?;
+            }
             other => {
                 let pool = backend.pool();
                 let cache_pool = backend.cache_pool();
@@ -436,9 +446,6 @@ async fn handle_event(
                     match other {
                         Kind::Metadata => {
                             insert_metadata_event(output, cache_pool, &db_event).await?;
-                        }
-                        Kind::EncryptedDirectMessage => {
-                            handle_dm(output, pool, cache_pool, keys, &url, &db_event).await?;
                         }
                         Kind::RecommendRelay => {
                             handle_recommend_relay(db_event).await?;
@@ -561,19 +568,19 @@ async fn confirm_pending(
                     .await;
             }
             Kind::EncryptedDirectMessage => {
-                let db_message = DbMessage::confirm_message(pool, &db_event).await?;
-                let db_contact =
-                    DbContact::fetch_insert(pool, cache_pool, &db_message.chat_pubkey).await?;
-                let tag_info = TagInfo::from_db_event(&db_event)?;
-                let decrypted_content = db_message.decrypt_message(keys, &tag_info)?;
-                let chat_message = ChatMessage::new(
-                    &db_message,
-                    &db_event.pubkey,
-                    &db_contact,
-                    &decrypted_content,
-                );
-                tracing::info!("Decrypted message: {:?}", &chat_message);
-                _ = output.send(BackendEvent::ConfirmedDM(chat_message)).await;
+                // let db_message = DbMessage::confirm_message(pool, &db_event).await?;
+                // let db_contact =
+                //     DbContact::fetch_insert(pool, cache_pool, &db_message.chat_pubkey).await?;
+                // let tag_info = TagInfo::from_db_event(&db_event)?;
+                // let decrypted_content = db_message.decrypt_message(keys, &tag_info)?;
+                // let chat_message = ChatMessage::new(
+                //     &db_message,
+                //     &db_event.pubkey,
+                //     &db_contact,
+                //     &decrypted_content,
+                // );
+                // tracing::info!("Decrypted message: {:?}", &chat_message);
+                // _ = output.send(BackendEvent::ConfirmedDM(chat_message)).await;
                 return Ok(());
             }
             _ => {
@@ -1083,21 +1090,21 @@ pub async fn process_message(
             }
         }
         ToBackend::FetchRelayResponsesChatMsg(chat_message) => {
-            let pool = backend.pool();
-            if let Some(db_message) = DbMessage::fetch_one(pool, chat_message.msg_id).await? {
-                if let Some(confirmation) = db_message.confirmation_info {
-                    let all_relays = DbRelay::fetch(pool).await?;
-                    let responses =
-                        DbRelayResponse::fetch_by_event(pool, confirmation.event_id).await?;
-                    _ = output
-                        .send(BackendEvent::GotRelayResponses {
-                            responses,
-                            all_relays,
-                            chat_message,
-                        })
-                        .await;
-                }
-            }
+            // let pool = backend.pool();
+            // if let Some(db_message) = DbMessage::fetch_one(pool, chat_message.msg_id).await? {
+            //     if let Some(confirmation) = db_message.confirmation_info {
+            //         let all_relays = DbRelay::fetch(pool).await?;
+            //         let responses =
+            //             DbRelayResponse::fetch_by_event(pool, confirmation.event_id).await?;
+            //         _ = output
+            //             .send(BackendEvent::GotRelayResponses {
+            //                 responses,
+            //                 all_relays,
+            //                 chat_message,
+            //             })
+            //             .await;
+            //     }
+            // }
         }
         ToBackend::SubscribeToChannel(channel_id) => {
             let pool = backend.pool();
@@ -1263,26 +1270,26 @@ pub async fn process_message(
         }
 
         ToBackend::FetchChatInfo(db_contact) => {
-            let pool = backend.pool();
-            if let Some(db_message) = DbMessage::fetch_chat_last(pool, &db_contact.pubkey()).await?
-            {
-                if let Some(db_event) = DbEvent::fetch_hash(pool, &db_message.event_hash).await? {
-                    let unseen_messages =
-                        DbMessage::fetch_unseen_chat_count(pool, &db_contact.pubkey()).await?;
-                    let tag_info = TagInfo::from_db_event(&db_event)?;
-                    let decrypted_content = db_message.decrypt_message(&keys, &tag_info)?;
-                    _ = output
-                        .send(BackendEvent::GotChatInfo(
-                            db_contact,
-                            ChatInfo {
-                                unseen_messages,
-                                last_message: decrypted_content,
-                                last_message_time: Some(db_message.display_time()),
-                            },
-                        ))
-                        .await;
-                }
-            }
+            // let pool = backend.pool();
+            // if let Some(db_message) = DbMessage::fetch_chat_last(pool, &db_contact.pubkey()).await?
+            // {
+            //     if let Some(db_event) = DbEvent::fetch_hash(pool, &db_message.event_hash).await? {
+            //         let unseen_messages =
+            //             DbMessage::fetch_unseen_chat_count(pool, &db_contact.pubkey()).await?;
+            //         let tag_info = TagInfo::from_db_event(&db_event)?;
+            //         let decrypted_content = db_message.decrypt_message(&keys, &tag_info)?;
+            //         _ = output
+            //             .send(BackendEvent::GotChatInfo(
+            //                 db_contact,
+            //                 ChatInfo {
+            //                     unseen_messages,
+            //                     last_message: decrypted_content,
+            //                     last_message_time: Some(db_message.display_time()),
+            //                 },
+            //             ))
+            //             .await;
+            //     }
+            // }
         }
         ToBackend::FetchAllMessageEvents => {
             let messages =
@@ -1359,21 +1366,21 @@ pub async fn process_message(
 
         ToBackend::SendDM(db_contact, raw_content) => {
             // create a pending event and await confirmation of relays
-            let pending_event = backend.new_dm(keys, &db_contact, &raw_content).await?;
-            let pending_msg = DbMessage::insert_pending(
-                backend.pool(),
-                pending_event,
-                &db_contact.pubkey(),
-                true,
-            )
-            .await?;
+            // let pending_event = backend.new_dm(keys, &db_contact, &raw_content).await?;
+            // let pending_msg = DbMessage::insert_pending(
+            //     backend.pool(),
+            //     pending_event,
+            //     &db_contact.pubkey(),
+            //     true,
+            // )
+            // .await?;
 
-            let chat_message =
-                ChatMessage::new(&pending_msg, &keys.public_key(), &db_contact, &raw_content);
+            // let chat_message =
+            //     ChatMessage::new(&pending_msg, &keys.public_key(), &db_contact, &raw_content);
 
-            _ = output
-                .send(BackendEvent::PendingDM(db_contact, chat_message))
-                .await;
+            // _ = output
+            //     .send(BackendEvent::PendingDM(db_contact, chat_message))
+            //     .await;
         }
     }
 
@@ -1402,26 +1409,26 @@ async fn send_got_chat_messages(
     db_contact: DbContact,
     db_messages: &[DbMessage],
 ) -> Result<(), Error> {
-    let pool = backend.pool();
-    let mut chat_messages = vec![];
-    tracing::debug!("Decrypting messages");
+    // let pool = backend.pool();
+    // let mut chat_messages = vec![];
+    // tracing::debug!("Decrypting messages");
 
-    for db_message in db_messages {
-        if let Some(db_event) = DbEvent::fetch_hash(pool, &db_message.event_hash).await? {
-            match decrypt_message(&db_event, db_message, keys, &db_contact) {
-                Ok(chat_message) => {
-                    chat_messages.push(chat_message);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to decrypt message: {}", e);
-                }
-            }
-        }
-    }
+    // for db_message in db_messages {
+    //     if let Some(db_event) = DbEvent::fetch_hash(pool, &db_message.event_hash).await? {
+    //         match decrypt_message(&db_event, db_message, keys, &db_contact) {
+    //             Ok(chat_message) => {
+    //                 chat_messages.push(chat_message);
+    //             }
+    //             Err(e) => {
+    //                 tracing::error!("Failed to decrypt message: {}", e);
+    //             }
+    //         }
+    //     }
+    // }
 
-    _ = output
-        .send(BackendEvent::GotChatMessages(db_contact, chat_messages))
-        .await;
+    // _ = output
+    //     .send(BackendEvent::GotChatMessages(db_contact, chat_messages))
+    //     .await;
 
     Ok(())
 }
@@ -1432,7 +1439,8 @@ fn decrypt_message(
     keys: &Keys,
     db_contact: &DbContact,
 ) -> Result<ChatMessage, Error> {
-    let tag_info = TagInfo::from_db_event(db_event)?;
+    let tag_info =
+        MessageTagInfo::from_event_tags(&db_event.event_hash, &db_event.pubkey, &db_event.tags)?;
     let decrypted_content = db_message.decrypt_message(keys, &tag_info)?;
     let chat_message = ChatMessage::new(
         &db_message,
@@ -1641,140 +1649,6 @@ async fn save_file<T: Serialize>(data: &T, extension: &str) -> Result<BackendEve
             Ok(BackendEvent::RFDCancelPick)
         }
     }
-}
-
-pub async fn handle_dm(
-    output: &mut futures::channel::mpsc::Sender<BackendEvent>,
-    pool: &SqlitePool,
-    cache_pool: &SqlitePool,
-    keys: &Keys,
-    url: &Url,
-    db_event: &DbEvent,
-) -> Result<(), Error> {
-    let is_users = db_event.pubkey == keys.public_key();
-    let tag_info = TagInfo::from_db_event(db_event)?;
-    let contact_pubkey = tag_info.contact_pubkey(keys)?;
-
-    // If the message is from the user to themselves, log the error and return None
-    if tag_info.to_pubkey == db_event.pubkey {
-        tracing::debug!("Message is from the user to himself");
-        return Ok(());
-    }
-    // Parse the event and insert the message into the database
-    let db_message = DbMessage::insert_confirmed(pool, db_event, &contact_pubkey, is_users).await?;
-
-    let db_contact = DbContact::fetch_insert(pool, cache_pool, &db_message.chat_pubkey).await?;
-
-    let decrypted_content = db_message.decrypt_message(keys, &tag_info)?;
-    let chat_message = ChatMessage::new(
-        &db_message,
-        &db_event.pubkey,
-        &db_contact,
-        &decrypted_content,
-    );
-
-    let _ = output
-        .send(BackendEvent::ReceivedDM {
-            chat_message,
-            db_contact,
-            relay_url: url.to_owned(),
-        })
-        .await;
-
-    Ok(())
-}
-
-pub async fn handle_contact_list(
-    output: &mut futures::channel::mpsc::Sender<BackendEvent>,
-    keys: &Keys,
-    pool: &SqlitePool,
-    url: &Url,
-    db_event: DbEvent,
-) -> Result<(), Error> {
-    if db_event.pubkey == keys.public_key() {
-        handle_user_contact_list(output, keys, pool, url, db_event).await?;
-    } else {
-        handle_other_contact_list(db_event).await?;
-    }
-    Ok(())
-}
-
-pub async fn received_contact_list(
-    pool: &SqlitePool,
-    url: &Url,
-    ns_event: &nostr::Event,
-) -> Result<Option<DbEvent>, Error> {
-    match DbEvent::fetch_last_kind(pool, Kind::ContactList).await? {
-        Some(db_event) => {
-            if db_event.event_hash == ns_event.id {
-                // if event already in the database, just confirmed it
-                tracing::info!("ContactList already in the database");
-                DbRelayResponse::insert_ok(pool, url, &db_event).await?;
-                return Ok(None);
-            }
-            // if event is older than the last one, ignore it
-            if db_event.created_at.timestamp_millis() > (ns_event_to_millis(ns_event.created_at)) {
-                tracing::info!("ContactList is older than the last one");
-                return Ok(None);
-            } else {
-                // delete old and insert new contact list
-                tracing::info!("ContactList is newer than the last one");
-                DbEvent::delete(pool, db_event.event_id).await?;
-            }
-        }
-        None => {
-            tracing::info!("No ContactList in the database - inserting");
-        }
-    }
-    let db_event = DbEvent::insert(pool, url, ns_event).await?;
-
-    Ok(db_event)
-}
-
-async fn handle_user_contact_list(
-    output: &mut futures::channel::mpsc::Sender<BackendEvent>,
-    keys: &Keys,
-    pool: &SqlitePool,
-    _url: &Url,
-    db_event: DbEvent,
-) -> Result<(), Error> {
-    tracing::debug!("Received a ContactList");
-
-    // contact list from event tags
-    let db_contacts: Vec<_> = db_event
-        .tags
-        .iter()
-        .filter_map(|t| DbContact::from_tag(t).ok())
-        .collect();
-
-    // Filter out contacts with the same public key as the user's public key
-    let filtered_contacts: Vec<&DbContact> = db_contacts
-        .iter()
-        .filter(|c| c.pubkey() != &keys.public_key())
-        .collect();
-
-    if filtered_contacts.len() < db_contacts.len() {
-        tracing::warn!("Error inserting contact: {:?}", Error::SameContactInsert);
-    }
-
-    for db_contact in &db_contacts {
-        DbContact::upsert_contact(pool, db_contact).await?;
-        let _ = output
-            .send(BackendEvent::ContactCreated(db_contact.to_owned()))
-            .await;
-    }
-
-    let _ = output.send(BackendEvent::ReceivedContactList).await;
-
-    Ok(())
-}
-
-async fn handle_other_contact_list(_db_event: DbEvent) -> Result<(), Error> {
-    // Others ContactList That Im in
-    // which means that someone else added me to their contact list
-    // so I could build a followers list from this
-    tracing::info!("*** Others ContactList That Im in ***");
-    Ok(())
 }
 
 const BACKEND_CHANNEL_SIZE: usize = 1024;

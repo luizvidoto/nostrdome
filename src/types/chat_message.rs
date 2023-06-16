@@ -48,13 +48,13 @@ impl ChatMessage {
         content: &str,
     ) -> Self {
         Self {
-            msg_id: db_message.id,
+            msg_id: db_message.event_id,
             content: content.to_owned(),
             author: author.to_owned(),
-            display_time: db_message.display_time(),
+            display_time: db_message.created_at.to_owned(),
             is_users: db_message.is_users,
             display_name: contact.select_name(),
-            event_id: db_message.confirmation_info.as_ref().map(|c| c.event_id),
+            event_id: Some(db_message.event_id),
             status: db_message.status,
         }
     }

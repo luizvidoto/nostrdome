@@ -166,11 +166,11 @@ impl BackendState {
         Ok(())
     }
 
-    pub(crate) fn pool(&self) -> &SqlitePool {
+    pub fn pool(&self) -> &SqlitePool {
         &self.db_client.pool
     }
 
-    pub(crate) fn cache_pool(&self) -> &SqlitePool {
+    pub fn cache_pool(&self) -> &SqlitePool {
         &self.db_client.cache_pool
     }
 }

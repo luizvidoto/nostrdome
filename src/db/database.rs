@@ -90,11 +90,16 @@ async fn get_cache_pool() -> Result<SqlitePool, Error> {
 
     tracing::info!("Cache setup");
 
-    for sql in CACHE_SETUP {
-        sqlx::query(sql).execute(&cache_pool).await?;
-    }
+    upgrade_cache_db(&cache_pool).await?;
 
     Ok(cache_pool)
+}
+
+pub async fn upgrade_cache_db(cache_pool: &SqlitePool) -> Result<(), Error> {
+    for sql in CACHE_SETUP {
+        sqlx::query(sql).execute(cache_pool).await?;
+    }
+    Ok(())
 }
 
 /// Upgrade DB to latest version, and execute pragma settings

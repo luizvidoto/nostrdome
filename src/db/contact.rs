@@ -1,6 +1,6 @@
 use chrono::{NaiveDateTime, Utc};
 use iced::widget::image::Handle;
-use nostr::prelude::{FromBech32, ToBech32};
+use nostr::prelude::{relay, FromBech32, ToBech32};
 use nostr::EventId;
 use nostr::{secp256k1::XOnlyPublicKey, Tag};
 use serde::{Deserialize, Serialize};
@@ -78,6 +78,30 @@ impl From<&DbContact> for nostr::Contact {
     }
 }
 
+// impl From<&nostr::Contact> for DbContact {
+//     fn from(c: &nostr::Contact) -> Self {
+//         let relay_url = c
+//             .relay_url
+//             .as_ref()
+//             .and_then(|url| Url::parse(&url.to_string()).ok());
+
+//         Self {
+//             created_at: Utc::now().naive_utc(),
+//             updated_at: Utc::now().naive_utc(),
+//             relay_url,
+//             petname: c.alias.to_owned(),
+//             profile_cache: None,
+//             pubkey: c.pk.to_owned(),
+//             status: ContactStatus::Unknown,
+//         }
+//     }
+// }
+// impl From<nostr::Contact> for DbContact {
+//     fn from(c: nostr::Contact) -> Self {
+//         c.into()
+//     }
+// }
+
 impl PartialEq for DbContact {
     fn eq(&self, other: &Self) -> bool {
         self.pubkey == other.pubkey
@@ -131,7 +155,8 @@ impl DbContact {
     pub fn pubkey(&self) -> &XOnlyPublicKey {
         &self.pubkey
     }
-    pub fn from_str(pubkey: &str) -> Result<Self, Error> {
+
+    pub fn from_pubkey(pubkey: &str) -> Result<Self, Error> {
         match XOnlyPublicKey::from_bech32(pubkey) {
             Ok(pubkey) => Ok(Self::new(&pubkey)),
             Err(_e) => {
@@ -141,11 +166,13 @@ impl DbContact {
             }
         }
     }
+
     pub fn new_from_submit(pubkey: &str, petname: &str, relay_url: &str) -> Result<Self, Error> {
-        let db_contact = Self::from_str(pubkey)?;
+        let db_contact = Self::from_pubkey(pubkey)?;
         let db_contact = Self::edit_contact(db_contact, petname, relay_url)?;
         Ok(db_contact)
     }
+
     pub fn edit_contact(
         mut db_contact: DbContact,
         petname: &str,
@@ -448,6 +475,13 @@ impl DbContact {
             .bind(&contact.pubkey.to_string())
             .execute(pool)
             .await?;
+
+        Ok(())
+    }
+    pub async fn delete_all(pool: &SqlitePool) -> Result<(), Error> {
+        let sql = "DELETE FROM contact;";
+
+        sqlx::query(sql).execute(pool).await?;
 
         Ok(())
     }

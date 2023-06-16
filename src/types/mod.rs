@@ -5,7 +5,7 @@ pub(crate) mod chat_message;
 mod event;
 mod subscription_type;
 
-pub(crate) use backend_state::{BackendState, PendingEvent};
+pub use backend_state::{BackendState, PendingEvent};
 pub(crate) use channel_metadata::ChannelMetadata;
 pub(crate) use channel_result::ChannelResult;
 pub(crate) use chat_message::ChatMessage;
