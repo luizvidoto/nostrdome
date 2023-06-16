@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Adding integration tests
 - New themes
 - Find and subscribe to Public channels
 - Auth event [NIP-42](https://github.com/nostr-protocol/nips/blob/master/42.md)
