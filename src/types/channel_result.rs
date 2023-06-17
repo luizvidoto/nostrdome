@@ -16,7 +16,6 @@ use super::PrefixedId;
 // todo: maybe use channel_id?
 #[derive(Debug, Clone)]
 pub struct ChannelResult {
-    pub id: PrefixedId,
     pub channel_id: EventId,
     pub relay_url: Url,
     pub cache: ChannelCache,
@@ -41,7 +40,6 @@ impl ChannelResult {
             .unwrap_or(Handle::from_memory(default_channel_image(IMAGE_SIZE)));
 
         let cache = Self {
-            id: PrefixedId::new(&ns_event.id.to_hex()),
             channel_id: ns_event.id,
             relay_url: url,
             cache,

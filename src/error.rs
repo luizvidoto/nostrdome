@@ -88,6 +88,9 @@ pub enum Error {
 
     #[error("Closed backend channel")]
     ClosedBackend(#[from] BackendClosed),
+
+    #[error("Channel id not found in event tags: EventID: {0}")]
+    ChannelIdNotFound(nostr::EventId),
 }
 
 #[derive(Error, Debug)]

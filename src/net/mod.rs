@@ -74,6 +74,7 @@ pub(crate) mod reqwest_client;
 
 use self::filters::contact_list_metadata_filter;
 use self::filters::search_channel_details_filter;
+use self::kind::pending_dm_confirmed;
 use self::reqwest_client::download_image;
 pub(crate) use reqwest_client::{image_filename, ImageKind, ImageSize};
 
@@ -380,29 +381,27 @@ pub async fn handle_event(
                 _ = output.send(BackendEvent::SearchChannelResult(result)).await;
                 return Ok(());
             }
-            SubName::SearchChannelsDetails(prefixed_ch_id) => {
+            SubName::SearchChannelsDetails(_prefixed_id) => {
                 let cache_pool = backend.cache_pool();
+                let Some(channel_id) = channel_id_from_tags(&ns_event.tags) else {
+                    return Err(Error::ChannelIdNotFound(ns_event.id.to_owned()));
+                };
                 match ns_event.kind {
                     Kind::ChannelMetadata => {
                         let cache = ChannelCache::update(cache_pool, &ns_event).await?;
                         _ = output
-                            .send(BackendEvent::SearchChannelCacheUpdated(
-                                prefixed_ch_id,
-                                cache,
-                            ))
+                            .send(BackendEvent::SearchChannelCacheUpdated(channel_id, cache))
                             .await;
                         return Ok(());
                     }
                     Kind::ChannelMessage => {
                         // Channel messages will be handled like a dm.
                         // Inserted on db_event table then processed.
-                        if let Some(channel_id) = channel_id_from_tags(&ns_event.tags) {
-                            ChannelCache::insert_member(cache_pool, &channel_id, &ns_event.pubkey)
-                                .await?;
-                        }
+                        ChannelCache::insert_member(cache_pool, &channel_id, &ns_event.pubkey)
+                            .await?;
                         _ = output
                             .send(BackendEvent::SearchChannelMessage(
-                                prefixed_ch_id,
+                                channel_id,
                                 ns_event.pubkey,
                             ))
                             .await;
@@ -568,18 +567,7 @@ async fn confirm_pending(
                     .await;
             }
             Kind::EncryptedDirectMessage => {
-                // let db_message = DbMessage::confirm_message(pool, &db_event).await?;
-                // let db_contact =
-                //     DbContact::fetch_insert(pool, cache_pool, &db_message.chat_pubkey).await?;
-                // let tag_info = TagInfo::from_db_event(&db_event)?;
-                // let decrypted_content = db_message.decrypt_message(keys, &tag_info)?;
-                // let chat_message = ChatMessage::new(
-                //     &db_message,
-                //     &db_event.pubkey,
-                //     &db_contact,
-                //     &decrypted_content,
-                // );
-                // tracing::info!("Decrypted message: {:?}", &chat_message);
+                pending_dm_confirmed(output, pool, cache_pool, keys, &db_event).await?;
                 // _ = output.send(BackendEvent::ConfirmedDM(chat_message)).await;
                 return Ok(());
             }
@@ -787,10 +775,10 @@ pub enum BackendEvent {
     SearchingForChannels,
     EOSESearchChannels(Url),
     SearchChannelResult(ChannelResult),
-    SearchChannelCacheUpdated(PrefixedId, ChannelCache),
-    SearchChannelMessage(PrefixedId, XOnlyPublicKey),
+    SearchChannelCacheUpdated(EventId, ChannelCache),
+    SearchChannelMessage(EventId, XOnlyPublicKey),
     EOSESearchChannelsDetails(Url, PrefixedId),
-    LoadingChannelDetails(Url, PrefixedId),
+    LoadingChannelDetails(Url, EventId),
     ChannelConfirmed(ChannelCache),
     ChannelUpdated(ChannelCache),
     GotChannelMessages(EventId, Vec<ChatMessage>),

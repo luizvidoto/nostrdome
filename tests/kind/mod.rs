@@ -7,6 +7,7 @@ use nostrtalk::{net::BackendEvent, utils::naive_to_event_tt};
 
 mod contact_list;
 mod dm;
+mod dm_helpers;
 mod helpers;
 
 /// The channel must not receive a message within the timeout duration
@@ -65,4 +66,15 @@ pub fn make_random_contact(alias: Option<&str>) -> Contact {
     let keys = Keys::generate();
     let alias = alias.map(|s| s.to_string());
     Contact::new(keys.public_key(), None, alias)
+}
+
+fn make_dm_event(
+    sender_keys: &Keys,
+    receiver_pubkey: XOnlyPublicKey,
+    content: &str,
+) -> nostr::Event {
+    let builder =
+        EventBuilder::new_encrypted_direct_msg(sender_keys, receiver_pubkey, content).unwrap();
+    let event = builder.to_event(&sender_keys).unwrap();
+    event
 }

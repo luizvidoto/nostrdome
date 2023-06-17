@@ -3,13 +3,14 @@ use std::collections::HashMap;
 use iced::widget::{button, column, container, image, row, text, Space};
 use iced::Length;
 use iced_native::widget::text_input;
+use nostr::EventId;
 
 use crate::components::common_scrollable;
 use crate::components::text::title;
 use crate::consts::{MEDIUM_CHANNEL_IMG_HEIGHT, MEDIUM_CHANNEL_IMG_WIDTH, YMD_FORMAT};
 use crate::error::BackendClosed;
 use crate::net::{BackEndConnection, BackendEvent, ToBackend};
-use crate::types::{ChannelResult, PrefixedId};
+use crate::types::ChannelResult;
 use crate::views::RouterCommand;
 use crate::widget::Rule;
 use crate::{icon::search_icon, style, widget::Element};
@@ -23,7 +24,7 @@ pub enum Message {
     ChannelPressed(ChannelResult),
 }
 pub struct State {
-    search_results: HashMap<PrefixedId, ChannelResult>,
+    search_results: HashMap<EventId, ChannelResult>,
     search_input_value: String,
     searching: bool,
 }
@@ -68,7 +69,8 @@ impl State {
                 self.searching = true;
             }
             BackendEvent::SearchChannelResult(result) => {
-                self.search_results.insert(result.id.to_owned(), result);
+                self.search_results
+                    .insert(result.channel_id.to_owned(), result);
             }
             BackendEvent::EOSESearchChannels(_url) => {
                 self.searching = false;
@@ -88,9 +90,13 @@ impl State {
                     .get_mut(&channel_id)
                     .map(|r| r.loading_details());
             }
-            BackendEvent::EOSESearchChannelsDetails(_url, channel_id) => {
-                if let Some(result) = self.search_results.get_mut(&channel_id) {
-                    result.done_loading();
+            BackendEvent::EOSESearchChannelsDetails(_url, prefixed_id) => {
+                let channel_id_str = prefixed_id.to_string();
+                for (id, result) in self.search_results.iter_mut() {
+                    if id.to_string().starts_with(&channel_id_str) {
+                        result.done_loading();
+                        break;
+                    }
                 }
             }
             BackendEvent::ImageDownloaded(image) => {

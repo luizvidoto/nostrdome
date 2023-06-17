@@ -14,8 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Auth event [NIP-42](https://github.com/nostr-protocol/nips/blob/master/42.md)
 
 ### Changed
-- Route trait to main views
+- Changend main views to use the Route trait
 - ModalView trait to modals
+- Better organization of the net mod file.
 
 ### Fixed
 - Top padding of settings view

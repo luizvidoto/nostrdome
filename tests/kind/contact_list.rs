@@ -336,3 +336,51 @@ async fn contact_list_new_bd_with_list_stored() {
     let events = DbEvent::fetch(test_app.pool()).await.unwrap();
     assert_eq!(events.len(), 1, "Only one event should be stored");
 }
+
+/// 5. Received contact list with myself included, don't insert myself.
+#[tokio::test]
+async fn contact_list_some_bd_no_list_stored_test_myself() {
+    // PREPARE
+    let mut test_app = spawn_app().await;
+    let (mut output, mut rx) = futures::channel::mpsc::channel(10);
+    let url = Url::parse("ws://192.168.15.15:8080").unwrap();
+    let contacts = vec![
+        make_contact(
+            test_app.keys.public_key().to_string().as_str(),
+            Some("MySelf"),
+        ),
+        make_contact(
+            "9e45b5e573adfb70be9f81e6f19e3df334fa24b3a7273859104d399ccbf64e94",
+            Some("Vaderzzz"),
+        ),
+        make_contact(
+            "dafb7c5a8d3a061a8254eb9ffb132cceec0b5080357531006e127263121e3adc",
+            Some("Friendzin"),
+        ),
+    ];
+    let ns_event = users_contact_list_event(&test_app.keys, contacts.into_iter());
+    let event_hash = ns_event.id.clone();
+    let subscription_id = nostr::SubscriptionId::new("testing");
+
+    // PERFORM
+    // Insert first contact list
+    let result = handle_event(
+        &mut output,
+        &test_app.keys,
+        &mut test_app.backend,
+        url.clone(),
+        subscription_id.clone(),
+        ns_event,
+    )
+    .await;
+
+    // ASSERT
+    assert!(result.is_ok(), "Error handling event: {:?}", result.err());
+    assert_event_and_contacts(&test_app, &event_hash, 2).await;
+
+    // Test backend event messages received
+    for _ in 0..2 {
+        assert_message_received(&test_app, &mut rx).await;
+    }
+    assert_received_contact_list_event(&mut rx).await;
+}

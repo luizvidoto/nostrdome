@@ -10,21 +10,6 @@ use url::Url;
 
 use crate::{db::DbEvent, net::BackendEvent};
 
-pub async fn handle_contact_list(
-    output: &mut futures::channel::mpsc::Sender<BackendEvent>,
-    keys: &Keys,
-    pool: &SqlitePool,
-    url: &Url,
-    db_event: DbEvent,
-) -> Result<(), Error> {
-    if db_event.pubkey == keys.public_key() {
-        handle_user_contact_list(output, keys, pool, url, db_event).await?;
-    } else {
-        handle_other_contact_list(db_event).await?;
-    }
-    Ok(())
-}
-
 pub async fn received_contact_list(
     pool: &SqlitePool,
     url: &Url,
@@ -58,6 +43,21 @@ pub async fn received_contact_list(
     Ok(db_event)
 }
 
+pub async fn handle_contact_list(
+    output: &mut futures::channel::mpsc::Sender<BackendEvent>,
+    keys: &Keys,
+    pool: &SqlitePool,
+    url: &Url,
+    db_event: DbEvent,
+) -> Result<(), Error> {
+    if db_event.pubkey == keys.public_key() {
+        handle_user_contact_list(output, keys, pool, url, db_event).await?;
+    } else {
+        handle_other_contact_list(db_event).await?;
+    }
+    Ok(())
+}
+
 async fn handle_user_contact_list(
     output: &mut futures::channel::mpsc::Sender<BackendEvent>,
     keys: &Keys,
@@ -67,24 +67,14 @@ async fn handle_user_contact_list(
 ) -> Result<(), Error> {
     tracing::debug!("Received a ContactList");
 
-    // contact list from event tags
-    let db_contacts: Vec<_> = db_event
+    let filtered_contacts: Vec<_> = db_event
         .tags
         .iter()
         .filter_map(|t| DbContact::from_tag(t).ok())
-        .collect();
-
-    // Filter out contacts with the same public key as the user's public key
-    let filtered_contacts: Vec<&DbContact> = db_contacts
-        .iter()
         .filter(|c| c.pubkey() != &keys.public_key())
         .collect();
 
-    if filtered_contacts.len() < db_contacts.len() {
-        tracing::warn!("Error inserting contact: {:?}", Error::SameContactInsert);
-    }
-
-    for db_contact in &db_contacts {
+    for db_contact in &filtered_contacts {
         DbContact::upsert_contact(pool, db_contact).await?;
         let _ = output
             .send(BackendEvent::ContactCreated(db_contact.to_owned()))
