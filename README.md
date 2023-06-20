@@ -25,7 +25,7 @@ We welcome contributions from the community to improve NostrTalk. If you'd like 
 For more information, please read our [contribution guidelines](https://www.example.com/contribute).
 
 ## GUI 
-[iced](https://github.com/iced-rs/iced)
+<p align="center"><a href="https://github.com/iced-rs/iced"><img alt="" src="https://user-images.githubusercontent.com/100347457/219339409-0a44722b-416d-410b-93a4-8b0e84c0031d.svg" width="50%"/></a></p>
 
 ## Donations
 If you would like to contribute and help dev team with this project you can send a donation to the following LN address ⚡nickhntv@getalby.com⚡
