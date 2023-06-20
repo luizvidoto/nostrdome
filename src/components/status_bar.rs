@@ -1,7 +1,6 @@
 use iced::widget::{button, container, row, text, Space};
 use iced::Subscription;
 use iced::{alignment, Alignment, Command, Length};
-use nostr_sdk::RelayStatus;
 
 use crate::consts::NOSTRTALK_VERSION;
 use crate::error::BackendClosed;
