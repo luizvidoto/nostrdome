@@ -15,7 +15,7 @@ pub enum Error {
     JsonToMetadata(String),
 
     #[error("Sqlx error: {0}")]
-    SqlxError(#[from] sqlx::Error),
+    Sqlx(#[from] sqlx::Error),
 
     #[error("Event need to be confirmed")]
     NotConfirmedEvent(EventId),
@@ -68,9 +68,9 @@ impl ImageDownloaded {
                 VALUES (?, ?, ?)
             "#;
 
-        sqlx::query(&insert_query)
+        sqlx::query(insert_query)
             .bind(&image.path.to_string_lossy())
-            .bind(&image.kind.as_i32())
+            .bind(image.kind.as_i32())
             .bind(&image.event_hash.to_string())
             .execute(cache_pool)
             .await?;
@@ -91,15 +91,15 @@ impl ImageDownloaded {
         kind: ImageKind,
     ) -> Result<(), Error> {
         match Self::fetch(cache_pool, event_hash, kind).await? {
-            None => return Err(Error::ImageCacheNotFound(event_hash.to_owned(), kind)),
+            None => Err(Error::ImageCacheNotFound(event_hash.to_owned(), kind)),
             Some(cache) => {
                 let delete_query = r#"DELETE FROM image_cache WHERE event_hash = ? AND kind = ?"#;
 
                 delete_images(cache).await?;
 
-                sqlx::query(&delete_query)
+                sqlx::query(delete_query)
                     .bind(&event_hash.to_string())
-                    .bind(&kind.as_i32())
+                    .bind(kind.as_i32())
                     .execute(cache_pool)
                     .await?;
 

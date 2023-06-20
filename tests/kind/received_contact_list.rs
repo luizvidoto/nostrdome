@@ -7,7 +7,7 @@ use url::Url;
 
 use super::*;
 use crate::helpers::spawn_app;
-use helpers::*;
+use contact_list_helpers::*;
 
 /// Tests for Received event of Kind::ContactList
 

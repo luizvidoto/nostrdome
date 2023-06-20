@@ -2,13 +2,26 @@ use std::{str::FromStr, time::Duration};
 
 use futures::channel::mpsc::Receiver;
 use futures_util::StreamExt;
-use nostr::{secp256k1::XOnlyPublicKey, Contact, EventBuilder, Keys};
-use nostrtalk::{net::BackendEvent, utils::naive_to_event_tt};
+use nostr::{secp256k1::XOnlyPublicKey, types::channel_id, Contact, EventBuilder, Keys};
+use nostrtalk::{
+    net::BackendEvent,
+    types::ChannelMetadata,
+    utils::{
+        channel_creation_builder, channel_metadata_builder, channel_msg_builder, naive_to_event_tt,
+    },
+};
+use url::Url;
 
-mod contact_list;
-mod dm;
+mod contact_list_helpers;
 mod dm_helpers;
-mod helpers;
+mod received_channel_creation;
+mod received_channel_metadata;
+mod received_channel_msg;
+mod received_contact_list;
+mod received_dm;
+mod sent_channel_msg;
+mod sent_contact_list;
+mod sent_dm;
 
 /// The channel must not receive a message within the timeout duration
 pub async fn assert_channel_timeout(rx: &mut Receiver<BackendEvent>) {
@@ -76,5 +89,33 @@ fn make_dm_event(
     let builder =
         EventBuilder::new_encrypted_direct_msg(sender_keys, receiver_pubkey, content).unwrap();
     let event = builder.to_event(&sender_keys).unwrap();
+    event
+}
+
+fn make_channel_msg_event(
+    sender_keys: &Keys,
+    channel_id: &nostr::EventId,
+    recommended_relay: Option<&Url>,
+    content: &str,
+) -> nostr::Event {
+    let builder = channel_msg_builder(channel_id, recommended_relay, content);
+    let event = builder.to_event(sender_keys).unwrap();
+    event
+}
+
+fn make_channel_creation_event(sender_keys: &Keys, metadata: &ChannelMetadata) -> nostr::Event {
+    let builder = channel_creation_builder(metadata);
+    let event = builder.to_event(sender_keys).unwrap();
+    event
+}
+
+fn make_channel_metadata_event(
+    sender_keys: &Keys,
+    channel_id: &nostr::EventId,
+    recommended_relay: Option<&Url>,
+    metadata: &ChannelMetadata,
+) -> nostr::Event {
+    let builder = channel_metadata_builder(channel_id, recommended_relay, metadata);
+    let event = builder.to_event(sender_keys).unwrap();
     event
 }

@@ -6,8 +6,8 @@ mod event;
 mod subscription_type;
 
 pub use backend_state::{BackendState, PendingEvent};
-pub(crate) use channel_metadata::ChannelMetadata;
+pub use channel_metadata::ChannelMetadata;
 pub(crate) use channel_result::ChannelResult;
-pub(crate) use chat_message::ChatMessage;
+pub use chat_message::{ChatMessage, UserMessage};
 pub(crate) use event::UncheckedEvent;
-pub(crate) use subscription_type::{PrefixedId, SubName};
+pub use subscription_type::{PrefixedId, SubName};

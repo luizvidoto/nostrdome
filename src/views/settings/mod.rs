@@ -13,7 +13,7 @@ use super::modal::{
     ContactDetails, ImportContactList, ModalView, RelayBasic, RelayDocState, RelaysConfirmation,
 };
 use super::route::Route;
-use super::{RouterCommand, RouterMessage};
+use super::{GoToView, RouterCommand};
 
 mod about;
 mod account;
@@ -26,7 +26,7 @@ pub enum SettingsRouterMessage {
     OpenRelayBasicModal,
     OpenEditContactModal(DbContact),
     OpenProfileModal(DbContact),
-    RouterMessage(RouterMessage),
+    RouterMessage(GoToView),
     OpenImportContactModal,
     OpenAddContactModal,
     OpenRelayDocument(DbRelay),
@@ -34,17 +34,18 @@ pub enum SettingsRouterMessage {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    AccountMessage(account::Message),
-    NetworkMessage(network::Message),
-    BackupMessage(backup::Message),
-    ContactsMessage(contacts::Message),
-    AboutMessage(about::Message),
-    // Modals
-    ContactDetailsMessage(Box<basic_contact::CMessage<Message>>),
-    ImportContactListMessage(Box<import_contact_list::CMessage<Message>>),
-    RelaysConfirmationMessage(Box<relays_confirmation::CMessage<Message>>),
-    RelayDocumentMessage(Box<relay_document::CMessage<Message>>),
-    RelayBasicMessage(Box<relay_basic::CMessage<Message>>),
+    Account(account::Message),
+    Network(network::Message),
+    Backup(backup::Message),
+    Contacts(contacts::Message),
+    About(about::Message),
+
+    ModalContactDetails(Box<basic_contact::CMessage<Message>>),
+    ModalImportContactList(Box<import_contact_list::CMessage<Message>>),
+    ModalRelaysConfirmation(Box<relays_confirmation::CMessage<Message>>),
+    ModalRelayDocument(Box<relay_document::CMessage<Message>>),
+    ModalRelayBasic(Box<relay_basic::CMessage<Message>>),
+
     // Navigation
     MenuAccountPress,
     MenuAppearancePress,
@@ -54,9 +55,11 @@ pub enum Message {
     MenuAboutPress,
     LogoutPress,
     NavEscPress,
+
     // Modal Messages
     SendContactListToAll,
     CloseModal,
+
     // Other
     None,
     ChangeTheme(style::Theme),
@@ -81,15 +84,15 @@ impl MenuState {
     const ABOUT: u8 = 10;
 
     pub fn is_same_type(&self, other: u8) -> bool {
-        match (self, other) {
-            (MenuState::Account { .. }, Self::ACCOUNT) => true,
-            (MenuState::Appearance, Self::APPEARANCE) => true,
-            (MenuState::Network { .. }, Self::NETWORK) => true,
-            (MenuState::Backup { .. }, Self::BACKUP) => true,
-            (MenuState::Contacts { .. }, Self::CONTACTS) => true,
-            (MenuState::About { .. }, Self::ABOUT) => true,
-            _ => false,
-        }
+        matches!(
+            (self, other),
+            (MenuState::Account { .. }, Self::ACCOUNT)
+                | (MenuState::Appearance, Self::APPEARANCE)
+                | (MenuState::Network { .. }, Self::NETWORK)
+                | (MenuState::Backup { .. }, Self::BACKUP)
+                | (MenuState::Contacts { .. }, Self::CONTACTS)
+                | (MenuState::About { .. }, Self::ABOUT)
+        )
     }
     fn account(conn: &mut BackEndConnection) -> Result<Self, BackendClosed> {
         Ok(Self::Account {
@@ -117,18 +120,18 @@ impl MenuState {
         })
     }
     pub fn new(conn: &mut BackEndConnection) -> Result<Self, BackendClosed> {
-        Ok(Self::account(conn)?)
+        Self::account(conn)
     }
     pub fn view(&self, selected_theme: Option<style::Theme>) -> Element<Message> {
         match self {
-            Self::Account { state } => state.view().map(Message::AccountMessage),
+            Self::Account { state } => state.view().map(Message::Account),
             Self::Appearance => appearance::view(selected_theme).map(|m| match m {
                 appearance::Message::ChangeTheme(x) => Message::ChangeTheme(x),
             }),
-            Self::Network { state } => state.view().map(Message::NetworkMessage),
-            Self::Backup { state } => state.view().map(Message::BackupMessage),
-            Self::Contacts { state } => state.view().map(Message::ContactsMessage),
-            Self::About { state } => state.view().map(Message::AboutMessage),
+            Self::Network { state } => state.view().map(Message::Network),
+            Self::Backup { state } => state.view().map(Message::Backup),
+            Self::Contacts { state } => state.view().map(Message::Contacts),
+            Self::About { state } => state.view().map(Message::About),
         }
     }
 }
@@ -194,7 +197,7 @@ impl Settings {
         &mut self,
         message: SettingsRouterMessage,
         conn: &mut BackEndConnection,
-    ) -> Result<Option<RouterMessage>, BackendClosed> {
+    ) -> Result<Option<GoToView>, BackendClosed> {
         let mut router_message = None;
         match message {
             SettingsRouterMessage::OpenRelayBasicModal => {
@@ -227,7 +230,7 @@ impl Settings {
         &mut self,
         msg: contacts::Message,
         conn: &mut BackEndConnection,
-    ) -> Result<Option<RouterMessage>, BackendClosed> {
+    ) -> Result<Option<GoToView>, BackendClosed> {
         let mut router_message = None;
 
         if let MenuState::Contacts { state } = &mut self.menu_state {
@@ -256,7 +259,7 @@ impl Route for Settings {
     type Message = Message;
     fn subscription(&self) -> Subscription<Self::Message> {
         let menu_subs = match &self.menu_state {
-            MenuState::Network { state } => state.subscription().map(Message::NetworkMessage),
+            MenuState::Network { state } => state.subscription().map(Message::Network),
             _ => Subscription::none(),
         };
         Subscription::batch(vec![menu_subs, self.modal_state.subscription()])
@@ -302,7 +305,7 @@ impl Route for Settings {
             Message::ChangeTheme(theme) => {
                 conn.send(net::ToBackend::SetTheme(theme))?;
             }
-            Message::AccountMessage(msg) => {
+            Message::Account(msg) => {
                 if let MenuState::Account { state } = &mut self.menu_state {
                     match msg {
                         account::Message::RelaysConfirmationPress(acc_resp) => {
@@ -320,13 +323,13 @@ impl Route for Settings {
                     }
                 }
             }
-            Message::AboutMessage(msg) => {
+            Message::About(msg) => {
                 if let MenuState::About { state } = &mut self.menu_state {
                     let cmd = state.update(msg);
-                    commands.push(cmd.map(Message::AboutMessage))
+                    commands.push(cmd.map(Message::About))
                 }
             }
-            Message::NetworkMessage(msg) => {
+            Message::Network(msg) => {
                 if let MenuState::Network { state } = &mut self.menu_state {
                     if let Some(received_msg) = state.update(msg, conn)? {
                         if let Some(router_message) =
@@ -337,18 +340,18 @@ impl Route for Settings {
                     }
                 }
             }
-            Message::BackupMessage(msg) => {
+            Message::Backup(msg) => {
                 if let MenuState::Backup { state } = &mut self.menu_state {
                     let cmd = state.update(msg, conn)?;
-                    commands.push(cmd.map(Message::BackupMessage));
+                    commands.push(cmd.map(Message::Backup));
                 }
             }
-            Message::ContactsMessage(msg) => {
+            Message::Contacts(msg) => {
                 if let Some(router_message) = self.handle_contacts_message(msg, conn)? {
                     commands.change_route(router_message);
                 }
             }
-            Message::NavEscPress => commands.change_route(RouterMessage::GoToChat),
+            Message::NavEscPress => commands.change_route(GoToView::Chat),
             Message::MenuAccountPress
             | Message::MenuAppearancePress
             | Message::MenuNetworkPress
@@ -359,7 +362,7 @@ impl Route for Settings {
             }
             Message::LogoutPress => {
                 conn.send(net::ToBackend::Logout)?;
-                commands.change_route(RouterMessage::GoToLogout)
+                commands.change_route(GoToView::Logout)
             }
             other => {
                 let cmd = self.modal_state.update(other, conn)?;
@@ -488,7 +491,7 @@ impl ModalState {
             Message::SendContactListToAll => {
                 println!("Send contacts to all relays");
             }
-            Message::RelayBasicMessage(modal_msg) => {
+            Message::ModalRelayBasic(modal_msg) => {
                 if let ModalState::RelayBasic(state) = self {
                     match *modal_msg {
                         relay_basic::CMessage::UnderlayMessage(message) => {
@@ -499,12 +502,12 @@ impl ModalState {
                             if close_modal {
                                 *self = ModalState::Off;
                             }
-                            command = cmd.map(|m| Message::RelayBasicMessage(Box::new(m)));
+                            command = cmd.map(|m| Message::ModalRelayBasic(Box::new(m)));
                         }
                     }
                 }
             }
-            Message::RelaysConfirmationMessage(modal_msg) => {
+            Message::ModalRelaysConfirmation(modal_msg) => {
                 if let ModalState::RelaysConfirmation(state) = self {
                     match *modal_msg {
                         relays_confirmation::CMessage::UnderlayMessage(message) => {
@@ -515,12 +518,12 @@ impl ModalState {
                             if close_modal {
                                 *self = ModalState::Off;
                             }
-                            command = cmd.map(|m| Message::RelaysConfirmationMessage(Box::new(m)));
+                            command = cmd.map(|m| Message::ModalRelaysConfirmation(Box::new(m)));
                         }
                     }
                 }
             }
-            Message::ContactDetailsMessage(modal_msg) => {
+            Message::ModalContactDetails(modal_msg) => {
                 if let ModalState::ContactDetails(state) = self {
                     match *modal_msg {
                         basic_contact::CMessage::UnderlayMessage(message) => {
@@ -531,12 +534,12 @@ impl ModalState {
                             if close_modal {
                                 *self = ModalState::Off;
                             }
-                            command = cmd.map(|m| Message::ContactDetailsMessage(Box::new(m)));
+                            command = cmd.map(|m| Message::ModalContactDetails(Box::new(m)));
                         }
                     }
                 }
             }
-            Message::ImportContactListMessage(modal_msg) => {
+            Message::ModalImportContactList(modal_msg) => {
                 if let ModalState::ImportList(state) = self {
                     match *modal_msg {
                         import_contact_list::CMessage::UnderlayMessage(message) => {
@@ -547,12 +550,12 @@ impl ModalState {
                             if close_modal {
                                 *self = ModalState::Off
                             }
-                            command = cmd.map(|m| Message::ImportContactListMessage(Box::new(m)));
+                            command = cmd.map(|m| Message::ModalImportContactList(Box::new(m)));
                         }
                     }
                 }
             }
-            Message::RelayDocumentMessage(modal_msg) => {
+            Message::ModalRelayDocument(modal_msg) => {
                 if let ModalState::RelayDocument(state) = self {
                     match *modal_msg {
                         relay_document::CMessage::UnderlayMessage(message) => {
@@ -563,7 +566,7 @@ impl ModalState {
                             if close_modal {
                                 *self = ModalState::Off
                             }
-                            command = cmd.map(|m| Message::RelayDocumentMessage(Box::new(m)));
+                            command = cmd.map(|m| Message::ModalRelayDocument(Box::new(m)));
                         }
                     }
                 }
@@ -578,19 +581,19 @@ impl ModalState {
         let view: Element<_> = match self {
             ModalState::RelayBasic(state) => state
                 .view(underlay)
-                .map(|m| Message::RelayBasicMessage(Box::new(m))),
+                .map(|m| Message::ModalRelayBasic(Box::new(m))),
             ModalState::RelayDocument(state) => state
                 .view(underlay)
-                .map(|m| Message::RelayDocumentMessage(Box::new(m))),
+                .map(|m| Message::ModalRelayDocument(Box::new(m))),
             ModalState::RelaysConfirmation(state) => state
                 .view(underlay)
-                .map(|m| Message::RelaysConfirmationMessage(Box::new(m))),
+                .map(|m| Message::ModalRelaysConfirmation(Box::new(m))),
             ModalState::ContactDetails(state) => state
                 .view(underlay)
-                .map(|m| Message::ContactDetailsMessage(Box::new(m))),
+                .map(|m| Message::ModalContactDetails(Box::new(m))),
             ModalState::ImportList(state) => state
                 .view(underlay)
-                .map(|m| Message::ImportContactListMessage(Box::new(m))),
+                .map(|m| Message::ModalImportContactList(Box::new(m))),
             ModalState::Off => underlay.into(),
         };
 

@@ -46,7 +46,7 @@ fn title_column() -> Element<'static, Message> {
         text("base.comment").height(ROW_HEIGHT),
         // NORMAL
         text("normal.primary").height(ROW_HEIGHT),
-        text("normal.primary_lighter").height(ROW_HEIGHT),
+        text("normal.primary_variant").height(ROW_HEIGHT),
         text("normal.secondary").height(ROW_HEIGHT),
         text("normal.error").height(ROW_HEIGHT),
         text("normal.success").height(ROW_HEIGHT),

@@ -1,6 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use nostr::{Contact, EventBuilder, EventId, Keys, Metadata};
+use chrono::NaiveDateTime;
+use nostr::{Contact, EventBuilder, EventId, Keys, Metadata, Timestamp};
 use ns_client::RelayPool;
 use sqlx::SqlitePool;
 use thiserror::Error;
@@ -9,23 +10,31 @@ use url::Url;
 use crate::{
     db::{Database, DbContact, UserConfig},
     net::ntp::system_now_microseconds,
-    utils::{naive_to_event_tt, NipData},
+    utils::{
+        channel_creation_builder, channel_metadata_builder, channel_msg_builder, naive_to_event_tt,
+        ns_event_to_naive, NipData,
+    },
     views::login::BasicProfile,
 };
+
+use super::ChannelMetadata;
 
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("Signing error: {0}")]
-    SigningEventError(String),
+    SigningEvent(String),
 
     #[error("Nostr Sdk Event Builder Error: {0}")]
-    NostrSdkEventBuilderError(#[from] nostr::prelude::builder::Error),
+    NostrSdkEventBuilder(#[from] nostr::prelude::builder::Error),
 
     #[error("Nostr NsClient Error: {0}")]
-    FromNsClientError(#[from] ns_client::Error),
+    FromNsClient(#[from] ns_client::Error),
 
     #[error("{0}")]
-    FromDbContactError(#[from] crate::db::contact::Error),
+    FromDbContact(#[from] crate::db::contact::Error),
+
+    #[error("Invalid timestamp: {0}")]
+    InvalidTimestamp(Timestamp),
 }
 
 #[derive(Debug, Clone)]
@@ -40,11 +49,16 @@ impl PendingEvent {
     pub fn ns_event(&self) -> &nostr::Event {
         &self.0
     }
+    pub fn event_hash(&self) -> EventId {
+        self.0.id.to_owned()
+    }
+    pub fn display_time(&self) -> Result<NaiveDateTime, Error> {
+        ns_event_to_naive(self.0.created_at).map_err(|_| Error::InvalidTimestamp(self.0.created_at))
+    }
 }
 
 pub struct BackendState {
     pub req_client: reqwest::Client,
-    pub search_channel_ids: HashSet<EventId>,
     pub nostr: RelayPool,
     pub nips_data: Vec<NipData>,
     pub create_account: Option<BasicProfile>,
@@ -64,7 +78,6 @@ impl BackendState {
         Self {
             db_client,
             req_client,
-            search_channel_ids: HashSet::new(),
             nostr,
             nips_data,
             create_account,
@@ -75,7 +88,7 @@ impl BackendState {
     }
 
     fn insert_pending(&mut self, event: PendingEvent) {
-        self.pending_events.insert(event.id().clone(), event);
+        self.pending_events.insert(*event.id(), event);
     }
     pub fn synced_ntp(&self) -> (Option<i64>, Option<String>) {
         (self.ntp_offset, self.ntp_server.clone())
@@ -148,7 +161,62 @@ impl BackendState {
         let pool = &self.db_client.pool;
 
         let builder =
-            EventBuilder::new_encrypted_direct_msg(&keys, db_contact.pubkey().to_owned(), content)?;
+            EventBuilder::new_encrypted_direct_msg(keys, db_contact.pubkey().to_owned(), content)?;
+        let ns_event = event_with_time(pool, keys, builder).await?;
+        self.nostr.send_event(ns_event.clone())?;
+
+        let pending_event = PendingEvent::new(ns_event);
+        self.insert_pending(pending_event.clone());
+
+        Ok(pending_event)
+    }
+
+    pub(crate) async fn new_channel_msg(
+        &mut self,
+        keys: &Keys,
+        channel_id: &EventId,
+        recommended_relay: Option<&Url>,
+        content: &str,
+    ) -> Result<PendingEvent, Error> {
+        let pool = &self.db_client.pool;
+        let builder = channel_msg_builder(channel_id, recommended_relay, content);
+
+        let ns_event = event_with_time(pool, keys, builder).await?;
+        self.nostr.send_event(ns_event.clone())?;
+
+        let pending_event = PendingEvent::new(ns_event);
+        self.insert_pending(pending_event.clone());
+
+        Ok(pending_event)
+    }
+
+    pub(crate) async fn new_channel(
+        &mut self,
+        keys: &Keys,
+        metadata: &ChannelMetadata,
+    ) -> Result<PendingEvent, Error> {
+        let pool = &self.db_client.pool;
+        let builder = channel_creation_builder(metadata);
+
+        let ns_event = event_with_time(pool, keys, builder).await?;
+        self.nostr.send_event(ns_event.clone())?;
+
+        let pending_event = PendingEvent::new(ns_event);
+        self.insert_pending(pending_event.clone());
+
+        Ok(pending_event)
+    }
+
+    pub(crate) async fn new_channel_metadata(
+        &mut self,
+        keys: &Keys,
+        channel_id: &EventId,
+        recommended_relay: Option<&Url>,
+        metadata: &ChannelMetadata,
+    ) -> Result<PendingEvent, Error> {
+        let pool = &self.db_client.pool;
+        let builder = channel_metadata_builder(channel_id, recommended_relay, metadata);
+
         let ns_event = event_with_time(pool, keys, builder).await?;
         self.nostr.send_event(ns_event.clone())?;
 
@@ -194,6 +262,6 @@ async fn event_with_time(
     ns_event.id = updated_id;
     let ns_event = ns_event
         .sign(keys)
-        .map_err(|e| Error::SigningEventError(e.to_string()))?;
+        .map_err(|e| Error::SigningEvent(e.to_string()))?;
     Ok(ns_event)
 }

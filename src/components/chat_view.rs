@@ -25,10 +25,10 @@ pub enum Message {
     ChannelUserNamePressed(XOnlyPublicKey),
 }
 
-pub struct ChatListContainer {
+pub struct ChatView {
     dm_msg_input: String,
 }
-impl ChatListContainer {
+impl ChatView {
     pub fn new() -> Self {
         Self {
             dm_msg_input: "".into(),
@@ -75,40 +75,40 @@ impl ChatListContainer {
         messages: &'a [ChatMessage],
         active_chat: Option<&'a ChatContact>,
     ) -> Element<'a, Message> {
-        if let Some(active_contact) = active_chat {
-            let chat_messages = create_chat_content(scrollable_id, messages);
-            let message_input = text_input("Write a message...", &self.dm_msg_input)
-                .on_submit(Message::DMSentPress(self.dm_msg_input.clone()))
-                .on_input(Message::DMNMessageChange)
-                .id(chat_input_id.clone());
-            let send_btn = button(send_icon().style(style::Text::Primary))
-                .style(style::Button::Invisible)
-                .on_press(Message::DMSentPress(self.dm_msg_input.clone()));
-            let msg_input_row = container(row![message_input, send_btn].spacing(5))
-                .style(style::Container::Default)
-                .height(CHAT_INPUT_HEIGHT)
-                .padding([10, 5]);
-            // Todo: add/remove user button
-            // if user is unkown
-            let add_or_remove_user = text("");
-
-            return container(column![
-                chat_navbar(active_contact),
-                add_or_remove_user,
-                chat_messages,
-                msg_input_row
-            ])
-            .width(Length::Fill)
-            .into();
-        }
-
-        container(text("Select a chat to start messaging"))
+        let Some(active_contact) = active_chat else {
+            return container(text("Select a chat to start messaging"))
             .center_x()
             .center_y()
             .width(Length::Fill)
             .height(Length::Fill)
             .style(style::Container::Background)
-            .into()
+            .into();
+        };
+
+        let chat_messages = create_chat_content(scrollable_id, messages);
+        let message_input = text_input("Write a message...", &self.dm_msg_input)
+            .on_submit(Message::DMSentPress(self.dm_msg_input.clone()))
+            .on_input(Message::DMNMessageChange)
+            .id(chat_input_id.clone());
+        let send_btn = button(send_icon().style(style::Text::Primary))
+            .style(style::Button::Invisible)
+            .on_press(Message::DMSentPress(self.dm_msg_input.clone()));
+        let msg_input_row = container(row![message_input, send_btn].spacing(5))
+            .style(style::Container::Default)
+            .height(CHAT_INPUT_HEIGHT)
+            .padding([10, 5]);
+        // Todo: add/remove user button
+        // if user is unkown
+        let add_or_remove_user = text("");
+
+        container(column![
+            chat_navbar(active_contact),
+            add_or_remove_user,
+            chat_messages,
+            msg_input_row
+        ])
+        .width(Length::Fill)
+        .into()
     }
 }
 
@@ -131,21 +131,20 @@ fn create_chat_content<'a>(
         let mut last_date: Option<NaiveDateTime> = None;
 
         for msg in messages {
-            let msg_date = msg.display_time;
-
-            if let Some(last) = last_date {
-                if last.day() != msg_date.day() {
-                    col = col.push(chat_day_divider(msg_date.clone()));
+            if let Some(msg_date) = msg.display_time() {
+                if let Some(last) = last_date {
+                    if last.day() != msg_date.day() {
+                        col = col.push(chat_day_divider(*msg_date));
+                    }
+                } else {
+                    col = col.push(chat_day_divider(*msg_date));
                 }
-            } else {
-                col = col.push(chat_day_divider(msg_date.clone()));
+                last_date = Some(*msg_date);
             }
 
             let msg_view = msg.view(false).map(map_chat_msgs);
 
             col = col.push(msg_view);
-
-            last_date = Some(msg_date);
         }
 
         let scrollable = common_scrollable(col)
@@ -179,7 +178,7 @@ fn chat_day_divider<Message: 'static>(date: NaiveDateTime) -> Element<'static, M
         .into()
 }
 
-fn chat_navbar<'a>(active_contact: &'a ChatContact) -> Container<'a, Message> {
+fn chat_navbar(active_contact: &ChatContact) -> Container<'_, Message> {
     container(
         row![header_details(active_contact), header_action_buttons()]
             .spacing(5)
@@ -189,7 +188,7 @@ fn chat_navbar<'a>(active_contact: &'a ChatContact) -> Container<'a, Message> {
     .style(style::Container::Foreground)
 }
 
-fn header_details<'a>(chat: &'a ChatContact) -> Button<'a, Message> {
+fn header_details(chat: &ChatContact) -> Button<'_, Message> {
     let local_message_date = chat
         .last_message_date()
         .map(from_naive_utc_to_local)
@@ -251,23 +250,22 @@ fn create_channel_content<'a>(
         let mut previous_msg: Option<ChatMessage> = None;
 
         for msg in messages {
-            let msg_date = msg.display_time;
-
-            if let Some(last) = last_date {
-                if last.day() != msg_date.day() {
-                    col = col.push(chat_day_divider(msg_date.clone()));
+            if let Some(msg_date) = msg.display_time() {
+                if let Some(last) = last_date {
+                    if last.day() != msg_date.day() {
+                        col = col.push(chat_day_divider(*msg_date));
+                    }
+                } else {
+                    col = col.push(chat_day_divider(*msg_date));
                 }
-            } else {
-                col = col.push(chat_day_divider(msg_date.clone()));
+                last_date = Some(*msg_date);
             }
 
-            let show_name = msg.show_name(previous_msg);
+            let show_name = msg.show_name(previous_msg.as_ref());
 
             let msg_view = msg.view(show_name).map(map_chat_msgs);
 
             col = col.push(msg_view);
-
-            last_date = Some(msg_date);
 
             previous_msg = Some(msg.clone());
         }

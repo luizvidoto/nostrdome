@@ -8,6 +8,8 @@ use nostrtalk::{
 
 use crate::helpers::TestApp;
 
+use super::assert_channel_timeout;
+
 pub async fn assert_event_and_contacts(
     test_app: &TestApp,
     event_hash: &EventId,
@@ -33,10 +35,11 @@ pub async fn assert_event_and_contacts(
 pub async fn assert_received_contact_list_event(receiver: &mut Receiver<BackendEvent>) {
     if let Some(BackendEvent::ReceivedContactList) = receiver.next().await {
         // Ok
-        return;
     } else {
         panic!("Did not receive ReceivedContactList message");
     }
+
+    assert_channel_timeout(receiver).await
 }
 
 pub async fn assert_message_received(test_app: &TestApp, receiver: &mut Receiver<BackendEvent>) {

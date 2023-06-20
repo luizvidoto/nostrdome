@@ -28,19 +28,19 @@ pub enum Error {
     EventAlreadyInDatabase(EventId),
 
     #[error("{0}")]
-    UtilsError(#[from] crate::utils::Error),
+    Utils(#[from] crate::utils::Error),
 
     #[error("Sqlx error: {0}")]
-    SqlxError(#[from] sqlx::Error),
+    Sqlx(#[from] sqlx::Error),
 
     #[error("JSON (de)serialization error: {0}")]
     SerdeJson(#[from] serde_json::Error),
 
     #[error("Out-of-range number of seconds when parsing timestamp")]
-    TimestampError,
+    Timestamp,
 
     #[error("{0}")]
-    FromDbRelayResponseError(#[from] crate::db::relay_response::Error),
+    FromDbRelayResponse(#[from] crate::db::relay_response::Error),
 }
 
 #[derive(Debug, Clone)]
@@ -181,12 +181,12 @@ impl DbEvent {
         let inserted = sqlx::query(sql)
             .bind(&ns_event.id.to_string())
             .bind(&ns_event.pubkey.to_string())
-            .bind(&ns_event.kind.as_u32())
+            .bind(ns_event.kind.as_u32())
             .bind(&ns_event.content)
             .bind(&ns_event.sig.to_string())
             .bind(&serde_json::to_string(&ns_event.tags)?)
             .bind(&relay_url.to_string())
-            .bind(&ns_event_to_millis(ns_event.created_at))
+            .bind(ns_event_to_millis(ns_event.created_at))
             .execute(pool)
             .await?;
 
@@ -233,9 +233,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbEvent {
             let tags_result: Result<Vec<Tag>, _> =
                 serialized_values.into_iter().map(Tag::parse).collect();
 
-            let tags = tags_result.map_err(|e| handle_decode_error(e, "tags"))?;
-
-            tags
+            tags_result.map_err(|e| handle_decode_error(e, "tags"))?
         };
 
         let relay_url: String = row.try_get("relay_url")?;

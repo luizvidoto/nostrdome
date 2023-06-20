@@ -5,16 +5,16 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("{0}")]
-    FromConfigError(#[from] crate::config::Error),
+    FromConfig(#[from] crate::config::Error),
 
     #[error("{0}")]
-    FromDbChannelMessageError(#[from] crate::db::channel_message::Error),
+    FromDbChannelMessage(#[from] crate::db::channel_message::Error),
 
     #[error("{0}")]
-    FromChannelSubscriptionError(#[from] crate::db::channel_subscription::Error),
+    FromChannelSubscription(#[from] crate::db::channel_subscription::Error),
 
     #[error("SendError: {0}")]
-    FromSendError(#[from] mpsc::SendError),
+    FromSend(#[from] mpsc::SendError),
 
     // I/O Error
     #[error("I/O Error: {0}")]
@@ -24,55 +24,55 @@ pub enum Error {
     FromSerdeJson(#[from] serde_json::Error),
 
     #[error("Reqwest error: {0}")]
-    FromReqwestClientError(#[from] crate::net::reqwest_client::Error),
+    FromReqwestClient(#[from] crate::net::reqwest_client::Error),
 
     #[error("Nostr Client Error: {0}")]
-    FromNostrClientError(#[from] ns_client::Error),
+    FromNostrClient(#[from] ns_client::Error),
 
     #[error("{0}")]
-    FromBackendStateError(#[from] crate::types::backend_state::Error),
+    FromBackendState(#[from] crate::types::backend_state::Error),
 
     #[error("{0}")]
-    FromUtilsError(#[from] crate::utils::Error),
+    FromUtils(#[from] crate::utils::Error),
 
     #[error("{0}")]
-    FromChannelMetadataError(#[from] crate::types::channel_metadata::Error),
+    FromChannelMetadata(#[from] crate::types::channel_metadata::Error),
 
     #[error("{0}")]
-    FromChatMessageError(#[from] crate::types::chat_message::Error),
+    FromChatMessage(#[from] crate::types::chat_message::Error),
 
     #[error("{0}")]
-    FromImageCacheError(#[from] crate::db::image_cache::Error),
+    FromImageCache(#[from] crate::db::image_cache::Error),
 
     #[error("{0}")]
-    FromChannelCacheError(#[from] crate::db::channel_cache::Error),
+    FromChannelCache(#[from] crate::db::channel_cache::Error),
 
     #[error("{0}")]
-    FromContactError(#[from] crate::db::contact::Error),
+    FromContact(#[from] crate::db::contact::Error),
 
     #[error("{0}")]
-    FromDatabaseError(#[from] crate::db::database::Error),
+    FromDatabase(#[from] crate::db::database::Error),
 
     #[error("{0}")]
-    FromEventError(#[from] crate::db::event::Error),
+    FromEvent(#[from] crate::db::event::Error),
 
     #[error("{0}")]
-    FromMessageError(#[from] crate::db::message::Error),
+    FromMessage(#[from] crate::db::message::Error),
 
     #[error("{0}")]
-    FromProfileCacheError(#[from] crate::db::profile_cache::Error),
+    FromProfileCache(#[from] crate::db::profile_cache::Error),
 
     #[error("{0}")]
-    FromRelayError(#[from] crate::db::relay::Error),
+    FromRelay(#[from] crate::db::relay::Error),
 
     #[error("{0}")]
-    FromRelayResponseError(#[from] crate::db::relay_response::Error),
+    FromRelayResponse(#[from] crate::db::relay_response::Error),
 
     #[error("{0}")]
-    FromUserConfigError(#[from] crate::db::user_config::Error),
+    FromUserConfig(#[from] crate::db::user_config::Error),
 
     #[error("{0}")]
-    FromNtpError(#[from] crate::net::ntp::NtpError),
+    FromNtp(#[from] crate::net::ntp::NtpError),
 
     #[error("App didn't ask for kind: {0:?}")]
     NotSubscribedToKind(nostr::Kind),
@@ -84,13 +84,16 @@ pub enum Error {
     SameContactUpdate,
 
     #[error("{0}")]
-    FromUrlParseError(#[from] url::ParseError),
+    FromUrlParse(#[from] url::ParseError),
 
     #[error("Closed backend channel")]
     ClosedBackend(#[from] BackendClosed),
 
     #[error("Channel id not found in event tags: EventID: {0}")]
     ChannelIdNotFound(nostr::EventId),
+
+    #[error("Unexpected event kind: {0}")]
+    UnexpectedEventKind(u32),
 }
 
 #[derive(Error, Debug)]

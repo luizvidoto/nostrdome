@@ -5,4 +5,4 @@ CREATE TABLE IF NOT EXISTS channel_subscription (
 );
 
 -- Indexes
-CREATE UNIQUE INDEX IF NOT EXISTS channel_id_index ON channel_subscription(channel_id);
+CREATE INDEX IF NOT EXISTS channel_id_index ON channel_subscription(channel_id);

@@ -17,7 +17,7 @@ use crate::{
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("Sqlx error: {0}")]
-    SqlxError(#[from] sqlx::Error),
+    Sqlx(#[from] sqlx::Error),
 
     #[error("Error parsing JSON content into nostr::Metadata: {0}")]
     JsonToMetadata(String),
@@ -35,7 +35,7 @@ pub enum Error {
     NotConfirmedEvent(nostr::EventId),
 
     #[error("{0}")]
-    FromImageCacheError(#[from] crate::db::image_cache::Error),
+    FromImageCache(#[from] crate::db::image_cache::Error),
 }
 
 use super::{DbEvent, ImageDownloaded};
@@ -49,6 +49,7 @@ pub struct ChannelCache {
     pub updated_at: Option<NaiveDateTime>,
     pub metadata: ChannelMetadata,
     pub image_cache: Option<ImageDownloaded>,
+    pub members: Vec<XOnlyPublicKey>,
 }
 impl ChannelCache {
     pub async fn insert_member_from_event(
@@ -59,6 +60,7 @@ impl ChannelCache {
             .ok_or(Error::NotFoundChannelInTags(db_event.event_hash.to_owned()))?;
         Self::insert_member(cache_pool, &channel_id, &db_event.pubkey).await
     }
+
     pub async fn insert_member(
         cache_pool: &SqlitePool,
         channel_id: &nostr::EventId,
@@ -88,6 +90,7 @@ impl ChannelCache {
 
         for channel_cache in &mut results {
             channel_cache.fetch_img_cache(cache_pool).await?;
+            channel_cache.fetch_members(cache_pool).await?;
         }
 
         Ok(results)
@@ -104,6 +107,7 @@ impl ChannelCache {
             .await?;
         if let Some(cache) = &mut result {
             cache.fetch_img_cache(cache_pool).await?;
+            cache.fetch_members(cache_pool).await?;
         }
         Ok(result)
     }
@@ -128,7 +132,7 @@ impl ChannelCache {
                 (creation_event_hash, creator_pubkey, created_at, metadata)
             VALUES (?1, ?2, ?3, ?4)
         "#;
-        sqlx::query(&insert_query)
+        sqlx::query(insert_query)
             .bind(channel_id.to_string())
             .bind(creator_pubkey.to_string())
             .bind(created_at_millis)
@@ -142,6 +146,7 @@ impl ChannelCache {
 
         Ok(channel_cache)
     }
+
     pub async fn update(
         cache_pool: &SqlitePool,
         ns_event: &nostr::Event,
@@ -168,7 +173,7 @@ impl ChannelCache {
             WHERE creation_event_hash = ?
         "#;
 
-        sqlx::query(&update_query)
+        sqlx::query(update_query)
             .bind(metadata.as_json())
             .bind(updated_event_hash.to_string())
             .bind(updated_at_millis)
@@ -182,16 +187,24 @@ impl ChannelCache {
 
         Ok(channel_cache)
     }
+
     async fn fetch_img_cache(
         &mut self,
         cache_pool: &sqlx::Pool<sqlx::Sqlite>,
     ) -> Result<(), Error> {
-        Ok(if self.metadata.picture.is_some() {
+        if self.metadata.picture.is_some() {
             let event_hash = self.last_event_hash();
             self.image_cache =
                 ImageDownloaded::fetch(cache_pool, event_hash, ImageKind::Channel).await?;
-        })
+        }
+        Ok(())
     }
+
+    async fn fetch_members(&mut self, cache_pool: &SqlitePool) -> Result<(), Error> {
+        self.members = fetch_channel_members(cache_pool, &self.channel_id).await?;
+        Ok(())
+    }
+
     pub fn last_event_hash(&self) -> &EventId {
         self.updated_event_hash.as_ref().unwrap_or(&self.channel_id)
     }
@@ -249,6 +262,7 @@ impl sqlx::FromRow<'_, SqliteRow> for ChannelCache {
             creator_pubkey,
             updated_event_hash,
             image_cache: None,
+            members: vec![],
         })
     }
 }

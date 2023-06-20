@@ -16,7 +16,7 @@ use super::SettingsRouterMessage;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    RelayRowMessage(relay_row::MessageWrapper),
+    RelayRow(relay_row::MessageWrapper),
     OpenAddRelayModal,
     SearchInputChange(String),
     Tick,
@@ -25,7 +25,6 @@ pub enum Message {
 
 pub struct NtpInfo {
     last_ntp_offset: i64,
-    ntp_offset: Option<i64>,
     ntp_server: Option<String>,
 }
 
@@ -54,7 +53,6 @@ impl State {
         match event {
             BackendEvent::NtpInfo {
                 last_ntp_offset,
-                ntp_offset,
                 ntp_server,
             } => {
                 if ntp_server.is_none() {
@@ -63,7 +61,6 @@ impl State {
 
                 self.ntp_info = Some(NtpInfo {
                     last_ntp_offset,
-                    ntp_offset,
                     ntp_server,
                 })
             }
@@ -114,7 +111,7 @@ impl State {
                 return Ok(Some(SettingsRouterMessage::OpenRelayBasicModal));
             }
 
-            Message::RelayRowMessage(msg) => match msg.message {
+            Message::RelayRow(msg) => match msg.message {
                 relay_row::Message::OpenRelayDocument(db_relay) => {
                     return Ok(Some(SettingsRouterMessage::OpenRelayDocument(db_relay)));
                 }
@@ -139,7 +136,7 @@ impl State {
 
         let ntp_content: Element<_> = if let Some(info) = &self.ntp_info {
             let synced_with: Element<_> = if let Some(server) = &info.ntp_server {
-                let server_input = text_input("", &server).style(style::TextInput::ChatSearch);
+                let server_input = text_input("", server).style(style::TextInput::ChatSearch);
                 row![text("Synced with NTP server").width(200), server_input,]
                     .align_items(Alignment::Center)
                     .spacing(5)
@@ -191,14 +188,14 @@ impl State {
 
         let table_header = column![RelayRow::view_header().map(|mut message| {
             message.from = -1;
-            Message::RelayRowMessage(message)
+            Message::RelayRow(message)
         })];
         let relay_rows = self
             .relays
             .iter()
             .filter(|row| url_matches_search(&row.db_relay.url, &self.search_input))
             .fold(column![].spacing(4), |col, relay| {
-                col.push(relay.view().map(Message::RelayRowMessage))
+                col.push(relay.view().map(Message::RelayRow))
             });
         let relays_table = container(table_header.push(relay_rows));
         let relays_gp = column![relays_title, utils_row, relays_table].spacing(5);

@@ -1,8 +1,8 @@
 use crate::{
     net::ImageKind,
     utils::{
-        event_hash_or_err, millis_to_naive_or_err, profile_meta_or_err, public_key_or_err,
-        url_or_err,
+        event_hash_or_err, millis_to_naive_or_err, ns_event_to_naive, profile_meta_or_err,
+        public_key_or_err, url_or_err,
     },
 };
 use chrono::NaiveDateTime;
@@ -10,8 +10,9 @@ use nostr::{secp256k1::XOnlyPublicKey, EventId};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use thiserror::Error;
+use url::Url;
 
-use super::{DbEvent, ImageDownloaded};
+use super::ImageDownloaded;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -19,7 +20,7 @@ pub enum Error {
     JsonToMetadata(String),
 
     #[error("Sqlx error: {0}")]
-    SqlxError(#[from] sqlx::Error),
+    Sqlx(#[from] sqlx::Error),
 
     #[error("Event need to be confirmed")]
     NotConfirmedEvent(EventId),
@@ -28,7 +29,10 @@ pub enum Error {
     Io(#[from] std::io::Error),
 
     #[error("{0}")]
-    FromImageCacheError(#[from] crate::db::image_cache::Error),
+    FromImageCache(#[from] crate::db::image_cache::Error),
+
+    #[error("Invalid timestamp: {0}")]
+    InvalidTimestamp(nostr::Timestamp),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,13 +86,17 @@ impl ProfileCache {
     //     Ok(members)
     // }
 
-    pub async fn insert(cache_pool: &SqlitePool, db_event: &DbEvent) -> Result<u64, Error> {
-        let metadata = nostr::Metadata::from_json(&db_event.content)
-            .map_err(|_| Error::JsonToMetadata(db_event.content.clone()))?;
-        let public_key = &db_event.pubkey;
-        let event_hash = &db_event.event_hash;
-        let event_date = &db_event.created_at;
-        let relay_url = &db_event.relay_url;
+    pub async fn insert(
+        cache_pool: &SqlitePool,
+        relay_url: &Url,
+        ns_event: nostr::Event,
+    ) -> Result<u64, Error> {
+        let metadata = nostr::Metadata::from_json(&ns_event.content)
+            .map_err(|_| Error::JsonToMetadata(ns_event.content.clone()))?;
+        let public_key = &ns_event.pubkey;
+        let event_hash = &ns_event.id;
+        let event_date = ns_event_to_naive(ns_event.created_at)
+            .map_err(|_| Error::InvalidTimestamp(ns_event.created_at))?;
 
         if let Some(last_cache) = Self::fetch_by_public_key(cache_pool, public_key).await? {
             if &last_cache.event_hash == event_hash {
@@ -98,7 +106,7 @@ impl ProfileCache {
                 );
                 return Ok(0);
             }
-            if last_cache.updated_at > *event_date {
+            if last_cache.updated_at > event_date {
                 tracing::debug!(
                     "Skipping update. Outdated event for pubkey: {} - cache: {:?} - event: {:?}",
                     public_key.to_string(),
@@ -116,8 +124,8 @@ impl ProfileCache {
             SET updated_at=?, event_hash=?, metadata=?, from_relay=?
             WHERE public_key = ?
         "#;
-        let mut rows_affected = sqlx::query(&update_query)
-            .bind(&event_date.timestamp_millis())
+        let mut rows_affected = sqlx::query(update_query)
+            .bind(event_date.timestamp_millis())
             .bind(&event_hash.to_string())
             .bind(&metadata.as_json())
             .bind(&relay_url.to_string())
@@ -132,9 +140,9 @@ impl ProfileCache {
                     (public_key, updated_at, event_hash, metadata, from_relay) 
                 VALUES (?, ?, ?, ?, ?)
             "#;
-            rows_affected = sqlx::query(&insert_query)
+            rows_affected = sqlx::query(insert_query)
                 .bind(&public_key.to_string())
-                .bind(&event_date.timestamp_millis())
+                .bind(event_date.timestamp_millis())
                 .bind(&event_hash.to_string())
                 .bind(&metadata.as_json())
                 .bind(&relay_url.to_string())

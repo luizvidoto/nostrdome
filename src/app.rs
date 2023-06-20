@@ -78,35 +78,32 @@ impl Application for App {
 
     fn view(&self) -> Element<Self::Message> {
         match &self.state {
-            AppState::Loading => inform_card("Loading App", "Please wait...").into(),
-            AppState::Loaded { router, .. } => router
-                .view(self.color_theme)
-                .map(Message::RouterMessage)
-                .into(),
+            AppState::Loading => inform_card("Loading App", "Please wait..."),
+            AppState::Loaded { router, .. } => {
+                router.view(self.color_theme).map(Message::RouterMessage)
+            }
         }
     }
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
             Message::RuntimeEvent(event) => {
-                if let iced::Event::Window(window_event) = event {
-                    if let window::Event::CloseRequested = window_event {
-                        match &mut self.state {
-                            AppState::Loading => {
+                if let iced::Event::Window(window::Event::CloseRequested) = event {
+                    match &mut self.state {
+                        AppState::Loading => {
+                            return window::close();
+                        }
+                        AppState::Loaded {
+                            conn,
+                            already_sent_shutdown: shutdown_sent,
+                            ..
+                        } => {
+                            tracing::info!("Shutting down backend");
+                            if *shutdown_sent {
                                 return window::close();
-                            }
-                            AppState::Loaded {
-                                conn,
-                                already_sent_shutdown: shutdown_sent,
-                                ..
-                            } => {
-                                tracing::info!("Shutting down backend");
-                                if *shutdown_sent {
+                            } else {
+                                *shutdown_sent = true;
+                                if let Err(_e) = conn.send(ToBackend::Shutdown) {
                                     return window::close();
-                                } else {
-                                    *shutdown_sent = true;
-                                    if let Err(_e) = conn.send(ToBackend::Shutdown) {
-                                        return window::close();
-                                    }
                                 }
                             }
                         }
@@ -136,15 +133,14 @@ impl Application for App {
                         let router = Router::new(&mut conn);
                         self.state = AppState::loaded(conn, router);
                     }
-                    other => match &mut self.state {
-                        AppState::Loaded { router, conn, .. } => {
+                    other => {
+                        if let AppState::Loaded { router, conn, .. } = &mut self.state {
                             match router.backend_event(other, conn) {
                                 Ok(cmd) => return cmd.map(Message::RouterMessage),
                                 Err(_e) => return window::close(),
                             }
                         }
-                        _ => (),
-                    },
+                    }
                 }
             }
         };

@@ -70,14 +70,12 @@ impl container::StyleSheet for Theme {
             Container::ForegroundBordered => container::Appearance {
                 background: self.palette().base.foreground.into(),
                 border_width: 1.0,
-                border_color: change_color_by_type(theme_type, self.palette().base.background, 0.1)
-                    .into(),
+                border_color: change_color_by_type(theme_type, self.palette().base.background, 0.1),
                 text_color: self.palette().base.text.into(),
                 ..def
             },
             Container::Bordered => container::Appearance {
-                border_color: change_color_by_type(theme_type, self.palette().base.foreground, 0.1)
-                    .into(),
+                border_color: change_color_by_type(theme_type, self.palette().base.foreground, 0.1),
                 border_width: 1.0,
                 border_radius: 4.0,
                 ..def

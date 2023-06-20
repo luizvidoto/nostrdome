@@ -1,6 +1,6 @@
 use chrono::{NaiveDateTime, Utc};
 use iced::widget::image::Handle;
-use nostr::prelude::{relay, FromBech32, ToBech32};
+use nostr::prelude::{FromBech32, ToBech32};
 use nostr::EventId;
 use nostr::{secp256k1::XOnlyPublicKey, Tag};
 use serde::{Deserialize, Serialize};
@@ -30,13 +30,13 @@ pub enum Error {
     NotFoundContact(String),
 
     #[error("Other type of Tag")]
-    TagToContactError,
+    TagToContact,
 
     #[error("Sqlx error: {0}")]
-    SqlxError(#[from] sqlx::Error),
+    Sqlx(#[from] sqlx::Error),
 
     #[error("{0}")]
-    FromProfileCacheError(#[from] crate::db::profile_cache::Error),
+    FromProfileCache(#[from] crate::db::profile_cache::Error),
 
     #[error("Error parsing url: {0}")]
     FromUrlParse(#[from] url::ParseError),
@@ -113,7 +113,7 @@ impl DbContact {
 
     pub fn new(pubkey: &XOnlyPublicKey) -> Self {
         Self {
-            pubkey: pubkey.clone(),
+            pubkey: *pubkey,
             relay_url: None,
             petname: None,
             status: ContactStatus::Unknown,
@@ -143,12 +143,12 @@ impl DbContact {
                 }
 
                 if let Some(petname) = alias {
-                    contact = contact.with_petname(&petname);
+                    contact = contact.with_petname(petname);
                 }
 
                 Ok(contact)
             }
-            _ => Err(Error::TagToContactError),
+            _ => Err(Error::TagToContact),
         }
     }
 
@@ -267,20 +267,19 @@ impl DbContact {
     ) -> Result<Handle, BackendClosed> {
         if let Some(cache) = &self.profile_cache {
             let kind = ImageKind::Profile;
+
             if let Some(img_cache) = &cache.profile_pic_cache {
                 let path = img_cache.sized_image(size);
                 return Ok(Handle::from_path(path));
+            } else if let Some(image_url) = &cache.metadata.picture {
+                conn.send(net::ToBackend::DownloadImage {
+                    image_url: image_url.to_owned(),
+                    kind,
+                    identifier: self.pubkey.to_string(),
+                    event_hash: cache.event_hash.to_owned(),
+                })?;
             } else {
-                if let Some(image_url) = &cache.metadata.picture {
-                    conn.send(net::ToBackend::DownloadImage {
-                        image_url: image_url.to_owned(),
-                        kind,
-                        identifier: self.pubkey.to_string(),
-                        event_hash: cache.event_hash.to_owned(),
-                    })?;
-                } else {
-                    tracing::debug!("Contact don't have profile image");
-                }
+                tracing::debug!("Contact don't have profile image");
             }
         } else {
             tracing::debug!("no profile cache for contact: {}", self.pubkey.to_string());
@@ -323,8 +322,8 @@ impl DbContact {
         let output =
             sqlx::query("INSERT INTO contact (pubkey, created_at, updated_at) VALUES (?, ?, ?);")
                 .bind(&pubkey.to_string())
-                .bind(&utc_now.timestamp_millis())
-                .bind(&utc_now.timestamp_millis())
+                .bind(utc_now.timestamp_millis())
+                .bind(utc_now.timestamp_millis())
                 .execute(pool)
                 .await?;
 
@@ -346,11 +345,10 @@ impl DbContact {
         let mut db_contact = if result.is_none() {
             let last_insert_rowid = Self::insert(pool, pubkey).await?;
             let sql = format!("{} WHERE id = ?", Self::FETCH_QUERY);
-            let db_contact = sqlx::query_as::<_, DbContact>(&sql)
+            sqlx::query_as::<_, DbContact>(&sql)
                 .bind(last_insert_rowid)
                 .fetch_one(pool)
-                .await?;
-            db_contact
+                .await?
         } else {
             result.unwrap()
         };

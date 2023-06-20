@@ -12,4 +12,4 @@ CREATE TABLE IF NOT EXISTS channel_cache (
 );
 
 -- Channel Cache Indexes
-CREATE UNIQUE INDEX IF NOT EXISTS updated_event_hash_index ON channel_cache(updated_event_hash);
+CREATE INDEX IF NOT EXISTS updated_event_hash_index ON channel_cache(updated_event_hash);

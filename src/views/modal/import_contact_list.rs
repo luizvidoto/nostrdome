@@ -77,13 +77,10 @@ impl<M: Clone + Debug + 'static + Send> ModalView for ImportContactList<M> {
         event: BackendEvent,
         _conn: &mut BackEndConnection,
     ) -> Result<(), BackendClosed> {
-        match event {
-            BackendEvent::RFDPickedFile(path) => {
-                self.handle_file_importer_message(&path);
-                self.file_importer
-                    .update(async_file_importer::Message::UpdateFilePath(path), _conn)?;
-            }
-            _ => (),
+        if let BackendEvent::RFDPickedFile(path) = event {
+            self.handle_file_importer_message(&path);
+            self.file_importer
+                .update(async_file_importer::Message::UpdateFilePath(path), _conn)?;
         }
         Ok(())
     }

@@ -1,8 +1,7 @@
 use crate::net::ImageSize;
 
-pub(crate) const YMD_FORMAT: &'static str = "%Y-%m-%d";
-pub(crate) const APP_PROJECT_DIRS: (&'static str, &'static str, &'static str) =
-    ("com.nostrtalk", "", "NostrTalk");
+pub(crate) const YMD_FORMAT: &str = "%Y-%m-%d";
+pub(crate) const APP_PROJECT_DIRS: (&str, &str, &str) = ("com.nostrtalk", "", "NostrTalk");
 pub(crate) const WELCOME_IMAGE: &[u8] = include_bytes!("../assets/welcome_img.jpg");
 pub(crate) const RELAYS_IMAGE: &[u8] = include_bytes!("../assets/relays_img_2.jpg");
 // pub(crate) const CONTACTS_IMAGE: &[u8] = include_bytes!("../assets/contacts_img_3.png");
@@ -44,13 +43,13 @@ pub const fn default_channel_image(size: ImageSize) -> &'static [u8] {
 }
 
 pub(crate) const NOSTRTALK_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub(crate) const GITHUB_REPO: &'static str = "https://github.com/luizvidoto/nostrtalk";
-pub(crate) const BITCOIN_ADDRESS: &'static str = "bc1qr7pavwv0m05gz7x92keuwyqmr6a2yg4jd8vwze";
-pub(crate) const LIGHTNING_ADDRESS: &'static str =
+pub(crate) const GITHUB_REPO: &str = "https://github.com/luizvidoto/nostrtalk";
+pub(crate) const BITCOIN_ADDRESS: &str = "bc1qr7pavwv0m05gz7x92keuwyqmr6a2yg4jd8vwze";
+pub(crate) const LIGHTNING_ADDRESS: &str =
     "LNURL1DP68GURN8GHJ7EM9W3SKCCNE9E3K7MF0D3H82UNVWQHKU6TRDD5XUARKHTW6ZP";
-pub(crate) const TT_LINK: &'static str = "https://twitter.com/nickhntv";
-pub(crate) const NOSTR_RESOURCES_LINK: &'static str = "https://nostr-resources.com";
-pub(crate) const RELAY_SUGGESTIONS: [&'static str; 18] = [
+pub(crate) const TT_LINK: &str = "https://twitter.com/nickhntv";
+pub(crate) const NOSTR_RESOURCES_LINK: &str = "https://nostr-resources.com";
+pub(crate) const RELAY_SUGGESTIONS: [&str; 18] = [
     "ws://192.168.15.151:8080",
     "ws://192.168.15.119:8080",
     "wss://relay.plebstr.com",
@@ -71,4 +70,4 @@ pub(crate) const RELAY_SUGGESTIONS: [&'static str; 18] = [
     "wss://nostr.swiss-enigma.ch",
 ];
 
-pub(crate) const NIPS_LIST_MARKDOWN: &'static str = include_str!("../assets/nips.md");
+pub(crate) const NIPS_LIST_MARKDOWN: &str = include_str!("../assets/nips.md");

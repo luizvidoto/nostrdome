@@ -298,16 +298,13 @@ impl<M: Clone + Debug + 'static + Send> ModalView for ContactDetails<M> {
         event: BackendEvent,
         conn: &mut BackEndConnection,
     ) -> Result<(), BackendClosed> {
-        match event {
-            BackendEvent::ImageDownloaded(image) => {
-                if let Some(db_contact) = &self.db_contact {
-                    if db_contact.get_profile_event_hash() == Some(image.event_hash) {
-                        self.profile_img_handle =
-                            Some(db_contact.profile_image(ImageSize::Medium, conn)?)
-                    }
+        if let BackendEvent::ImageDownloaded(image) = event {
+            if let Some(db_contact) = &self.db_contact {
+                if db_contact.get_profile_event_hash() == Some(image.event_hash) {
+                    self.profile_img_handle =
+                        Some(db_contact.profile_image(ImageSize::Medium, conn)?)
                 }
             }
-            _ => (),
         }
         Ok(())
     }

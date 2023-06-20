@@ -11,13 +11,13 @@ pub enum Error {
     InvalidUrl(#[from] url::ParseError),
 
     #[error("Sqlx error: {0}")]
-    SqlxError(#[from] sqlx::Error),
+    Sqlx(#[from] sqlx::Error),
 
     #[error("Relay not found: {0}")]
     RelayNotFound(String),
 
     #[error("Serialize error: {0}")]
-    SerializeError(#[from] serde_json::Error),
+    Serialize(#[from] serde_json::Error),
 }
 
 #[derive(Debug, Clone)]
@@ -62,10 +62,10 @@ impl DbRelay {
     pub async fn update(pool: &SqlitePool, relay: &DbRelay) -> Result<(), Error> {
         let sql = "UPDATE relay SET read=?, write=?, advertise=? WHERE id=?";
         sqlx::query(sql)
-            .bind(&relay.read)
-            .bind(&relay.write)
-            .bind(&relay.advertise)
-            .bind(&relay.id)
+            .bind(relay.read)
+            .bind(relay.write)
+            .bind(relay.advertise)
+            .bind(relay.id)
             .execute(pool)
             .await?;
         Ok(())

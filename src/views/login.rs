@@ -13,7 +13,7 @@ use crate::{
     widget::Element,
 };
 
-use super::{route::Route, RouterCommand, RouterMessage};
+use super::{route::Route, GoToView, RouterCommand};
 
 #[derive(Debug, Clone)]
 pub struct BasicProfile {
@@ -56,24 +56,24 @@ pub enum Message {
 
 #[allow(dead_code)]
 pub enum State {
-    ChooseAccount,
-    CreateAccount {
+    Choose,
+    Create {
         name: String,
         about: String,
         profile_picture: String,
         is_profile_pic_invalid: bool,
     },
-    ImportAccount {
+    Import {
         secret_key_input: String,
         is_invalid: bool,
     },
 }
 impl State {
     pub fn new() -> Self {
-        Self::ChooseAccount
+        Self::Choose
     }
     pub fn import_account() -> Self {
-        Self::ImportAccount {
+        Self::Import {
             secret_key_input: "4510459b74db68371be462f19ef4f7ef1e6c5a95b1d83a7adf00987c51ac56fe"
                 .into(),
             // secret_key_input: "".into(),
@@ -81,7 +81,7 @@ impl State {
         }
     }
     pub fn create_account() -> Self {
-        Self::CreateAccount {
+        Self::Create {
             name: "".into(),
             about: "".into(),
             profile_picture: "".into(),
@@ -104,13 +104,13 @@ impl Route for State {
                 conn.send(ToBackend::QueryFirstLogin)?;
             }
             BackendEvent::FinishedPreparing => {
-                command.change_route(RouterMessage::GoToChat);
+                command.change_route(GoToView::Chat);
             }
             BackendEvent::FirstLoginSuccess => {
-                command.change_route(RouterMessage::GoToWelcome);
+                command.change_route(GoToView::Welcome);
             }
             BackendEvent::CreateAccountSuccess => {
-                command.change_route(RouterMessage::GoToWelcome);
+                command.change_route(GoToView::Welcome);
             }
             _ => (),
         }
@@ -126,12 +126,12 @@ impl Route for State {
         let command = RouterCommand::new();
 
         match self {
-            State::ChooseAccount => match message {
+            State::Choose => match message {
                 Message::ToCreateAccount => *self = Self::create_account(),
                 Message::ToImportAccount => *self = Self::import_account(),
                 _ => (),
             },
-            State::CreateAccount {
+            State::Create {
                 name: name_input,
                 about: about_input,
                 profile_picture: profile_picture_input,
@@ -145,11 +145,11 @@ impl Route for State {
                 }
                 Message::ToChooseAccount => *self = Self::new(),
                 Message::CreateAccountSubmit(profile) => {
-                    conn.send(ToBackend::CreateAccount(profile.into()))?;
+                    conn.send(ToBackend::CreateAccount(profile))?;
                 }
                 _ => (),
             },
-            State::ImportAccount {
+            State::Import {
                 secret_key_input,
                 is_invalid,
             } => match message {
@@ -176,7 +176,7 @@ impl Route for State {
 
     fn view(&self, _selected_theme: Option<style::Theme>) -> Element<Self::Message> {
         let content: Element<_> = match self {
-            State::ChooseAccount => {
+            State::Choose => {
                 let page_title = title("Sign In").center_x();
                 let create_acc_btn = big_button("Create Nostr Account", Message::ToCreateAccount);
                 let import_acc_btn = big_button("Import With Keys", Message::ToImportAccount);
@@ -190,7 +190,7 @@ impl Route for State {
                     .width(Length::Fill)
                     .into()
             }
-            State::CreateAccount {
+            State::Create {
                 name,
                 about,
                 profile_picture,
@@ -231,7 +231,7 @@ impl Route for State {
                 .spacing(20)
                 .into()
             }
-            State::ImportAccount {
+            State::Import {
                 secret_key_input,
                 is_invalid,
             } => {

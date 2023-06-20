@@ -41,31 +41,26 @@ pub struct ChatInfo {
     pub last_message_time: Option<NaiveDateTime>,
 }
 impl ChatInfo {
-    fn should_update(&self, new_time: &NaiveDateTime) -> bool {
-        if let Some(last_time) = self.last_message_time.as_ref() {
-            new_time > last_time
-        } else {
-            true
+    fn should_update(&self, new_date: Option<&NaiveDateTime>) -> bool {
+        if let Some(new_date) = new_date {
+            if let Some(last_time) = self.last_message_time.as_ref() {
+                return new_date > last_time;
+            }
         }
+        true
     }
     pub fn update(&mut self, new_info: ChatInfo) {
-        if let Some(new_time) = &new_info.last_message_time {
-            if self.should_update(new_time) {
-                *self = new_info;
-            }
+        if self.should_update(new_info.last_message_time.as_ref()) {
+            *self = new_info;
         }
     }
     pub fn update_headers(&mut self, msg: &ChatMessage) {
-        if self.should_update(&msg.display_time) {
-            self.last_message = msg.content.to_owned();
-            self.last_message_time = Some(msg.display_time.to_owned());
+        if self.should_update(msg.display_time()) {
+            self.last_message = msg.content().to_owned();
+            self.last_message_time = msg.display_time().cloned();
         }
     }
-    pub(crate) fn add(&mut self, msg: &ChatMessage) {
-        if self.should_update(&msg.display_time) {
-            self.last_message = msg.content.to_owned();
-            self.last_message_time = Some(msg.display_time.to_owned());
-        }
+    fn add(&mut self) {
         self.unseen_messages = (self.unseen_messages + 1).min(100);
     }
 }
@@ -113,10 +108,7 @@ impl ChatContact {
             .height(height as f32);
 
         let btn_content: Element<_> = match self.mode {
-            CardMode::Small => {
-                let content: Element<_> = column![pic_container, self.make_notifications()].into();
-                content.into()
-            }
+            CardMode::Small => column![pic_container, self.make_notifications()].into(),
             CardMode::Full => {
                 // --- TOP ROW ---
                 let last_date_cp = self.make_last_date();
@@ -172,28 +164,29 @@ impl ChatContact {
             .into()
     }
 
-    fn make_last_date<'a>(&'a self) -> Element<'a, MessageWrapper> {
-        if let Some(date) = &self.chat_info.last_message_time {
-            let local_day = from_naive_utc_to_local(*date);
-            let local_now = from_naive_utc_to_local(Utc::now().naive_utc());
-            let date_format = if local_day.day() == local_now.day() {
-                "%H:%M"
-            } else {
-                // TODO: get local system language
-                // settings menu to change it
-                YMD_FORMAT
-            };
-            container(text(&local_day.format(date_format)).size(18.0))
-                .align_x(alignment::Horizontal::Right)
-                .width(Length::Fill)
-                .into()
+    fn make_last_date(&self) -> Element<'_, MessageWrapper> {
+        let Some(date) = &self.chat_info.last_message_time else {
+            return text("").into();
+        };
+
+        let local_day = from_naive_utc_to_local(*date);
+        let local_now = from_naive_utc_to_local(Utc::now().naive_utc());
+        let date_format = if local_day.day() == local_now.day() {
+            "%H:%M"
         } else {
-            text("").into()
-        }
+            // TODO: get local system language
+            // settings menu to change it
+            YMD_FORMAT
+        };
+        container(text(&local_day.format(date_format)).size(18.0))
+            .align_x(alignment::Horizontal::Right)
+            .width(Length::Fill)
+            .into()
     }
 
     pub fn new_message(&mut self, chat_message: ChatMessage) {
-        self.chat_info.add(&chat_message);
+        self.update_headers(chat_message);
+        self.chat_info.add();
     }
     pub fn update_headers(&mut self, chat_message: ChatMessage) {
         self.chat_info.update_headers(&chat_message);
@@ -246,7 +239,7 @@ impl ChatContact {
     }
 
     pub(crate) fn last_message_date(&self) -> Option<NaiveDateTime> {
-        self.chat_info.last_message_time.clone()
+        self.chat_info.last_message_time
     }
 }
 

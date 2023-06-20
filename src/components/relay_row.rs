@@ -111,7 +111,7 @@ impl RelayRow {
         .into()
     }
 
-    pub fn view<'a>(&'a self) -> Element<'a, MessageWrapper> {
+    pub fn view(&self) -> Element<'_, MessageWrapper> {
         let (status_icon, status_text) = self.relay_status_icon();
 
         let mut doc_btn = button(file_icon_regular().size(16))
@@ -210,7 +210,7 @@ impl RelayRow {
         text("").into()
     }
 
-    fn relay_status_icon<'a>(&'a self) -> (Text<'a>, String) {
+    fn relay_status_icon(&self) -> (Text<'_>, String) {
         if let Some(information) = &self.db_relay.information {
             (
                 solid_circle_icon()

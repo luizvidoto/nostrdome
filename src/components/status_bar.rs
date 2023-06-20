@@ -7,7 +7,7 @@ use crate::error::BackendClosed;
 use crate::icon::signal_icon;
 use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
-use crate::views::{RouterCommand, RouterMessage};
+use crate::views::{GoToView, RouterCommand};
 use crate::widget::Element;
 
 #[derive(Debug, Clone)]
@@ -30,14 +30,11 @@ impl StatusBar {
         event: BackendEvent,
         _conn: &mut BackEndConnection,
     ) -> Command<Message> {
-        match event {
-            BackendEvent::GotRelayStatusList(list) => {
-                self.relays_connected = list
-                    .iter()
-                    .filter(|(_url, status)| status.is_connected())
-                    .count();
-            }
-            _ => (),
+        if let BackendEvent::GotRelayStatusList(list) = event {
+            self.relays_connected = list
+                .iter()
+                .filter(|(_url, status)| status.is_connected())
+                .count();
         }
         Command::none()
     }
@@ -48,8 +45,8 @@ impl StatusBar {
     ) -> Result<RouterCommand<Message>, BackendClosed> {
         let mut command = RouterCommand::new();
         match message {
-            Message::GoToAbout => command.change_route(RouterMessage::GoToAbout),
-            Message::GoToNetwork => command.change_route(RouterMessage::GoToNetwork),
+            Message::GoToAbout => command.change_route(GoToView::About),
+            Message::GoToNetwork => command.change_route(GoToView::Network),
             Message::Tick => {
                 conn.send(net::ToBackend::GetRelayStatusList)?;
             }
@@ -67,11 +64,8 @@ impl StatusBar {
             .on_press(Message::GoToAbout)
             .style(style::Button::StatusBarButton);
         let signal = button(
-            row![
-                text(&self.relays_connected).size(18),
-                signal_icon().size(12),
-            ]
-            .align_items(Alignment::Center),
+            row![text(self.relays_connected).size(18), signal_icon().size(12),]
+                .align_items(Alignment::Center),
         )
         .height(Length::Fill)
         .padding([0, 2])

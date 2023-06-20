@@ -1,3 +1,4 @@
+use chrono::NaiveDateTime;
 use futures_util::SinkExt;
 use iced::subscription;
 use nostr::Metadata;
@@ -56,7 +57,6 @@ use crate::net::ntp::spawn_ntp_request;
 use crate::net::reqwest_client::fetch_latest_version;
 use crate::style;
 use crate::types::BackendState;
-use crate::types::ChannelResult;
 use crate::types::ChatMessage;
 use crate::types::PendingEvent;
 use crate::types::PrefixedId;
@@ -113,12 +113,6 @@ pub enum ClientState {
         backend: BackendState,
         notifications: broadcast::Receiver<NotificationEvent>,
     },
-}
-
-pub enum TaskOutput {
-    Ntp(u64, String),
-    LatestVersion(String),
-    ImageDownloaded(ImageDownloaded),
 }
 
 pub fn backend_connect() -> iced::Subscription<BackendEvent> {
@@ -221,7 +215,7 @@ pub fn backend_connect() -> iced::Subscription<BackendEvent> {
                                                 _ = output.send(BackendEvent::LogoutSuccess).await;
                                             }
                                             other => {
-                                                if let Err(e) = process_message(&mut output, &keys, backend, tasks_tx, other).await {
+                                                if let Err(e) = process_message(&mut output, keys, backend, tasks_tx, other).await {
                                                     // depending on the error, restart backend?
                                                     tracing::error!("{}", e);
                                                 }
@@ -260,7 +254,7 @@ pub fn backend_connect() -> iced::Subscription<BackendEvent> {
                                                 }
                                             }
                                             RelayEvent::RelayMessage(message) => {
-                                                if let Err(e) = handle_relay_message(&mut output, &keys, backend, tasks_tx, url, message).await{
+                                                if let Err(e) = handle_relay_message(&mut output, keys, backend, tasks_tx, url, message).await{
                                                     // depending on the error, restart backend?
                                                     tracing::error!("{}", e);
                                                 }
@@ -281,7 +275,7 @@ pub fn backend_connect() -> iced::Subscription<BackendEvent> {
                                 },
                                 task_result = tasks_rx.recv() => {
                                     if let Some(task_result) = task_result {
-                                        if let Err(e) = handle_task_result(&mut output, &keys, backend, task_result).await{
+                                        if let Err(e) = handle_task_result(&mut output, keys, backend, task_result).await{
                                             // depending on the error, restart backend?
                                             tracing::error!("{}", e);
                                         }
@@ -331,29 +325,13 @@ async fn handle_eose(
             }
             SubName::SearchChannels => {
                 // when eose of search_channels, fetch metadata
-                let actions_id = SubscriptionId::generate().to_string();
-                let actions: Vec<_> = backend
-                    .search_channel_ids
-                    .iter()
-                    .map(|channel_id| {
-                        ns_client::Subscription::new(search_channel_details_filter(channel_id))
-                            .eose(Some(Duration::from_secs(5)))
-                            .with_id(SubName::src_channel_details(channel_id).to_string())
-                    })
-                    .collect();
-                backend
-                    .nostr
-                    .relay_eose_actions(&url, &actions_id, actions)?;
                 _ = output
                     .send(BackendEvent::EOSESearchChannels(url.to_owned()))
                     .await;
             }
             SubName::SearchChannelsDetails(channel_id) => {
                 _ = output
-                    .send(BackendEvent::EOSESearchChannelsDetails(
-                        url.to_owned(),
-                        channel_id,
-                    ))
+                    .send(BackendEvent::EOSESearchChannelsDetails(channel_id))
                     .await;
             }
             _other => (),
@@ -375,38 +353,41 @@ pub async fn handle_event(
     if let Some(sub_type) = SubName::from_id(&subscription_id) {
         match sub_type {
             SubName::SearchChannels => {
-                backend.search_channel_ids.insert(ns_event.id.to_owned());
-                let cache = ChannelCache::fetch_insert(backend.cache_pool(), &ns_event).await?;
-                let result = ChannelResult::from_ns_event(url.to_owned(), ns_event, cache);
-                _ = output.send(BackendEvent::SearchChannelResult(result)).await;
-                return Ok(());
+                if let Kind::ChannelCreation = ns_event.kind {
+                    let cache = ChannelCache::fetch_insert(backend.cache_pool(), &ns_event).await?;
+                    // let result = ChannelResult::from_ns_event(url.to_owned(), ns_event, cache);
+                    _ = output
+                        .send(BackendEvent::ChannelSearchCacheCreation(url, cache))
+                        .await;
+                    return Ok(());
+                } else {
+                    return Err(Error::UnexpectedEventKind(ns_event.kind.as_u32()));
+                }
             }
             SubName::SearchChannelsDetails(_prefixed_id) => {
                 let cache_pool = backend.cache_pool();
-                let Some(channel_id) = channel_id_from_tags(&ns_event.tags) else {
+                let Some(_channel_id) = channel_id_from_tags(&ns_event.tags) else {
                     return Err(Error::ChannelIdNotFound(ns_event.id.to_owned()));
                 };
                 match ns_event.kind {
                     Kind::ChannelMetadata => {
                         let cache = ChannelCache::update(cache_pool, &ns_event).await?;
-                        _ = output
-                            .send(BackendEvent::SearchChannelCacheUpdated(channel_id, cache))
-                            .await;
+                        _ = output.send(BackendEvent::ChannelCacheUpdated(cache)).await;
                         return Ok(());
                     }
                     Kind::ChannelMessage => {
                         // Channel messages will be handled like a dm.
                         // Inserted on db_event table then processed.
-                        ChannelCache::insert_member(cache_pool, &channel_id, &ns_event.pubkey)
-                            .await?;
-                        _ = output
-                            .send(BackendEvent::SearchChannelMessage(
-                                channel_id,
-                                ns_event.pubkey,
-                            ))
-                            .await;
+                        // _ = output
+                        //     .send(BackendEvent::SearchChannelMessage(
+                        //         channel_id,
+                        //         ns_event.pubkey,
+                        //     ))
+                        //     .await;
                     }
-                    _ => (),
+                    other => {
+                        return Err(Error::UnexpectedEventKind(other.as_u32()));
+                    }
                 }
             }
             _ => (),
@@ -427,6 +408,11 @@ pub async fn handle_event(
                 let cache = ChannelCache::update(cache_pool, &ns_event).await?;
                 _ = output.send(BackendEvent::ChannelCacheUpdated(cache)).await;
             }
+            Kind::ChannelMessage => {
+                let pool = backend.pool();
+                let cache_pool = backend.cache_pool();
+                handle_channel_message(output, keys, pool, cache_pool, &url, ns_event).await?;
+            }
             Kind::ContactList => {
                 let pool = backend.pool();
                 if let Some(db_event) = received_contact_list(pool, &url, &ns_event).await? {
@@ -438,34 +424,15 @@ pub async fn handle_event(
                 let cache_pool = backend.cache_pool();
                 handle_dm(output, pool, cache_pool, keys, &url, ns_event).await?;
             }
-            other => {
-                let pool = backend.pool();
+            Kind::Metadata => {
                 let cache_pool = backend.cache_pool();
-                if let Some(db_event) = DbEvent::insert(pool, &url, &ns_event).await? {
-                    match other {
-                        Kind::Metadata => {
-                            insert_metadata_event(output, cache_pool, &db_event).await?;
-                        }
-                        Kind::RecommendRelay => {
-                            handle_recommend_relay(db_event).await?;
-                        }
-                        Kind::ChannelCreation => {
-                            // handle it on channel cache
-                        }
-                        Kind::ChannelMetadata => {
-                            // handle it on channel cache
-                        }
-                        Kind::ChannelMessage => {
-                            handle_channel_message(output, keys, pool, cache_pool, &db_event)
-                                .await?;
-                        }
-                        _other_kind => {
-                            _ = output
-                                .send(BackendEvent::OtherKindEventInserted(db_event))
-                                .await;
-                        }
-                    }
-                }
+                insert_metadata_event(output, cache_pool, &url, ns_event).await?;
+            }
+            _other_kind => {
+                tracing::info!("Other kind event: {:?}", _other_kind);
+                // _ = output
+                //     .send(BackendEvent::OtherKindEventInserted(db_event))
+                //     .await;
             }
         }
     }
@@ -496,11 +463,15 @@ async fn handle_relay_message(
                 &error_msg
             );
 
-            if status == false {
+            if !status {
                 _ = output.send(BackendEvent::RelayError(url, error_msg)).await;
                 return Ok(());
             }
 
+            // TODO:
+            // se estou conectado a dois relays e o primeiro me manda um ok
+            // irá tirar este evento do pending e inserir no db
+            // mas o segundo ok não irá fazer nada
             if let Some(pending) = backend.pending_events.remove(&event_hash) {
                 confirm_pending(output, keys, backend, &url, pending).await?;
             }
@@ -547,32 +518,17 @@ async fn confirm_pending(
         match db_event.kind {
             Kind::ContactList => {
                 _ = output
-                    .send(BackendEvent::ConfirmedContactList(db_event.to_owned()))
+                    .send(BackendEvent::ConfirmedContactList(db_event))
                     .await;
             }
             Kind::Metadata => {
-                insert_metadata_event(output, cache_pool, &db_event).await?;
-
-                let is_user = db_event.pubkey == keys.public_key();
-                tracing::debug!(
-                    "Metadata confirmed:  is_users: {} - {:?}",
-                    is_user,
-                    &db_event
-                );
-                _ = output
-                    .send(BackendEvent::ConfirmedMetadata {
-                        db_event: db_event.to_owned(),
-                        is_user,
-                    })
-                    .await;
+                insert_metadata_event(output, cache_pool, url, db_event.to_ns_event()?).await?;
             }
             Kind::EncryptedDirectMessage => {
-                pending_dm_confirmed(output, pool, cache_pool, keys, &db_event).await?;
-                // _ = output.send(BackendEvent::ConfirmedDM(chat_message)).await;
-                return Ok(());
+                pending_dm_confirmed(output, pool, keys, &db_event).await?;
             }
             _ => {
-                return Err(Error::NotSubscribedToKind(db_event.kind.clone()));
+                return Err(Error::NotSubscribedToKind(db_event.kind));
             }
         }
     }
@@ -650,6 +606,12 @@ async fn handle_relay_info(
     Ok(())
 }
 
+pub enum TaskOutput {
+    Ntp(u64, String),
+    LatestVersion(String),
+    ImageDownloaded(ImageDownloaded),
+}
+
 async fn handle_task_result(
     output: &mut futures::channel::mpsc::Sender<BackendEvent>,
     _keys: &Keys,
@@ -666,7 +628,6 @@ async fn handle_task_result(
             _ = output
                 .send(BackendEvent::NtpInfo {
                     last_ntp_offset,
-                    ntp_offset,
                     ntp_server,
                 })
                 .await;
@@ -739,7 +700,6 @@ pub enum BackendEvent {
     // --- Config ---
     NtpInfo {
         last_ntp_offset: i64,
-        ntp_offset: Option<i64>,
         ntp_server: Option<String>,
     },
     Connected(BackEndConnection),
@@ -751,6 +711,7 @@ pub enum BackendEvent {
     LogoutSuccess,
     ShutdownDone,
 
+    PendingChannelMsg(EventId, ChatMessage),
     PendingDM(DbContact, ChatMessage),
     ReceivedDM {
         relay_url: Url,
@@ -758,13 +719,10 @@ pub enum BackendEvent {
         chat_message: ChatMessage,
     },
     ReceivedContactList,
+
     // --- Confirmed Events ---
-    ConfirmedDM(ChatMessage),
+    ConfirmedDM(EventId, DbMessage, String),
     ConfirmedContactList(DbEvent),
-    ConfirmedMetadata {
-        db_event: DbEvent,
-        is_user: bool,
-    },
 
     // --- RFD ---
     RFDPickedFile(PathBuf),
@@ -772,23 +730,18 @@ pub enum BackendEvent {
     RFDCancelPick,
     RFDSavedFile(PathBuf),
 
-    SearchingForChannels,
-    EOSESearchChannels(Url),
-    SearchChannelResult(ChannelResult),
-    SearchChannelCacheUpdated(EventId, ChannelCache),
-    SearchChannelMessage(EventId, XOnlyPublicKey),
-    EOSESearchChannelsDetails(Url, PrefixedId),
     LoadingChannelDetails(Url, EventId),
-    ChannelConfirmed(ChannelCache),
-    ChannelUpdated(ChannelCache),
     GotChannelMessages(EventId, Vec<ChatMessage>),
-    ReceivedChannelMessage(ChatMessage),
+    ReceivedChannelMessage(EventId, ChatMessage),
     ChannelSubscribed(EventId),
     ChannelUnsubscribed(EventId),
     GotSubscribedChannels(Vec<ChannelCache>),
     ChannelCacheUpdated(ChannelCache),
+
+    ChannelSearchCacheCreation(Url, ChannelCache),
+    EOSESearchChannels(Url),
+    EOSESearchChannelsDetails(PrefixedId),
     GotChannelCache(ChannelCache),
-    GotChannelMembers(Vec<ProfileCache>),
 }
 
 #[derive(Debug, Clone)]
@@ -806,7 +759,6 @@ pub enum ToBackend {
     FetchRelayResponsesContactList,
     FetchRelays,
     FetchRelay(Url),
-    FetchMessages(DbContact),
     AddRelay(Url),
     DeleteRelay(Url),
     ToggleRelayRead(DbRelay),
@@ -820,6 +772,7 @@ pub enum ToBackend {
     DeleteContact(DbContact),
     ImportContacts(Vec<DbContact>, bool),
 
+    FetchMessages(DbContact),
     GetNtpInfo,
     GetUserProfileMeta,
     UpdateUserProfileMeta(Metadata),
@@ -829,8 +782,9 @@ pub enum ToBackend {
     FetchChatInfo(DbContact),
     FetchContactWithMetadata(XOnlyPublicKey),
     SendDM(DbContact, String),
+    SendChannelMessage(EventId, String),
     CreateChannel,
-    FetchMoreMessages(DbContact, ChatMessage),
+    FetchMoreMessages(DbContact, NaiveDateTime),
     ChooseFile(Option<FileFilter>),
     LoginWithSK(Keys),
     CreateAccount(BasicProfile),
@@ -852,9 +806,9 @@ pub enum ToBackend {
 
     SubscribeToChannel(nostr::EventId),
     UnsubscribeToChannel(nostr::EventId),
-    FetchChannelMembers(EventId),
     FetchSubscribedChannels,
     FetchChannelCache(EventId),
+    SubscribeToChannelDetails(Url, Vec<EventId>),
 }
 
 pub async fn process_message(
@@ -990,7 +944,6 @@ pub async fn process_message(
             _ = output
                 .send(BackendEvent::NtpInfo {
                     last_ntp_offset,
-                    ntp_offset,
                     ntp_server,
                 })
                 .await;
@@ -1078,21 +1031,18 @@ pub async fn process_message(
             }
         }
         ToBackend::FetchRelayResponsesChatMsg(chat_message) => {
-            // let pool = backend.pool();
-            // if let Some(db_message) = DbMessage::fetch_one(pool, chat_message.msg_id).await? {
-            //     if let Some(confirmation) = db_message.confirmation_info {
-            //         let all_relays = DbRelay::fetch(pool).await?;
-            //         let responses =
-            //             DbRelayResponse::fetch_by_event(pool, confirmation.event_id).await?;
-            //         _ = output
-            //             .send(BackendEvent::GotRelayResponses {
-            //                 responses,
-            //                 all_relays,
-            //                 chat_message,
-            //             })
-            //             .await;
-            //     }
-            // }
+            let pool = backend.pool();
+            if let Some(event_id) = chat_message.event_id() {
+                let all_relays = DbRelay::fetch(pool).await?;
+                let responses = DbRelayResponse::fetch_by_event(pool, event_id).await?;
+                _ = output
+                    .send(BackendEvent::GotRelayResponses {
+                        responses,
+                        all_relays,
+                        chat_message,
+                    })
+                    .await;
+            }
         }
         ToBackend::SubscribeToChannel(channel_id) => {
             let pool = backend.pool();
@@ -1116,20 +1066,7 @@ pub async fn process_message(
                 .send(BackendEvent::ChannelUnsubscribed(channel_id))
                 .await;
         }
-        ToBackend::FetchChannelMembers(channel_id) => {
-            let cache_pool = backend.cache_pool();
-            // let members = ProfileCache::fetch_channel_members(cache_pool, &channel_id).await?;
-            let members = fetch_channel_members(cache_pool, &channel_id).await?;
-            let mut caches = vec![];
-            for pubkey in &members {
-                if let Ok(Some(profile)) =
-                    ProfileCache::fetch_by_public_key(cache_pool, pubkey).await
-                {
-                    caches.push(profile);
-                }
-            }
-            _ = output.send(BackendEvent::GotChannelMembers(caches)).await;
-        }
+
         ToBackend::FetchChannelCache(channel_id) => {
             if let Some(cache) =
                 ChannelCache::fetch_by_channel_id(backend.cache_pool(), &channel_id).await?
@@ -1186,13 +1123,24 @@ pub async fn process_message(
                 .with_id(SubName::SearchChannels.to_string())
                 .eose(Some(Duration::from_secs(10)));
             backend.nostr.subscribe(&subscription)?;
-            _ = output.send(BackendEvent::SearchingForChannels).await;
         }
         ToBackend::UpdateUserProfileMeta(profile_meta) => {
             backend.new_profile_event(keys, &profile_meta).await?;
-            // _ = output
-            //     .send(BackendEvent::PendingMetadata(pending_event))
-            //     .await;
+        }
+        ToBackend::SubscribeToChannelDetails(url, channel_ids) => {
+            let actions_id = SubscriptionId::generate().to_string();
+            let actions: Vec<_> = channel_ids
+                .iter()
+                .map(|channel_id| {
+                    ns_client::Subscription::new(search_channel_details_filter(channel_id))
+                        .eose(Some(Duration::from_secs(5)))
+                        .with_id(SubName::src_channel_details(channel_id).to_string())
+                })
+                .collect();
+
+            backend
+                .nostr
+                .relay_eose_actions(&url, &actions_id, actions)?;
         }
         ToBackend::QueryFirstLogin => {
             let pool = backend.pool();
@@ -1214,11 +1162,10 @@ pub async fn process_message(
             let pool = backend.pool();
 
             let messages = DbChannelMessage::fetch(pool, &channel_id).await?;
-            let messages: Vec<ChatMessage> = messages.into_iter().map(Into::into).collect();
 
-            _ = output
-                .send(BackendEvent::GotChannelMessages(channel_id, messages))
-                .await;
+            // _ = output
+            //     .send(BackendEvent::GotChannelMessages(channel_id, messages))
+            //     .await;
         }
         ToBackend::FetchMessages(db_contact) => {
             let pool = backend.pool();
@@ -1232,10 +1179,10 @@ pub async fn process_message(
             tracing::debug!("Decrypting messages");
             send_got_chat_messages(output, keys, backend, db_contact, &db_messages).await?;
         }
-        ToBackend::FetchMoreMessages(db_contact, first_message) => {
+        ToBackend::FetchMoreMessages(db_contact, first_msg_date) => {
             let pool = backend.pool();
             let db_messages =
-                DbMessage::fetch_chat_more(pool, db_contact.pubkey(), first_message).await?;
+                DbMessage::fetch_chat_more(pool, db_contact.pubkey(), first_msg_date).await?;
 
             // Maybe the message is only seen when scrolling?
             tracing::debug!("Updating unseen messages to marked as seen");
@@ -1243,7 +1190,7 @@ pub async fn process_message(
 
             match db_messages.is_empty() {
                 true => {
-                    // update nostr subscriber??
+                    //TODO: update nostr subscriber??
                 }
                 false => {
                     send_got_chat_messages(output, keys, backend, db_contact, &db_messages).await?;
@@ -1258,26 +1205,31 @@ pub async fn process_message(
         }
 
         ToBackend::FetchChatInfo(db_contact) => {
-            // let pool = backend.pool();
-            // if let Some(db_message) = DbMessage::fetch_chat_last(pool, &db_contact.pubkey()).await?
-            // {
-            //     if let Some(db_event) = DbEvent::fetch_hash(pool, &db_message.event_hash).await? {
-            //         let unseen_messages =
-            //             DbMessage::fetch_unseen_chat_count(pool, &db_contact.pubkey()).await?;
-            //         let tag_info = TagInfo::from_db_event(&db_event)?;
-            //         let decrypted_content = db_message.decrypt_message(&keys, &tag_info)?;
-            //         _ = output
-            //             .send(BackendEvent::GotChatInfo(
-            //                 db_contact,
-            //                 ChatInfo {
-            //                     unseen_messages,
-            //                     last_message: decrypted_content,
-            //                     last_message_time: Some(db_message.display_time()),
-            //                 },
-            //             ))
-            //             .await;
-            //     }
-            // }
+            let pool = backend.pool();
+            if let Some(db_message) = DbMessage::fetch_chat_last(pool, db_contact.pubkey()).await? {
+                if let Some(db_event) = DbEvent::fetch_id(pool, db_message.event_id).await? {
+                    let unseen_messages =
+                        DbMessage::fetch_unseen_chat_count(pool, db_contact.pubkey()).await?;
+                    let tag_info = MessageTagInfo::from_event_tags(
+                        &db_event.event_hash,
+                        &db_event.pubkey,
+                        &db_event.tags,
+                    )?;
+
+                    let decrypted_content = db_message.decrypt_message(keys, &tag_info)?;
+
+                    _ = output
+                        .send(BackendEvent::GotChatInfo(
+                            db_contact,
+                            ChatInfo {
+                                unseen_messages,
+                                last_message: decrypted_content,
+                                last_message_time: Some(db_message.created_at),
+                            },
+                        ))
+                        .await;
+                }
+            }
         }
         ToBackend::FetchAllMessageEvents => {
             let messages =
@@ -1321,9 +1273,12 @@ pub async fn process_message(
             if &keys.public_key() == db_contact.pubkey() {
                 return Err(Error::SameContactInsert);
             }
-            // add or update basic
-            DbContact::upsert_contact(backend.pool(), &db_contact).await?;
+
+            DbContact::insert(backend.pool(), db_contact.pubkey()).await?;
+            DbContact::update(backend.pool(), &db_contact).await?;
+
             backend.new_contact_list_event(keys).await?;
+
             _ = output.send(BackendEvent::ContactCreated(db_contact)).await;
         }
         ToBackend::UpdateContact(db_contact) => {
@@ -1331,7 +1286,9 @@ pub async fn process_message(
                 return Err(Error::SameContactUpdate);
             }
             DbContact::update(backend.pool(), &db_contact).await?;
+
             backend.new_contact_list_event(keys).await?;
+
             _ = output.send(BackendEvent::ContactUpdated(db_contact)).await;
         }
         ToBackend::DeleteContact(db_contact) => {
@@ -1352,23 +1309,28 @@ pub async fn process_message(
             todo!()
         }
 
+        ToBackend::SendChannelMessage(channel_id, raw_content) => {
+            // create a pending event and await confirmation of relays
+            let recommended_relay = UserConfig::get_relay(backend.pool()).await?;
+            let pending_event = backend
+                .new_channel_msg(keys, &channel_id, recommended_relay.as_ref(), &raw_content)
+                .await?;
+
+            let chat_message = ChatMessage::pending(pending_event, &raw_content);
+
+            _ = output
+                .send(BackendEvent::PendingChannelMsg(channel_id, chat_message))
+                .await;
+        }
         ToBackend::SendDM(db_contact, raw_content) => {
             // create a pending event and await confirmation of relays
-            // let pending_event = backend.new_dm(keys, &db_contact, &raw_content).await?;
-            // let pending_msg = DbMessage::insert_pending(
-            //     backend.pool(),
-            //     pending_event,
-            //     &db_contact.pubkey(),
-            //     true,
-            // )
-            // .await?;
+            let pending_event = backend.new_dm(keys, &db_contact, &raw_content).await?;
 
-            // let chat_message =
-            //     ChatMessage::new(&pending_msg, &keys.public_key(), &db_contact, &raw_content);
+            let chat_message = ChatMessage::pending(pending_event, &raw_content);
 
-            // _ = output
-            //     .send(BackendEvent::PendingDM(db_contact, chat_message))
-            //     .await;
+            _ = output
+                .send(BackendEvent::PendingDM(db_contact, chat_message))
+                .await;
         }
     }
 
@@ -1397,26 +1359,26 @@ async fn send_got_chat_messages(
     db_contact: DbContact,
     db_messages: &[DbMessage],
 ) -> Result<(), Error> {
-    // let pool = backend.pool();
-    // let mut chat_messages = vec![];
-    // tracing::debug!("Decrypting messages");
+    let pool = backend.pool();
+    let mut chat_messages = vec![];
+    tracing::debug!("Decrypting messages");
 
-    // for db_message in db_messages {
-    //     if let Some(db_event) = DbEvent::fetch_hash(pool, &db_message.event_hash).await? {
-    //         match decrypt_message(&db_event, db_message, keys, &db_contact) {
-    //             Ok(chat_message) => {
-    //                 chat_messages.push(chat_message);
-    //             }
-    //             Err(e) => {
-    //                 tracing::error!("Failed to decrypt message: {}", e);
-    //             }
-    //         }
-    //     }
-    // }
+    for db_message in db_messages {
+        if let Some(db_event) = DbEvent::fetch_id(pool, db_message.event_id).await? {
+            match decrypt_message(&db_event, db_message, keys, &db_contact) {
+                Ok(chat_message) => {
+                    chat_messages.push(chat_message);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to decrypt message: {}", e);
+                }
+            }
+        }
+    }
 
-    // _ = output
-    //     .send(BackendEvent::GotChatMessages(db_contact, chat_messages))
-    //     .await;
+    _ = output
+        .send(BackendEvent::GotChatMessages(db_contact, chat_messages))
+        .await;
 
     Ok(())
 }
@@ -1430,35 +1392,36 @@ fn decrypt_message(
     let tag_info =
         MessageTagInfo::from_event_tags(&db_event.event_hash, &db_event.pubkey, &db_event.tags)?;
     let decrypted_content = db_message.decrypt_message(keys, &tag_info)?;
-    let chat_message = ChatMessage::new(
-        &db_message,
-        &db_event.pubkey,
-        db_contact,
-        &decrypted_content,
-    );
+
+    let chat_message = if db_message.is_users {
+        ChatMessage::confirmed_users(db_message, &decrypted_content)
+    } else {
+        ChatMessage::confirmed_contacts(db_message, db_contact, &decrypted_content)
+    };
+
     Ok(chat_message)
 }
+
+// async fn pending_users_meta_confirmed() -> Result<(),Error>{
+//     Ok(())
+// }
 
 async fn insert_metadata_event(
     output: &mut futures::channel::mpsc::Sender<BackendEvent>,
     cache_pool: &SqlitePool,
-    db_event: &DbEvent,
+    relay_url: &Url,
+    ns_event: nostr::Event,
 ) -> Result<(), Error> {
-    tracing::debug!(
-        "Received metadata event for public key: {}",
-        db_event.pubkey
-    );
-    tracing::trace!("{:?}", db_event);
+    let pubkey = ns_event.pubkey;
+    tracing::debug!("Received metadata event for public key: {}", &pubkey);
 
-    let rows_changed = ProfileCache::insert(cache_pool, db_event).await?;
+    let rows_changed = ProfileCache::insert(cache_pool, relay_url, ns_event).await?;
 
     if rows_changed == 0 {
         tracing::debug!("Cache already up to date");
     }
 
-    _ = output
-        .send(BackendEvent::UpdatedMetadata(db_event.pubkey))
-        .await;
+    _ = output.send(BackendEvent::UpdatedMetadata(pubkey)).await;
 
     Ok(())
 }
@@ -1468,25 +1431,35 @@ async fn handle_channel_message(
     keys: &Keys,
     pool: &SqlitePool,
     cache_pool: &SqlitePool,
-    db_event: &DbEvent,
+    relay_url: &Url,
+    ns_event: nostr::Event,
 ) -> Result<(), Error> {
-    let is_users = db_event.pubkey == keys.public_key();
-    let ch_msg = DbChannelMessage::insert_confirmed(pool, db_event, is_users).await?;
+    let Some(channel_id) = channel_id_from_tags(&ns_event.tags) else {
+        return Err(Error::ChannelIdNotFound(ns_event.id));
+    };
 
-    ChannelCache::insert_member_from_event(cache_pool, &db_event).await?;
+    if let Some(db_event) = DbEvent::insert(pool, relay_url, &ns_event).await? {
+        let is_users = db_event.pubkey == keys.public_key();
+        let ch_msg = DbChannelMessage::insert_confirmed(pool, &db_event, is_users).await?;
 
-    let _ = output
-        .send(BackendEvent::ReceivedChannelMessage(ch_msg.into()))
-        .await;
+        ChannelCache::insert_member(cache_pool, &channel_id, &db_event.pubkey).await?;
+
+        let _ = output
+            .send(BackendEvent::ReceivedChannelMessage(
+                channel_id,
+                ch_msg.into(),
+            ))
+            .await;
+    }
 
     Ok(())
 }
 
-pub async fn handle_recommend_relay(db_event: DbEvent) -> Result<(), Error> {
-    tracing::debug!("handle_recommend_relay");
-    dbg!(&db_event);
-    Ok(())
-}
+// pub async fn handle_recommend_relay(db_event: DbEvent) -> Result<(), Error> {
+//     tracing::debug!("handle_recommend_relay");
+//     dbg!(&db_event);
+//     Ok(())
+// }
 
 pub async fn _create_channel(_client: &RelayPool) -> Result<BackendEvent, Error> {
     // tracing::debug!("create_channel");
@@ -1503,49 +1476,6 @@ pub async fn _create_channel(_client: &RelayPool) -> Result<BackendEvent, Error>
     // Ok(BackendEvent::ChannelCreated(event_id))
     todo!()
 }
-
-// pub fn add_relays_and_connect(
-//     backend: &mut BackendState,
-//     keys: &Keys,
-//     relays: &[DbRelay],
-//     contact_list: &[DbContact],
-//     last_event: Option<DbEvent>,
-// ) -> Result<(), Error> {
-//     tracing::info!("Adding relays to client: {}", relays.len());
-
-//     // Only adds to the HashMap
-//     for r in relays {
-//         let opts = ns_client::RelayOptions::new(r.read, r.write);
-//         match backend.nostr.add_relay_with_opts(&r.url.to_string(), opts) {
-//             Ok(_) => tracing::debug!("Nostr Client Added Relay: {}", &r.url),
-//             Err(e) => tracing::error!("{}", e),
-//         }
-//     }
-
-//     let contact_list_sub =
-//         Subscription::new(vec![contact_list_filter(keys.public_key(), &last_event)])
-//             .with_id(SubName::ContactList.to_string());
-//     backend.nostr.subscribe(&contact_list_sub)?;
-
-//     let user_meta_sub =
-//         Subscription::new(vec![user_metadata_filter(keys.public_key(), &last_event)])
-//             .with_id(SubName::UserMetadata.to_string())
-//             .eose(Some(Duration::from_secs(30)));
-//     backend.nostr.subscribe(&user_meta_sub)?;
-
-//     let messages_sub = Subscription::new(messages_filter(keys.public_key(), &last_event))
-//         .with_id(SubName::Messages.to_string());
-//     backend.nostr.subscribe(&messages_sub)?;
-
-//     if let Some(filter) = contact_list_metadata_filter(contact_list, &last_event) {
-//         let contact_list_meta_sub =
-//             Subscription::new(vec![filter]).with_id(SubName::ContactListMetadata.to_string());
-//         tracing::debug!("contact_list_meta_sub: {:?}", contact_list_meta_sub);
-//         backend.nostr.subscribe(&contact_list_meta_sub)?;
-//     }
-
-//     Ok(())
-// }
 
 async fn prepare_client(keys: &Keys, backend: &mut BackendState) -> Result<(), Error> {
     let pool = backend.pool();
@@ -1572,7 +1502,7 @@ async fn prepare_client(keys: &Keys, backend: &mut BackendState) -> Result<(), E
     // Only adds to the HashMap
     for r in relays {
         let opts = ns_client::RelayOptions::new(r.read, r.write);
-        match backend.nostr.add_relay_with_opts(&r.url.to_string(), opts) {
+        match backend.nostr.add_relay_with_opts(r.url.as_ref(), opts) {
             Ok(_) => tracing::debug!("Nostr Client Added Relay: {}", &r.url),
             Err(e) => tracing::error!("{}", e),
         }
@@ -1606,7 +1536,7 @@ async fn prepare_client(keys: &Keys, backend: &mut BackendState) -> Result<(), E
 
     if let Some(profile) = backend.create_account.take() {
         let profile_meta: Metadata = profile.into();
-        backend.new_profile_event(&keys, &profile_meta).await?;
+        backend.new_profile_event(keys, &profile_meta).await?;
     }
 
     Ok(())

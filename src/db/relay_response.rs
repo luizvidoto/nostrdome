@@ -17,7 +17,6 @@ pub enum Error {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DbRelayResponse {
-    pub id: Option<i64>,
     pub event_id: i64,
     pub event_hash: EventId,
     pub relay_url: Url,
@@ -26,7 +25,6 @@ pub struct DbRelayResponse {
 impl DbRelayResponse {
     pub fn ok(event_id: i64, event_hash: &EventId, relay_url: &Url) -> Self {
         Self {
-            id: None,
             event_id,
             event_hash: event_hash.to_owned(),
             relay_url: relay_url.to_owned(),
@@ -40,7 +38,6 @@ impl DbRelayResponse {
         error_message: &str,
     ) -> Self {
         Self {
-            id: None,
             event_id,
             event_hash: event_hash.to_owned(),
             relay_url: relay_url.to_owned(),
@@ -86,7 +83,7 @@ impl DbRelayResponse {
         tracing::trace!("Inserting relay response: {:?}", response);
         let (status, error_message) = response.status.to_bool();
 
-        if let Some(_) = Self::fetch_one(pool, &response).await? {
+        if (Self::fetch_one(pool, response).await?).is_some() {
             return Ok(());
         }
 
@@ -150,7 +147,6 @@ impl FromRow<'_, SqliteRow> for DbRelayResponse {
         let error_message = row.get::<Option<String>, &str>("error_message");
         let status = ResponseStatus::from_bool(row.try_get::<bool, &str>("status")?, error_message);
         Ok(DbRelayResponse {
-            id: Some(row.try_get::<i64, &str>("relay_response_id")?),
             event_id: row.try_get::<i64, &str>("event_id")?,
             event_hash,
             relay_url,

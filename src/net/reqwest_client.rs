@@ -10,7 +10,7 @@ use nostr::{EventId, Url};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::io::Cursor;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -27,16 +27,16 @@ pub enum Error {
     InvalidUrl(#[from] url::ParseError),
 
     #[error("{0}")]
-    FromToStrError(#[from] reqwest::header::ToStrError),
+    FromToStr(#[from] reqwest::header::ToStrError),
 
     #[error("Image error: {0}")]
-    FromImageError(#[from] image::error::ImageError),
+    FromImage(#[from] image::error::ImageError),
 
     #[error("Invalid image size: {0:?}")]
     InvalidImageSize(ImageSize),
 
     #[error("Request error: {0}")]
-    FromReqwestError(#[from] reqwest::Error),
+    FromReqwest(#[from] reqwest::Error),
 
     #[error("Not found any releases")]
     RequestReleaseNotFound,
@@ -54,7 +54,7 @@ pub enum Error {
     NotFoundProjectDirectory,
 
     #[error("Request error: {0}")]
-    ReqwestStreamError(reqwest::Error),
+    ReqwestStream(reqwest::Error),
 
     #[error("I/O Error: {0}")]
     Io(#[from] std::io::Error),
@@ -66,7 +66,7 @@ pub enum Error {
     InvalidBase64,
 
     #[error("Base64 decode error: {0}")]
-    FromDecodeError(#[from] base64::DecodeError),
+    FromDecode(#[from] base64::DecodeError),
 
     #[error("Invalid image type: {0}")]
     InvalidImageType(String),
@@ -79,7 +79,7 @@ pub enum ImageSize {
     Original,
 }
 impl ImageSize {
-    pub fn to_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         match self {
             ImageSize::Small => "small",
             ImageSize::Medium => "medium",
@@ -107,7 +107,7 @@ pub enum ImageKind {
     Channel,
 }
 impl ImageKind {
-    pub fn to_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         match self {
             ImageKind::Profile => "profile_1",
             ImageKind::Banner => "banner_1",
@@ -132,7 +132,7 @@ impl ImageKind {
 }
 
 pub fn image_filename(kind: ImageKind, size: ImageSize, image_type: &str) -> String {
-    format!("{}_{}.{}", kind.to_str(), size.to_str(), image_type)
+    format!("{}_{}.{}", kind.as_str(), size.as_str(), image_type)
 }
 
 pub async fn download_image(
@@ -216,12 +216,12 @@ async fn download_image_url(
     // Extract the image type from the content type.
     let content_type_str = content_type.to_str()?;
     let image_type = content_type_str
-        .split("/")
+        .split('/')
         .nth(1)
         .ok_or(Error::ImageInvalidContentType(content_type_str.to_owned()))?;
     let original_path = images_dir.join(image_filename(kind, ImageSize::Original, image_type));
     let mut dest = File::create(&original_path).await?;
-    let mut stream = response.bytes_stream().map_err(Error::ReqwestStreamError);
+    let mut stream = response.bytes_stream().map_err(Error::ReqwestStream);
     while let Some(item) = stream.next().await {
         let chunk = item?;
         dest.write_all(&chunk).await?;
@@ -238,18 +238,18 @@ async fn download_image_url(
 }
 
 pub fn save_dynamic_image(
-    images_dir: &PathBuf,
+    images_dir: &Path,
     image: &DynamicImage,
     kind: ImageKind,
     size: ImageSize,
 ) -> Result<(), Error> {
     let output_filename = image_filename(kind, size, "png");
     tracing::debug!("file: {}", &output_filename);
-    tracing::debug!("resizing: {} - size: {}", kind.to_str(), size.to_str());
+    tracing::debug!("resizing: {} - size: {}", kind.as_str(), size.as_str());
     let output_path = images_dir.join(output_filename);
     let (width, height) = size
         .get_width_height()
-        .ok_or(Error::InvalidImageSize(size.clone()))?;
+        .ok_or(Error::InvalidImageSize(size))?;
     let resized_image = image.resize(width, height, image::imageops::FilterType::Lanczos3);
 
     // Save the resized image as a PNG, regardless of the input format
@@ -259,19 +259,19 @@ pub fn save_dynamic_image(
 }
 
 pub fn resize_and_save_image(
-    original_path: &PathBuf,
-    images_dir: &PathBuf,
+    original_path: &Path,
+    images_dir: &Path,
     kind: ImageKind,
     size: ImageSize,
 ) -> Result<(), Error> {
     let output_filename = image_filename(kind, size, "png");
     tracing::debug!("file: {}", &output_filename);
-    tracing::debug!("resizing: {} - size: {}", kind.to_str(), size.to_str());
+    tracing::debug!("resizing: {} - size: {}", kind.as_str(), size.as_str());
     let output_path = images_dir.join(output_filename);
     let image = image::open(original_path)?;
     let (width, height) = size
         .get_width_height()
-        .ok_or(Error::InvalidImageSize(size.clone()))?;
+        .ok_or(Error::InvalidImageSize(size))?;
     let resized_image = image.resize(width, height, image::imageops::FilterType::Lanczos3);
 
     // Save the resized image as a PNG, regardless of the input format

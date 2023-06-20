@@ -50,16 +50,14 @@ impl<M: Clone + Debug + 'static + Send> ModalView for RelayDocState<M> {
         event: BackendEvent,
         conn: &mut BackEndConnection,
     ) -> Result<(), BackendClosed> {
-        match event {
-            BackendEvent::GotNipsData(nips) => {
-                let mut nips_data = HashMap::new();
-                for data in nips {
-                    nips_data.insert(data.number, data);
-                }
-                self.nips_data = nips_data;
+        if let BackendEvent::GotNipsData(nips) = event {
+            let mut nips_data = HashMap::new();
+            for data in nips {
+                nips_data.insert(data.number, data);
             }
-            _ => (),
+            self.nips_data = nips_data;
         }
+
         Ok(())
     }
     fn update(
@@ -100,20 +98,20 @@ impl<M: Clone + Debug + 'static + Send> ModalView for RelayDocState<M> {
                 if let Some(document) = &information.document {
                     let name_gp = column![
                         text("Name").size(24),
-                        text(&document.name.as_ref().unwrap_or(&"".into())),
+                        text(document.name.as_ref().unwrap_or(&"".into())),
                         Rule::horizontal(5),
                     ]
                     .spacing(5);
 
                     let description_gp = column![
                         text("Description").size(24),
-                        text(&document.description.as_ref().unwrap_or(&"".into())),
+                        text(document.description.as_ref().unwrap_or(&"".into())),
                         Rule::horizontal(5),
                     ]
                     .spacing(5);
 
                     let pubkey_text: Element<_> = if let Some(pubkey) = &document.pubkey {
-                        text_and_copy_btn(&pubkey, CMessage::Copy(pubkey.to_string()))
+                        text_and_copy_btn(pubkey, CMessage::Copy(pubkey.to_string()))
                     } else {
                         text("").into()
                     };
@@ -125,7 +123,7 @@ impl<M: Clone + Debug + 'static + Send> ModalView for RelayDocState<M> {
                     .spacing(5);
 
                     let contact_text = if let Some(contact) = &document.contact {
-                        text_and_copy_btn(&contact, CMessage::Copy(contact.to_string()))
+                        text_and_copy_btn(contact, CMessage::Copy(contact.to_string()))
                     } else {
                         text("").into()
                     };
@@ -150,7 +148,7 @@ impl<M: Clone + Debug + 'static + Send> ModalView for RelayDocState<M> {
                     .spacing(5);
 
                     let software_text = if let Some(software) = &document.software {
-                        text_and_copy_btn(&software, CMessage::Copy(software.to_string()))
+                        text_and_copy_btn(software, CMessage::Copy(software.to_string()))
                     } else {
                         text("").into()
                     };
@@ -163,7 +161,7 @@ impl<M: Clone + Debug + 'static + Send> ModalView for RelayDocState<M> {
 
                     let version_gp = column![
                         text("Version").size(24),
-                        text(&document.version.as_ref().unwrap_or(&"".into())),
+                        text(document.version.as_ref().unwrap_or(&"".into())),
                         Rule::horizontal(5),
                     ]
                     .spacing(5);

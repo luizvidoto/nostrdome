@@ -24,7 +24,7 @@ pub(crate) mod welcome;
 
 pub struct RouterCommand<M> {
     commands: Vec<Command<M>>,
-    router_message: Option<RouterMessage>,
+    router_message: Option<GoToView>,
 }
 impl<M> RouterCommand<M> {
     pub fn new() -> Self {
@@ -36,10 +36,10 @@ impl<M> RouterCommand<M> {
     pub fn push(&mut self, command: Command<M>) {
         self.commands.push(command);
     }
-    pub fn change_route(&mut self, router_message: RouterMessage) {
+    pub fn change_route(&mut self, router_message: GoToView) {
         self.router_message = Some(router_message);
     }
-    pub fn batch(self) -> (Command<M>, Option<RouterMessage>) {
+    pub fn batch(self) -> (Command<M>, Option<GoToView>) {
         (Command::batch(self.commands), self.router_message)
     }
 
@@ -61,27 +61,27 @@ impl<M> RouterCommand<M> {
     }
 }
 
-pub enum RouterMessage {
-    GoToSettingsContacts,
-    GoToChat,
-    GoToChannels,
-    GoToAbout,
-    GoToNetwork,
-    GoToSettings,
-    GoToChatTo(DbContact),
-    GoToWelcome,
-    GoToLogin,
-    GoToLogout,
-    GoBack,
+pub enum GoToView {
+    SettingsContacts,
+    Chat,
+    Channels,
+    About,
+    Network,
+    Settings,
+    ChatTo(DbContact),
+    Welcome,
+    Login,
+    Logout,
+    Back,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    HomeMsg(home::Message),
-    SettingsMsg(settings::Message),
-    LoginMsg(login::Message),
-    LogoutMsg(logout::Message),
-    WelcomeMsg(welcome::Message),
+    Home(Box<home::Message>),
+    Settings(Box<settings::Message>),
+    Login(Box<login::Message>),
+    Logout(Box<logout::Message>),
+    Welcome(Box<welcome::Message>),
 }
 pub struct Router {
     previous_state: Option<ViewState>,
@@ -119,32 +119,30 @@ impl Router {
 
     pub fn change_route(
         &mut self,
-        router_message: RouterMessage,
+        router_message: GoToView,
         conn: &mut BackEndConnection,
     ) -> Result<Command<Message>, BackendClosed> {
         match router_message {
-            RouterMessage::GoToLogout => self.next_state(ViewState::Logout {
+            GoToView::Logout => self.next_state(ViewState::Logout {
                 state: logout::State::new(),
             }),
-            RouterMessage::GoBack => self.back(conn),
-            RouterMessage::GoToSettingsContacts => {
-                self.next_state(ViewState::settings_contacts(conn)?)
-            }
-            RouterMessage::GoToChat => self.next_state(ViewState::chat(conn)?),
-            RouterMessage::GoToChannels => self.next_state(ViewState::channels(conn)?),
-            RouterMessage::GoToAbout => self.next_state(ViewState::settings_about(conn)),
-            RouterMessage::GoToNetwork => self.next_state(ViewState::settings_network(conn)?),
-            RouterMessage::GoToSettings => self.next_state(ViewState::settings(conn)?),
-            RouterMessage::GoToChatTo(db_contact) => {
+            GoToView::Back => self.back(conn),
+            GoToView::SettingsContacts => self.next_state(ViewState::settings_contacts(conn)?),
+            GoToView::Chat => self.next_state(ViewState::chat(conn)?),
+            GoToView::Channels => self.next_state(ViewState::channels(conn)?),
+            GoToView::About => self.next_state(ViewState::settings_about(conn)),
+            GoToView::Network => self.next_state(ViewState::settings_network(conn)?),
+            GoToView::Settings => self.next_state(ViewState::settings(conn)?),
+            GoToView::ChatTo(db_contact) => {
                 let state = ViewState::chat_contact(db_contact, conn)?;
                 self.next_state(state);
             }
-            RouterMessage::GoToLogin => {
+            GoToView::Login => {
                 let (state, command) = ViewState::login(conn);
                 self.next_state(state);
                 return Ok(command);
             }
-            RouterMessage::GoToWelcome => {
+            GoToView::Welcome => {
                 let (state, command) = ViewState::welcome(conn);
                 self.next_state(state);
                 return Ok(command);
@@ -246,19 +244,19 @@ impl Route for ViewState {
     type Message = Message;
     fn subscription(&self) -> Subscription<Self::Message> {
         match self {
-            ViewState::Settings { state } => state.subscription().map(Message::SettingsMsg),
-            ViewState::Home { state } => state.subscription().map(Message::HomeMsg),
-            ViewState::Welcome { state } => state.subscription().map(Message::WelcomeMsg),
+            ViewState::Settings { state } => state.subscription().map(map_settings_msg),
+            ViewState::Home { state } => state.subscription().map(map_home_msg),
+            ViewState::Welcome { state } => state.subscription().map(map_welcome_msg),
             _ => Subscription::none(),
         }
     }
     fn view(&self, selected_theme: Option<style::Theme>) -> Element<'_, Self::Message> {
         match self {
-            Self::Welcome { state } => state.view(selected_theme).map(Message::WelcomeMsg),
-            Self::Home { state } => state.view(selected_theme).map(Message::HomeMsg),
-            Self::Login { state } => state.view(selected_theme).map(Message::LoginMsg),
-            Self::Logout { state } => state.view(selected_theme).map(Message::LogoutMsg),
-            Self::Settings { state } => state.view(selected_theme).map(Message::SettingsMsg),
+            Self::Welcome { state } => state.view(selected_theme).map(map_welcome_msg),
+            Self::Home { state } => state.view(selected_theme).map(map_home_msg),
+            Self::Login { state } => state.view(selected_theme).map(map_login_msg),
+            Self::Logout { state } => state.view(selected_theme).map(map_logout_msg),
+            Self::Settings { state } => state.view(selected_theme).map(map_settings_msg),
         }
     }
     fn backend_event(
@@ -267,17 +265,13 @@ impl Route for ViewState {
         conn: &mut BackEndConnection,
     ) -> Result<RouterCommand<Self::Message>, BackendClosed> {
         let command = match self {
-            ViewState::Logout { state } => {
-                state.backend_event(event, conn)?.map(Message::LogoutMsg)
-            }
-            ViewState::Home { state } => state.backend_event(event, conn)?.map(Message::HomeMsg),
+            ViewState::Logout { state } => state.backend_event(event, conn)?.map(map_logout_msg),
+            ViewState::Home { state } => state.backend_event(event, conn)?.map(map_home_msg),
             ViewState::Settings { state } => {
-                state.backend_event(event, conn)?.map(Message::SettingsMsg)
+                state.backend_event(event, conn)?.map(map_settings_msg)
             }
-            ViewState::Welcome { state } => {
-                state.backend_event(event, conn)?.map(Message::WelcomeMsg)
-            }
-            ViewState::Login { state } => state.backend_event(event, conn)?.map(Message::LoginMsg),
+            ViewState::Welcome { state } => state.backend_event(event, conn)?.map(map_welcome_msg),
+            ViewState::Login { state } => state.backend_event(event, conn)?.map(map_login_msg),
         };
 
         Ok(command)
@@ -290,28 +284,28 @@ impl Route for ViewState {
         let command = 'command: {
             match self {
                 Self::Welcome { state } => {
-                    if let Message::WelcomeMsg(msg) = message {
-                        break 'command state.update(msg, conn)?.map(Message::WelcomeMsg);
+                    if let Message::Welcome(msg) = message {
+                        break 'command state.update(*msg, conn)?.map(map_welcome_msg);
                     }
                 }
                 Self::Home { state } => {
-                    if let Message::HomeMsg(msg) = message {
-                        break 'command state.update(msg, conn)?.map(Message::HomeMsg);
+                    if let Message::Home(msg) = message {
+                        break 'command state.update(*msg, conn)?.map(map_home_msg);
                     }
                 }
                 Self::Login { state } => {
-                    if let Message::LoginMsg(msg) = message {
-                        break 'command state.update(msg, conn)?.map(Message::LoginMsg);
+                    if let Message::Login(msg) = message {
+                        break 'command state.update(*msg, conn)?.map(map_login_msg);
                     }
                 }
                 Self::Logout { state } => {
-                    if let Message::LogoutMsg(msg) = message {
-                        break 'command state.update(msg, conn)?.map(Message::LogoutMsg);
+                    if let Message::Logout(msg) = message {
+                        break 'command state.update(*msg, conn)?.map(map_logout_msg);
                     }
                 }
                 Self::Settings { state } => {
-                    if let Message::SettingsMsg(msg) = message {
-                        break 'command state.update(msg, conn)?.map(Message::SettingsMsg);
+                    if let Message::Settings(msg) = message {
+                        break 'command state.update(*msg, conn)?.map(map_settings_msg);
                     }
                 }
             };
@@ -320,4 +314,20 @@ impl Route for ViewState {
 
         Ok(command)
     }
+}
+
+fn map_settings_msg(message: settings::Message) -> Message {
+    Message::Settings(Box::new(message))
+}
+fn map_login_msg(message: login::Message) -> Message {
+    Message::Login(Box::new(message))
+}
+fn map_logout_msg(message: logout::Message) -> Message {
+    Message::Logout(Box::new(message))
+}
+fn map_home_msg(message: home::Message) -> Message {
+    Message::Home(Box::new(message))
+}
+fn map_welcome_msg(message: welcome::Message) -> Message {
+    Message::Welcome(Box::new(message))
 }

@@ -15,7 +15,7 @@ use crate::views::RouterCommand;
 use crate::widget::Rule;
 use crate::{icon::search_icon, style, widget::Element};
 
-use super::home::HomeRouterMessage;
+use super::home::HomeGoTo;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -40,16 +40,16 @@ impl State {
         &mut self,
         message: Message,
         conn: &mut BackEndConnection,
-    ) -> Result<Option<HomeRouterMessage>, BackendClosed> {
+    ) -> Result<Option<HomeGoTo>, BackendClosed> {
         match message {
             Message::ChannelPressed(result) => {
-                return Ok(Some(HomeRouterMessage::GoToChannel(result)));
+                return Ok(Some(HomeGoTo::Channel(result)));
             }
             Message::SearchInputChanged(text) => {
                 self.search_input_value = text;
             }
             Message::SubmitPress => {
-                self.searching = false;
+                self.searching = true;
                 self.search_results = HashMap::new();
                 conn.send(ToBackend::FindChannels(self.search_input_value.clone()))?;
             }
@@ -65,38 +65,37 @@ impl State {
         let commands = RouterCommand::new();
 
         match event {
-            BackendEvent::SearchingForChannels => {
-                self.searching = true;
-            }
-            BackendEvent::SearchChannelResult(result) => {
+            BackendEvent::ChannelSearchCacheCreation(url, cache) => {
                 self.search_results
-                    .insert(result.channel_id.to_owned(), result);
+                    .insert(cache.channel_id, ChannelResult::from_cache(url, cache));
             }
-            BackendEvent::EOSESearchChannels(_url) => {
-                self.searching = false;
-            }
-            BackendEvent::SearchChannelCacheUpdated(channel_id, cache) => {
-                if let Some(result) = self.search_results.get_mut(&channel_id) {
-                    result.update_cache(cache, conn)?;
+            BackendEvent::ChannelCacheUpdated(new_cache) => {
+                if let Some(result) = self.search_results.get_mut(&new_cache.channel_id) {
+                    result.update_cache(new_cache, conn)?;
+                } else {
+                    tracing::info!("Update cache. not found id: {}", new_cache.channel_id)
                 }
             }
-            BackendEvent::SearchChannelMessage(channel_id, pubkey) => {
-                self.search_results
-                    .get_mut(&channel_id)
-                    .map(|r| r.message(pubkey));
+            BackendEvent::EOSESearchChannels(url) => {
+                self.searching = false;
+                let channel_ids = self.search_results.keys().cloned().collect::<Vec<_>>();
+                conn.send(ToBackend::SubscribeToChannelDetails(url, channel_ids))?;
             }
-            BackendEvent::LoadingChannelDetails(_url, channel_id) => {
-                self.search_results
-                    .get_mut(&channel_id)
-                    .map(|r| r.loading_details());
-            }
-            BackendEvent::EOSESearchChannelsDetails(_url, prefixed_id) => {
+            BackendEvent::EOSESearchChannelsDetails(prefixed_id) => {
                 let channel_id_str = prefixed_id.to_string();
-                for (id, result) in self.search_results.iter_mut() {
-                    if id.to_string().starts_with(&channel_id_str) {
-                        result.done_loading();
-                        break;
+
+                let channel_id = 'ch: {
+                    for (id, result) in self.search_results.iter_mut() {
+                        if id.to_string().starts_with(&channel_id_str) {
+                            result.done_loading();
+                            break 'ch Some(id.to_owned());
+                        }
                     }
+                    None
+                };
+
+                if let Some(channel_id) = channel_id {
+                    conn.send(ToBackend::FetchChannelCache(channel_id))?;
                 }
             }
             BackendEvent::ImageDownloaded(image) => {
@@ -182,7 +181,7 @@ fn channel_card<'a, M: 'a + Clone>(channel: &ChannelResult, on_channel_press: M)
 
     let bottom_row_ct = container(
         row![
-            text(format!("Members: {}", &channel.members.len())).size(14),
+            text(format!("Members: {}", &channel.cache.members.len())).size(14),
             text(format!(
                 "Created: {}",
                 channel.created_at().format(YMD_FORMAT)

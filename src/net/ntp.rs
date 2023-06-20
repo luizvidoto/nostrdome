@@ -165,8 +165,7 @@ fn ntp_addrs() -> Vec<(String, SocketAddr)> {
 fn ntp_total_microseconds(time: sntpc::NtpResult) -> u64 {
     let microseconds = time.sec_fraction() as u64 * 1_000_000u64 / u32::MAX as u64;
     let seconds = time.sec();
-    let total_microseconds = seconds as u64 * 1_000_000u64 + microseconds;
-    total_microseconds
+    seconds as u64 * 1_000_000u64 + microseconds
 }
 
 // Helper function to get total microseconds from SystemTime
@@ -205,8 +204,8 @@ pub fn system_time_to_naive_utc(
         .expect("Time went backwards");
     let secs = duration.as_secs() as i64;
     let nanos = duration.subsec_nanos();
-    Ok(NaiveDateTime::from_timestamp_opt(secs, nanos)
-        .ok_or(NtpError::InvalidTimestampNanos(secs, nanos))?)
+    NaiveDateTime::from_timestamp_opt(secs, nanos)
+        .ok_or(NtpError::InvalidTimestampNanos(secs, nanos))
 }
 
 #[cfg(test)]

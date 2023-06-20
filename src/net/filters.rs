@@ -60,12 +60,10 @@ pub fn user_metadata_filter(pubkey: XOnlyPublicKey, last_event: &Option<DbEvent>
 }
 
 pub fn contact_list_filter(public_key: XOnlyPublicKey, last_event: &Option<DbEvent>) -> Filter {
-    let user_contact_list = Filter::new()
+    Filter::new()
         .author(public_key.to_string())
         .kind(Kind::ContactList)
-        .since(Timestamp::from(to_secs(last_event)));
-
-    user_contact_list
+        .since(Timestamp::from(to_secs(last_event)))
 }
 
 pub fn messages_filter(public_key: XOnlyPublicKey, last_event: &Option<DbEvent>) -> Vec<Filter> {

@@ -113,7 +113,7 @@ pub fn ns_event_to_millis(created_at: nostr::Timestamp) -> i64 {
 }
 
 pub fn ns_event_to_naive(created_at: nostr::Timestamp) -> Result<NaiveDateTime, Error> {
-    Ok(millis_to_naive(ns_event_to_millis(created_at))?)
+    millis_to_naive(ns_event_to_millis(created_at))
 }
 
 pub fn naive_to_event_tt(naive_utc: NaiveDateTime) -> nostr::Timestamp {
@@ -131,12 +131,10 @@ where
 }
 
 pub fn millis_to_naive_or_err(millis: i64, index: &str) -> Result<NaiveDateTime, sqlx::Error> {
-    Ok(
-        millis_to_naive(millis).map_err(|e| sqlx::Error::ColumnDecode {
-            index: index.into(),
-            source: Box::new(e),
-        })?,
-    )
+    millis_to_naive(millis).map_err(|e| sqlx::Error::ColumnDecode {
+        index: index.into(),
+        source: Box::new(e),
+    })
 }
 pub fn public_key_or_err(public_key: &str, index: &str) -> Result<XOnlyPublicKey, sqlx::Error> {
     XOnlyPublicKey::from_str(public_key).map_err(|e| handle_decode_error(e, index))
@@ -157,7 +155,7 @@ pub fn image_kind_or_err(kind: i32, index: &str) -> Result<ImageKind, sqlx::Erro
     ImageKind::from_i32(kind).map_err(|e| handle_decode_error(e, index))
 }
 pub fn relay_doc_or_err(doc: &str, index: &str) -> Result<RelayInformationDocument, sqlx::Error> {
-    serde_json::from_str(&doc).map_err(|e| handle_decode_error(e, index))
+    serde_json::from_str(doc).map_err(|e| handle_decode_error(e, index))
 }
 pub fn message_status_or_err(status: i32, index: &str) -> Result<MessageStatus, sqlx::Error> {
     MessageStatus::from_i32(status).map_err(|e| handle_decode_error(e, index))
@@ -189,6 +187,40 @@ pub fn channel_id_from_tags(tags: &[nostr::Tag]) -> Option<nostr::EventId> {
             None
         }
     })
+}
+
+pub fn channel_msg_builder(
+    channel_id: &EventId,
+    recommended_relay: Option<&Url>,
+    content: &str,
+) -> EventBuilder {
+    let tags = &[nostr::Tag::Event(
+        channel_id.to_owned(),
+        recommended_relay
+            .as_ref()
+            .map(|url| nostr::UncheckedUrl::new(url.to_string())),
+        Some(Marker::Root),
+    )];
+    EventBuilder::new(nostr::Kind::ChannelMessage, content, tags)
+}
+
+pub fn channel_creation_builder(metadata: &ChannelMetadata) -> EventBuilder {
+    EventBuilder::new(nostr::Kind::ChannelCreation, metadata.as_json(), &[])
+}
+
+pub fn channel_metadata_builder(
+    channel_id: &EventId,
+    recommended_relay: Option<&Url>,
+    metadata: &ChannelMetadata,
+) -> EventBuilder {
+    let tags = &[nostr::Tag::Event(
+        channel_id.to_owned(),
+        recommended_relay
+            .as_ref()
+            .map(|url| nostr::UncheckedUrl::new(url.to_string())),
+        None,
+    )];
+    EventBuilder::new(nostr::Kind::ChannelMetadata, metadata.as_json(), tags)
 }
 
 pub fn contact_matches_search_full(contact: &DbContact, search: &str) -> bool {

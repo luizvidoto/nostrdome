@@ -1,6 +1,6 @@
 CREATE TABLE contact (
     id INTEGER PRIMARY KEY,
-    pubkey BLOB NOT NULL,
+    pubkey TEXT NOT NULL UNIQUE,
     status INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -11,4 +11,4 @@ CREATE TABLE contact (
     last_message_date INTEGER
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS pubkey_index ON contact (pubkey);
+CREATE INDEX IF NOT EXISTS pubkey_index ON contact (pubkey);

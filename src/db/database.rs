@@ -49,7 +49,7 @@ async fn db_pool(pubkey: &str) -> Result<SqlitePool, Error> {
         let mut path_ext = String::new();
         for dir in data_dir.iter() {
             if let Some(p) = dir.to_str() {
-                if p.contains("\\") || p.contains("/") {
+                if p.contains('\\') || p.contains('/') {
                     continue;
                 }
                 path_ext.push_str(&format!("/{}", p));
@@ -76,7 +76,7 @@ async fn get_cache_pool() -> Result<SqlitePool, Error> {
         let mut path_ext = String::new();
         for dir in cache_dir.iter() {
             if let Some(p) = dir.to_str() {
-                if p.contains("\\") || p.contains("/") {
+                if p.contains('\\') || p.contains('/') {
                     continue;
                 }
                 path_ext.push_str(&format!("/{}", p));

@@ -1,7 +1,7 @@
 pub mod async_file_importer;
 mod card;
 pub mod chat_contact;
-pub mod chat_list_container;
+pub mod chat_view;
 pub mod contact_list;
 pub mod contact_row;
 mod copy_btn;

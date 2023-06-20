@@ -18,39 +18,12 @@ impl TestApp {
     pub fn cache_pool(&self) -> &SqlitePool {
         &self.backend.cache_pool()
     }
-    // pub async fn drop_database(&self) {
-    //     let mut connection = PgConnection::connect_with(&self.db_config.without_db())
-    //         .await
-    //         .expect("Failed to connect to Postgres.");
-    //     connection
-    //         .execute(&*format!(
-    //             r#"DROP DATABASE "{}" WITH (FORCE);"#,
-    //             self.db_config.database_name
-    //         ))
-    //         .await
-    //         .expect("Failed to drop database.");
-    // }
     pub async fn insert_contacts(&self, contacts: Vec<nostr::Contact>) {
         for contact in contacts {
             // let db_c: DbContact = contact.into();
             DbContact::insert(self.pool(), &contact.pk).await.unwrap();
         }
     }
-    // pub async fn insert_mock_trade(&self, user_id: &Uuid) -> Uuid {
-    //     let trade = Trade::mock();
-    //     let trade_id = database::insert_trade(&self.db_pool, &trade, user_id)
-    //         .await
-    //         .expect("Error inserting a trade for testing");
-    //     trade_id
-    // }
-    // pub async fn insert_mock_execution(&self, user_id: &Uuid, trade_id: &Uuid) -> Uuid {
-    //     let execution = TradeExecution::mock();
-    //     let execution_id =
-    //         database::insert_trade_execution(&self.db_pool, &execution, trade_id, user_id)
-    //             .await
-    //             .expect("Error inserting an execution for testing");
-    //     execution_id
-    // }
 }
 
 pub async fn spawn_app() -> TestApp {

@@ -44,7 +44,7 @@ impl ContactList {
         } else {
             let contact_list = chats
                 .iter()
-                .filter(|chat| chat_matches_search(&chat, &self.search_input))
+                .filter(|chat| chat_matches_search(chat, &self.search_input))
                 .fold(column![].padding(8).spacing(4), |col, chat| {
                     col.push(chat.view(active_idx).map(|m| match m.message {
                         chat_contact::Message::ContactPress(idx) => Message::ContactPress(idx),

@@ -192,7 +192,7 @@ impl button::StyleSheet for Theme {
         });
 
         let changed = button::Appearance {
-            background: background.into(),
+            background,
             ..hovered
         };
 

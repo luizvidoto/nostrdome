@@ -13,7 +13,7 @@ use super::DbEvent;
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Sqlx error: {0}")]
-    SqlxError(#[from] sqlx::Error),
+    Sqlx(#[from] sqlx::Error),
 
     #[error("Not found channel id inside event tags: event_hash: {0}")]
     NotFoundChannelInTags(nostr::EventId),
@@ -88,12 +88,12 @@ impl DbChannelMessage {
                 "#;
 
                 let output = sqlx::query(sql)
-                    .bind(&db_event.event_id)
+                    .bind(db_event.event_id)
                     .bind(&channel_id.to_string())
                     .bind(&db_event.pubkey.to_string())
                     .bind(is_users)
-                    .bind(&db_event.created_at.timestamp_millis())
-                    .bind(&db_event.relay_url.to_string())
+                    .bind(db_event.created_at.timestamp_millis())
+                    .bind(db_event.relay_url.as_ref())
                     .bind(&db_event.content)
                     .execute(pool)
                     .await?;
@@ -117,7 +117,7 @@ impl sqlx::FromRow<'_, SqliteRow> for DbChannelMessage {
         let created_at = millis_to_naive_or_err(created_at, "created_at")?;
 
         let author = &row.try_get::<String, &str>("author")?;
-        let author = public_key_or_err(&author, "author")?;
+        let author = public_key_or_err(author, "author")?;
 
         let channel_id: String = row.try_get("channel_id")?;
         let channel_id = event_hash_or_err(&channel_id, "channel_id")?;

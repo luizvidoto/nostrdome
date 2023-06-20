@@ -11,11 +11,11 @@ use once_cell::sync::Lazy;
 
 use crate::{
     components::{
-        chat_list_container::{self, ChatListContainer},
-        common_scrollable,
+        chat_view::{self, ChatView},
+        common_scrollable, inform_card,
     },
     consts::default_profile_image,
-    db::ProfileCache,
+    db::{ChannelCache, ProfileCache},
     error::BackendClosed,
     net::{BackEndConnection, BackendEvent, ImageSize, ToBackend},
     style::{self, Theme},
@@ -32,7 +32,7 @@ static CHAT_INPUT_ID: Lazy<text_input::Id> = Lazy::new(text_input::Id::unique);
 #[derive(Debug, Clone)]
 pub enum Message {
     MemberPressed(XOnlyPublicKey),
-    ChatListMessage(chat_list_container::Message),
+    ChatView(chat_view::Message),
     BackPressed,
     EnterChannelPressed,
 }
@@ -53,6 +53,13 @@ impl Member {
         default
     }
 
+    fn new(public_key: &XOnlyPublicKey) -> Self {
+        Self {
+            pubkey: public_key.to_owned(),
+            profile: None,
+        }
+    }
+
     fn with_profile(profile: ProfileCache) -> Self {
         Self {
             pubkey: profile.public_key.to_owned(),
@@ -60,37 +67,87 @@ impl Member {
         }
     }
 }
-pub struct State {
-    // pub channel: ChannelResult,
-    pub channel_id: EventId,
-    name: String,
-    is_subscribed: bool,
-    chat_list_container: ChatListContainer,
-    messages: Vec<ChatMessage>,
-    members: HashMap<XOnlyPublicKey, Member>,
+pub enum State {
+    Loading,
+    Loaded {
+        cache: ChannelCache,
+        chat_list_container: ChatView,
+        messages: Vec<ChatMessage>,
+        members: HashMap<XOnlyPublicKey, Member>,
+    },
 }
-impl State {
-    pub fn new(
+pub struct Channel {
+    is_subscribed: bool,
+    channel_id: EventId,
+    state: State,
+}
+impl Channel {
+    pub fn matches_id(&self, channel_id: &EventId) -> bool {
+        &self.channel_id == channel_id
+    }
+    pub fn load(
         channel_id: EventId,
         is_subscribed: bool,
         conn: &mut BackEndConnection,
     ) -> Result<Self, BackendClosed> {
-        conn.send(ToBackend::FetchChannelMembers(channel_id.clone()))?;
-        conn.send(ToBackend::FetchChannelMessages(channel_id.clone()))?;
-        conn.send(ToBackend::FetchChannelCache(channel_id.clone()))?;
+        conn.send(ToBackend::FetchChannelCache(channel_id))?;
+        conn.send(ToBackend::FetchChannelMessages(channel_id))?;
 
         Ok(Self {
-            // channel,
-            channel_id,
-            name: "".into(),
             is_subscribed,
-            chat_list_container: ChatListContainer::new(),
-            messages: vec![],
-            members: HashMap::new(),
+            channel_id,
+            state: State::Loading,
         })
     }
+    pub fn loaded(
+        cache: ChannelCache,
+        is_subscribed: bool,
+        conn: &mut BackEndConnection,
+    ) -> Result<Self, BackendClosed> {
+        conn.send(ToBackend::FetchChannelMessages(cache.channel_id))?;
+
+        let members = cache
+            .members
+            .iter()
+            .map(|public_key| (public_key.to_owned(), Member::new(public_key)))
+            .collect();
+
+        Ok(Self {
+            channel_id: cache.channel_id,
+            is_subscribed,
+            state: State::Loaded {
+                cache,
+                chat_list_container: ChatView::new(),
+                messages: vec![],
+                members,
+            },
+        })
+    }
+    fn update_cache(&mut self, new_cache: ChannelCache) {
+        match &mut self.state {
+            State::Loading { .. } => (),
+            State::Loaded { cache, members, .. } => {
+                *members = new_cache
+                    .members
+                    .iter()
+                    .map(|public_key| (public_key.to_owned(), Member::new(public_key)))
+                    .collect();
+                *cache = new_cache;
+            }
+        }
+    }
+    fn name(&self) -> String {
+        match &self.state {
+            State::Loading { .. } => "Loading...".into(),
+            State::Loaded { cache, .. } => cache
+                .metadata
+                .name
+                .clone()
+                .unwrap_or(cache.channel_id.to_string()),
+        }
+    }
 }
-impl Route for State {
+impl Route for Channel {
     type Message = Message;
 
     fn backend_event(
@@ -101,52 +158,77 @@ impl Route for State {
         let command = RouterCommand::new();
 
         match event {
-            BackendEvent::GotChannelCache(cache) | BackendEvent::ChannelCacheUpdated(cache) => {
-                self.name = cache.metadata.name.unwrap_or("".into());
+            BackendEvent::GotChannelCache(cache) => {
+                *self = Self::loaded(cache, self.is_subscribed, conn)?;
             }
-            BackendEvent::ChannelSubscribed(_channel_id) => {
-                self.is_subscribed = true;
-            }
-            BackendEvent::ChannelUnsubscribed(_channel_id) => {
-                self.is_subscribed = false;
-            }
-            BackendEvent::GotChannelMessages(_channel_id, mut messages) => {
-                messages.iter_mut().for_each(|m| {
-                    if let Some(member) = self.members.get(&m.author) {
-                        m.display_name = member.name();
-                    }
-                });
-                self.messages = messages;
-            }
-            BackendEvent::ReceivedChannelMessage(mut message) => {
-                if let Some(member) = self.members.get(&message.author) {
-                    message.display_name = member.name();
+            BackendEvent::ChannelCacheUpdated(cache) => self.update_cache(cache),
+            BackendEvent::ChannelSubscribed(channel_id) => {
+                if self.matches_id(&channel_id) {
+                    self.is_subscribed = true;
                 }
-                self.messages.push(message);
-                self.messages
-                    .sort_by(|a, b| a.display_time.cmp(&b.display_time))
             }
-            BackendEvent::GotChannelMembers(members) => {
-                self.members = members
-                    .into_iter()
-                    .map(|profile| (profile.public_key.to_owned(), Member::with_profile(profile)))
-                    .collect();
+            BackendEvent::ChannelUnsubscribed(channel_id) => {
+                if self.matches_id(&channel_id) {
+                    self.is_subscribed = false;
+                }
             }
-            BackendEvent::GotProfileCache(pubkey, profile) => {
-                if let Some(member) = self.members.get_mut(&pubkey) {
-                    member.profile = Some(profile);
-                    self.messages.iter_mut().for_each(|m| {
-                        if m.author == pubkey {
-                            m.display_name = member.name();
+            BackendEvent::GotChannelMessages(channel_id, new_messages) => {
+                // messages.iter_mut().for_each(|m| {
+                //     if let Some(member) = self.members.get(&m.author) {
+                //         m.display_name = member.name();
+                //     }
+                // });
+                if self.matches_id(&channel_id) {
+                    match &mut self.state {
+                        State::Loading => (),
+                        State::Loaded { messages, .. } => {
+                            *messages = new_messages;
                         }
-                    });
+                    }
                 }
             }
-            BackendEvent::UpdatedMetadata(pubkey) => {
-                if self.members.contains_key(&pubkey) {
-                    conn.send(ToBackend::FetchProfileCache(pubkey))?;
+            BackendEvent::ReceivedChannelMessage(channel_id, new_message) => {
+                // match &mut message {
+                //     ChatMessage::UserMessage(_) => (),
+                //     ChatMessage::ContactMessage { author, .. } => {
+                //         if let Some(member) = self.members.get(author) {
+                //             message.display_name = member.name();
+                //         }
+                //     }
+                // }
+                if self.matches_id(&channel_id) {
+                    match &mut self.state {
+                        State::Loading => (),
+                        State::Loaded { messages, .. } => {
+                            messages.push(new_message);
+                            messages.sort_by(|a, b| a.display_time().cmp(&b.display_time()))
+                        }
+                    }
                 }
             }
+
+            BackendEvent::UpdatedMetadata(pubkey) => match &mut self.state {
+                State::Loading => (),
+                State::Loaded { members, .. } => {
+                    if members.contains_key(&pubkey) {
+                        conn.send(ToBackend::FetchProfileCache(pubkey))?;
+                    }
+                }
+            },
+            BackendEvent::GotProfileCache(pubkey, profile) => match &mut self.state {
+                State::Loading => (),
+                State::Loaded {
+                    members, messages, ..
+                } => {
+                    if let Some(member) = members.get_mut(&pubkey) {
+                        *member = Member::with_profile(profile);
+
+                        messages.iter_mut().for_each(|m| {
+                            m.update_display_name(&member.pubkey, member.name());
+                        });
+                    }
+                }
+            },
             _ => {}
         }
 
@@ -167,34 +249,34 @@ impl Route for State {
             }
             Message::BackPressed => {
                 // Todo: make go back work
-                command.change_route(super::RouterMessage::GoToChat);
+                command.change_route(super::GoToView::Chat);
             }
             Message::EnterChannelPressed => {
                 conn.send(ToBackend::SubscribeToChannel(self.channel_id.to_owned()))?;
             }
-            Message::ChatListMessage(ch_msg) => match ch_msg {
-                chat_list_container::Message::DMSentPress(_) => tracing::info!("DM sent!"),
-                chat_list_container::Message::DMNMessageChange(_) => {
+            Message::ChatView(ch_msg) => match ch_msg {
+                chat_view::Message::DMSentPress(_) => tracing::info!("DM sent!"),
+                chat_view::Message::DMNMessageChange(_) => {
                     tracing::info!("DMNMessageChange")
                 }
-                chat_list_container::Message::GotChatSize(_, _) => tracing::info!("GotChatSize"),
-                chat_list_container::Message::Scrolled(_) => tracing::info!("Scrolled"),
-                chat_list_container::Message::OpenContactProfile => {
+                chat_view::Message::GotChatSize(_, _) => tracing::info!("GotChatSize"),
+                chat_view::Message::Scrolled(_) => tracing::info!("Scrolled"),
+                chat_view::Message::OpenContactProfile => {
                     tracing::info!("OpenContactProfile")
                 }
-                chat_list_container::Message::ChatRightClick(_, _) => {
+                chat_view::Message::ChatRightClick(_, _) => {
                     tracing::info!("ChatRightClick")
                 }
-                chat_list_container::Message::ChannelOpenModalPressed => {
+                chat_view::Message::ChannelOpenModalPressed => {
                     tracing::info!("ChannelOpenModalPressed")
                 }
-                chat_list_container::Message::ChannelSearchPressed => {
+                chat_view::Message::ChannelSearchPressed => {
                     tracing::info!("ChannelSearchPressed")
                 }
-                chat_list_container::Message::ChannelMenuPressed => {
+                chat_view::Message::ChannelMenuPressed => {
                     tracing::info!("ChannelMenuPressed")
                 }
-                chat_list_container::Message::ChannelUserNamePressed(author) => {
+                chat_view::Message::ChannelUserNamePressed(author) => {
                     tracing::info!("ChannelUserNamePressed: {}", author)
                 }
             },
@@ -204,61 +286,70 @@ impl Route for State {
     }
 
     fn view(&self, _selected_theme: Option<Theme>) -> Element<'_, Self::Message> {
-        // let members_list = make_member_list(self.channel.members.iter(), Message::MemberPressed);
+        match &self.state {
+            State::Loading { .. } => inform_card("Loading Channel", "Please wait"),
+            State::Loaded {
+                cache,
+                chat_list_container,
+                messages,
+                members,
+            } => {
+                // let members_list = make_member_list(self.channel.members.iter(), Message::MemberPressed);
 
-        let members_list = self
-            .members
-            .iter()
-            .fold(column![].spacing(5), |col, (_, member)| {
-                col.push(member_btn(member))
-            });
-        let members_list = container(common_scrollable(
-            column![text("Members").size(24), members_list].spacing(10),
-        ))
-        .padding(10)
-        .height(Length::Fill)
-        .width(MEMBERS_LIST_WIDTH)
-        .style(style::Container::Foreground);
+                let members_list = members
+                    .iter()
+                    .fold(column![].spacing(5), |col, (_, member)| {
+                        col.push(member_btn(member))
+                    });
+                let members_list = container(common_scrollable(
+                    column![text("Members").size(24), members_list].spacing(10),
+                ))
+                .padding(10)
+                .height(Length::Fill)
+                .width(MEMBERS_LIST_WIDTH)
+                .style(style::Container::Foreground);
 
-        let chat_view = self
-            .chat_list_container
-            .channel_view(
-                &CHAT_SCROLLABLE_ID,
-                &CHAT_INPUT_ID,
-                &self.messages,
-                &self.name,
-                self.members.len() as i32,
-            )
-            .map(Message::ChatListMessage);
+                let chat_view = chat_list_container
+                    .channel_view(
+                        &CHAT_SCROLLABLE_ID,
+                        &CHAT_INPUT_ID,
+                        messages,
+                        &self.name(),
+                        members.len() as i32,
+                    )
+                    .map(Message::ChatView);
 
-        let content = row![members_list, chat_view];
+                let content = row![members_list, chat_view];
 
-        let show_join: Element<_> = if self.is_subscribed {
-            text("").into()
-        } else {
-            let back_btn = button("Back")
-                .on_press(Message::BackPressed)
-                .style(style::Button::HighlightButton);
-            let subscribe_btn = button(text(&format!("Enter {}", self.name)))
-                .on_press(Message::EnterChannelPressed)
-                .style(style::Button::HighlightButton);
-            container(
-                row![
-                    back_btn,
-                    Space::with_width(Length::Fill),
-                    text("Subscribe to this channel").style(style::Text::Color(Color::WHITE)),
-                    Space::with_width(10),
-                    subscribe_btn,
-                    Space::with_width(Length::Fill)
-                ]
-                .align_items(alignment::Alignment::Center),
-            )
-            .style(style::Container::Highlight)
-            .padding(10)
-            .into()
-        };
+                let show_join: Element<_> = if self.is_subscribed {
+                    text("").into()
+                } else {
+                    let back_btn = button("Back")
+                        .on_press(Message::BackPressed)
+                        .style(style::Button::HighlightButton);
+                    let subscribe_btn = button(text(&format!("Enter {}", self.name())))
+                        .on_press(Message::EnterChannelPressed)
+                        .style(style::Button::HighlightButton);
+                    container(
+                        row![
+                            back_btn,
+                            Space::with_width(Length::Fill),
+                            text("Subscribe to this channel")
+                                .style(style::Text::Color(Color::WHITE)),
+                            Space::with_width(10),
+                            subscribe_btn,
+                            Space::with_width(Length::Fill)
+                        ]
+                        .align_items(alignment::Alignment::Center),
+                    )
+                    .style(style::Container::Highlight)
+                    .padding(10)
+                    .into()
+                };
 
-        column![show_join, content].into()
+                column![show_join, content].into()
+            }
+        }
     }
 }
 
@@ -281,11 +372,3 @@ fn member_btn(member: &Member) -> Element<'_, Message> {
 }
 
 const MEMBERS_LIST_WIDTH: u16 = 200;
-
-// fn make_member_list<'a, M: 'a + Clone, I, F>(list: I, member_press: F) -> Element<'a, M>
-// where
-//     I: IntoIterator<Item = &'a XOnlyPublicKey>,
-//     F: Fn(XOnlyPublicKey) -> M + 'a,
-// {
-
-// }

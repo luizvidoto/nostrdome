@@ -45,7 +45,7 @@ impl checkbox::StyleSheet for Theme {
         };
 
         let from_appearance = checkbox::Appearance {
-            background: background.into(),
+            background,
             ..active
         };
 

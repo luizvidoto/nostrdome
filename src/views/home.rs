@@ -19,10 +19,10 @@ use crate::{
 };
 
 use super::route::Route;
-use super::{channel, chat, color_palettes, find_channels, RouterCommand, RouterMessage};
+use super::{channel, chat, color_palettes, find_channels, GoToView, RouterCommand};
 
-pub enum HomeRouterMessage {
-    GoToChannel(ChannelResult),
+pub enum HomeGoTo {
+    Channel(ChannelResult),
 }
 
 #[derive(Debug, Clone)]
@@ -30,15 +30,13 @@ pub enum Message {
     DMsPressed,
     FindChannelsPressed,
     SettingsPressed,
-    // ThemeStylingMsg(theme_styling::Message),
-    DmsMessage(chat::Message),
-    FindChannelsMessage(find_channels::Message),
-    StatusBarMessage(status_bar::Message),
-    ThemeStylingPressed,
-    ColorPaletteMsg(color_palettes::Message),
     ColorPalettePressed,
-    ChannelMessage(channel::Message),
     MenuChannelBtnPressed(EventId),
+    Dms(chat::Message),
+    FindChannels(find_channels::Message),
+    StatusBar(status_bar::Message),
+    ColorPalette(color_palettes::Message),
+    Channel(channel::Message),
 }
 pub struct State {
     active_view: ViewState,
@@ -87,9 +85,7 @@ impl Route for State {
     fn subscription(&self) -> Subscription<Message> {
         Subscription::batch(vec![
             self.active_view.subscription(),
-            self.status_bar
-                .subscription()
-                .map(Message::StatusBarMessage),
+            self.status_bar.subscription().map(Message::StatusBar),
         ])
     }
     fn backend_event(
@@ -127,8 +123,8 @@ impl Route for State {
 
         let mut commands = self.active_view.backend_event(event.clone(), conn)?;
 
-        let cmd = self.status_bar.backend_event(event.clone(), conn);
-        commands.push(cmd.map(Message::StatusBarMessage));
+        let cmd = self.status_bar.backend_event(event, conn);
+        commands.push(cmd.map(Message::StatusBar));
 
         Ok(commands)
     }
@@ -140,14 +136,6 @@ impl Route for State {
         let mut commands = RouterCommand::new();
 
         match message {
-            Message::ThemeStylingPressed => match self.active_view {
-                // ViewState::ThemeStyling { .. } => (),
-                _ => {
-                    // self.active_view = ViewState::ThemeStyling {
-                    //     state: theme_styling::State::new(conn),
-                    // }
-                }
-            },
             Message::ColorPalettePressed => match self.active_view {
                 ViewState::ColorPalettes { .. } => (),
                 _ => {
@@ -173,31 +161,32 @@ impl Route for State {
                 }
             },
             Message::MenuChannelBtnPressed(channel_id) => match &mut self.active_view {
-                ViewState::Channel { state } if state.channel_id == channel_id => (),
+                ViewState::Channel { state } if state.matches_id(&channel_id) => (),
                 _ => {
                     self.active_view = ViewState::Channel {
-                        state: channel::State::new(channel_id, true, conn)?,
+                        state: channel::Channel::load(channel_id, true, conn)?,
                     }
                 }
             },
-            Message::StatusBarMessage(status_msg) => {
+            Message::StatusBar(status_msg) => {
                 return Ok(self
                     .status_bar
                     .update(status_msg, conn)?
-                    .map(Message::StatusBarMessage));
+                    .map(Message::StatusBar));
             }
-            Message::FindChannelsMessage(msg) => {
+            Message::FindChannels(msg) => {
                 if let ViewState::FindChannel { state } = &mut self.active_view {
                     if let Some(router_message) = state.update(msg, conn)? {
                         match router_message {
-                            HomeRouterMessage::GoToChannel(result) => {
+                            HomeGoTo::Channel(result) => {
                                 let is_subscribed = self
                                     .channels_subscribed
                                     .iter()
-                                    .any(|btn| btn.channel_id == result.channel_id);
+                                    .any(|btn| btn.channel_id == result.cache.channel_id);
+
                                 self.active_view = ViewState::Channel {
-                                    state: channel::State::new(
-                                        result.channel_id,
+                                    state: channel::Channel::loaded(
+                                        result.cache,
                                         is_subscribed,
                                         conn,
                                     )?,
@@ -207,20 +196,20 @@ impl Route for State {
                     }
                 }
             }
-            Message::SettingsPressed => commands.change_route(RouterMessage::GoToSettings),
-            Message::ColorPaletteMsg(msg) => {
+            Message::SettingsPressed => commands.change_route(GoToView::Settings),
+            Message::ColorPalette(msg) => {
                 if let ViewState::ColorPalettes { state } = &mut self.active_view {
-                    return Ok(state.update(msg, conn)?.map(Message::ColorPaletteMsg));
+                    return Ok(state.update(msg, conn)?.map(Message::ColorPalette));
                 }
             }
-            Message::ChannelMessage(msg) => {
+            Message::Channel(msg) => {
                 if let ViewState::Channel { state } = &mut self.active_view {
-                    return Ok(state.update(msg, conn)?.map(Message::ChannelMessage));
+                    return Ok(state.update(msg, conn)?.map(Message::Channel));
                 }
             }
-            Message::DmsMessage(msg) => {
+            Message::Dms(msg) => {
                 if let ViewState::DMs { state } = &mut self.active_view {
-                    return Ok(state.update(msg, conn)?.map(Message::DmsMessage));
+                    return Ok(state.update(msg, conn)?.map(Message::Dms));
                 }
             }
         }
@@ -279,7 +268,7 @@ impl Route for State {
         .width(NAVBAR_WIDTH)
         .height(Length::Fill);
 
-        let status_bar = self.status_bar.view().map(Message::StatusBarMessage);
+        let status_bar = self.status_bar.view().map(Message::StatusBar);
 
         let active_view = column![
             container(self.active_view.view(selected_theme))
@@ -348,44 +337,24 @@ fn make_channel_menu_btn<'a, M: 'a + Clone>(
 }
 
 pub enum ViewState {
-    Channel { state: channel::State },
+    Channel { state: channel::Channel },
     ColorPalettes { state: color_palettes::State },
-    // ThemeStyling { state: theme_styling::State },
     DMs { state: chat::State },
     FindChannel { state: find_channels::State },
 }
 impl ViewState {
     pub fn is_dms(&self) -> bool {
-        match self {
-            ViewState::DMs { .. } => true,
-            _ => false,
-        }
+        matches!(self, ViewState::DMs { .. })
     }
     pub fn is_find_channel(&self) -> bool {
-        match self {
-            ViewState::FindChannel { .. } => true,
-            _ => false,
-        }
+        matches!(self, ViewState::FindChannel { .. })
     }
-
-    fn _is_theme_styling(&self) -> bool {
-        // match self {
-        //     ViewState::ThemeStyling { .. } => true,
-        //     _ => false,
-        // }
-        false
-    }
-
     fn is_color_palette_view(&self) -> bool {
-        match self {
-            ViewState::ColorPalettes { .. } => true,
-            _ => false,
-        }
+        matches!(self, ViewState::ColorPalettes { .. })
     }
-
     fn is_channel_selected(&self, channel_id: &EventId) -> bool {
         match self {
-            ViewState::Channel { state } => &state.channel_id == channel_id,
+            ViewState::Channel { state } => state.matches_id(channel_id),
             _ => false,
         }
     }
@@ -399,39 +368,35 @@ impl Route for ViewState {
         conn: &mut BackEndConnection,
     ) -> Result<RouterCommand<Self::Message>, BackendClosed> {
         let command = match self {
-            ViewState::Channel { state } => state
-                .backend_event(event, conn)?
-                .map(Message::ChannelMessage),
-            ViewState::ColorPalettes { state } => state
-                .backend_event(event, conn)?
-                .map(Message::ColorPaletteMsg),
-            ViewState::DMs { state } => state.backend_event(event, conn)?.map(Message::DmsMessage),
-            ViewState::FindChannel { state } => state
-                .backend_event(event, conn)?
-                .map(Message::FindChannelsMessage),
+            ViewState::Channel { state } => state.backend_event(event, conn)?.map(Message::Channel),
+            ViewState::ColorPalettes { state } => {
+                state.backend_event(event, conn)?.map(Message::ColorPalette)
+            }
+            ViewState::DMs { state } => state.backend_event(event, conn)?.map(Message::Dms),
+            ViewState::FindChannel { state } => {
+                state.backend_event(event, conn)?.map(Message::FindChannels)
+            }
         };
 
         Ok(command)
     }
     fn subscription(&self) -> Subscription<Self::Message> {
         match self {
-            ViewState::ColorPalettes { state } => {
-                state.subscription().map(Message::ColorPaletteMsg)
-            }
-            ViewState::Channel { state } => state.subscription().map(Message::ChannelMessage),
-            ViewState::DMs { state } => state.subscription().map(Message::DmsMessage),
+            ViewState::ColorPalettes { state } => state.subscription().map(Message::ColorPalette),
+            ViewState::Channel { state } => state.subscription().map(Message::Channel),
+            ViewState::DMs { state } => state.subscription().map(Message::Dms),
             ViewState::FindChannel { state: _ } => Subscription::none(),
         }
     }
     fn view(&self, selected_theme: Option<style::Theme>) -> Element<Self::Message> {
         match self {
             ViewState::ColorPalettes { state } => {
-                state.view(selected_theme).map(Message::ColorPaletteMsg)
+                state.view(selected_theme).map(Message::ColorPalette)
             }
-            ViewState::Channel { state } => state.view(selected_theme).map(Message::ChannelMessage),
-            ViewState::DMs { state } => state.view(selected_theme).map(Message::DmsMessage),
+            ViewState::Channel { state } => state.view(selected_theme).map(Message::Channel),
+            ViewState::DMs { state } => state.view(selected_theme).map(Message::Dms),
             ViewState::FindChannel { state } => {
-                state.view(selected_theme).map(Message::FindChannelsMessage)
+                state.view(selected_theme).map(Message::FindChannels)
             }
         }
     }

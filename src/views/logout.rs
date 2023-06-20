@@ -5,7 +5,7 @@ use crate::style;
 use crate::widget::Element;
 
 use super::route::Route;
-use super::{RouterCommand, RouterMessage};
+use super::{GoToView, RouterCommand};
 
 #[derive(Debug, Clone)]
 pub enum Message {}
@@ -24,14 +24,15 @@ impl Route for State {
         _conn: &mut BackEndConnection,
     ) -> Result<RouterCommand<Self::Message>, BackendClosed> {
         let mut command = RouterCommand::new();
-        match event {
-            BackendEvent::LogoutSuccess => command.change_route(RouterMessage::GoToLogin),
-            _ => (),
+
+        if let BackendEvent::LogoutSuccess = event {
+            command.change_route(GoToView::Login);
         }
+
         Ok(command)
     }
 
     fn view(&self, _selected_theme: Option<style::Theme>) -> Element<'_, Self::Message> {
-        inform_card("Logging out", "Please wait...").into()
+        inform_card("Logging out", "Please wait...")
     }
 }

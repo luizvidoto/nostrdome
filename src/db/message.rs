@@ -1,8 +1,6 @@
 use super::DbEvent;
-use crate::{
-    types::ChatMessage,
-    utils::{message_status_or_err, millis_to_naive_or_err, public_key_or_err, url_or_err},
-};
+use crate::utils::{message_status_or_err, millis_to_naive_or_err, public_key_or_err, url_or_err};
+use chrono::NaiveDateTime;
 use nostr::{nips::nip04, secp256k1::XOnlyPublicKey, EventId, Keys};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
@@ -17,13 +15,13 @@ pub enum Error {
     NotFoundTag(EventId),
 
     #[error("Sqlx error: {0}")]
-    SqlxError(#[from] sqlx::Error),
+    Sqlx(#[from] sqlx::Error),
 
     #[error("Unkown chat message: from_pubkey:{0} - to_pubkey:{1}")]
     UnknownChatMessage(String, String),
 
     #[error("{0}")]
-    FromDbEventError(#[from] super::event::Error),
+    FromDbEvent(#[from] super::event::Error),
 
     #[error("Can't update message without id")]
     MessageNotInDatabase,
@@ -32,10 +30,10 @@ pub enum Error {
     NotConfirmedEvent(EventId),
 
     #[error("Decryption Error: {0}")]
-    DecryptionError(String),
+    Decryption(String),
 
     #[error("{0}")]
-    FromKeysError(#[from] nostr::key::Error),
+    FromKeys(#[from] nostr::key::Error),
 
     #[error("Not found pending message")]
     NotFoundPendingMessage,
@@ -59,14 +57,11 @@ impl MessageTagInfo {
         tags: &[nostr::Tag],
     ) -> Result<Self, Error> {
         for tag in tags {
-            match tag {
-                nostr::Tag::PubKey(to_pub, _url) => {
-                    return Ok(Self {
-                        from_pubkey: event_pubkey.to_owned(),
-                        to_pubkey: to_pub.clone(),
-                    });
-                }
-                _ => (),
+            if let nostr::Tag::PubKey(to_pubkey, _url) = tag {
+                return Ok(Self {
+                    from_pubkey: event_pubkey.to_owned(),
+                    to_pubkey: *to_pubkey,
+                });
             }
         }
 
@@ -114,14 +109,14 @@ impl DbMessage {
                 &tag_info.to_pubkey,
                 &self.encrypted_content,
             )
-            .map_err(|e| Error::DecryptionError(e.to_string()))
+            .map_err(|e| Error::Decryption(e.to_string()))
         } else {
             nip04::decrypt(
                 &users_secret_key,
                 &tag_info.from_pubkey,
                 &self.encrypted_content,
             )
-            .map_err(|e| Error::DecryptionError(e.to_string()))
+            .map_err(|e| Error::Decryption(e.to_string()))
         }
     }
 
@@ -182,7 +177,7 @@ impl DbMessage {
     pub async fn fetch_chat_more(
         pool: &SqlitePool,
         chat_pubkey: &XOnlyPublicKey,
-        first_message: ChatMessage,
+        first_msg_date: NaiveDateTime,
     ) -> Result<Vec<DbMessage>, Error> {
         let sql = r#"
             SELECT *
@@ -190,9 +185,9 @@ impl DbMessage {
             WHERE chat_pubkey=? and created_at < ? ORDER BY created_at DESC
             LIMIT 100
         "#;
-        let messages = sqlx::query_as::<_, DbMessage>(&sql)
+        let messages = sqlx::query_as::<_, DbMessage>(sql)
             .bind(&chat_pubkey.to_string())
-            .bind(first_message.display_time.timestamp_millis())
+            .bind(first_msg_date.timestamp_millis())
             .fetch_all(pool)
             .await?;
 
@@ -230,11 +225,6 @@ impl DbMessage {
         match Self::fetch_by_event(pool, db_event.event_id).await? {
             Some(db_message) => {
                 tracing::debug!("Message already in database.  {:?}", &db_message);
-
-                // if db_message.confirmation_info.is_none() {
-                //     db_message = Self::confirm_message(pool, db_event).await?;
-                // }
-
                 Ok(db_message)
             }
             None => {
@@ -245,12 +235,12 @@ impl DbMessage {
                 "#;
 
                 sqlx::query(sql)
-                    .bind(&db_event.event_id)
+                    .bind(db_event.event_id)
                     .bind(&db_event.content)
-                    .bind(&chat_pubkey.to_string())
-                    .bind(&is_users)
-                    .bind(&db_event.created_at.timestamp_millis())
-                    .bind(&MessageStatus::Delivered.to_i32())
+                    .bind(chat_pubkey.to_string())
+                    .bind(is_users)
+                    .bind(db_event.created_at.timestamp_millis())
+                    .bind(MessageStatus::Delivered.to_i32())
                     .bind(&db_event.relay_url.to_string())
                     .execute(pool)
                     .await?;
@@ -271,8 +261,8 @@ impl DbMessage {
         let sql = "UPDATE message SET status = ?1 WHERE event_id = ?2";
 
         sqlx::query(sql)
-            .bind(&MessageStatus::Seen.to_i32())
-            .bind(&db_message.event_id)
+            .bind(MessageStatus::Seen.to_i32())
+            .bind(db_message.event_id)
             .execute(pool)
             .await?;
 
@@ -316,13 +306,13 @@ impl DbMessage {
 
 impl sqlx::FromRow<'_, SqliteRow> for DbMessage {
     fn from_row(row: &'_ SqliteRow) -> Result<Self, sqlx::Error> {
-        let created_at = row.try_get::<i64, &str>("created_at")?;
+        let created_at: i64 = row.try_get("created_at")?;
         let created_at = millis_to_naive_or_err(created_at, "created_at")?;
 
         let status: i32 = row.try_get("status")?;
         let status = message_status_or_err(status, "status")?;
 
-        let chat_pubkey = &row.try_get::<String, &str>("chat_pubkey")?;
+        let chat_pubkey: String = row.try_get("chat_pubkey")?;
         let chat_pubkey = public_key_or_err(&chat_pubkey, "chat_pubkey")?;
 
         let relay_url: String = row.try_get("relay_url")?;
@@ -342,9 +332,9 @@ impl sqlx::FromRow<'_, SqliteRow> for DbMessage {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 pub enum MessageStatus {
-    Pending = 0,
-    Delivered = 1,
-    Seen = 2,
+    Pending,
+    Delivered,
+    Seen,
 }
 
 impl MessageStatus {
@@ -356,9 +346,12 @@ impl MessageStatus {
             value => Err(Error::UnknownStatus(value)),
         }
     }
-
     pub fn to_i32(self) -> i32 {
-        self as i32
+        match self {
+            MessageStatus::Pending => 0,
+            MessageStatus::Delivered => 1,
+            MessageStatus::Seen => 2,
+        }
     }
     pub fn is_unseen(&self) -> bool {
         match self {

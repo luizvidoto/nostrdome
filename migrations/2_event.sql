@@ -1,8 +1,8 @@
 CREATE TABLE IF NOT EXISTS event (
     event_id INTEGER PRIMARY KEY,
-    event_hash TEXT NOT NULL,
+    event_hash TEXT NOT NULL UNIQUE,
     -- author pubkey
-    pubkey BLOB NOT NULL,
+    pubkey TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     kind INTEGER NOT NULL,
     -- serialized json of event object 
@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS event (
 );
 
 -- Events Indexes
-CREATE UNIQUE INDEX IF NOT EXISTS event_hash_index ON event(event_hash);
+CREATE INDEX IF NOT EXISTS event_hash_index ON event(event_hash);
 
 CREATE INDEX IF NOT EXISTS pubkey_index ON event(pubkey);
 

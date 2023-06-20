@@ -1,7 +1,6 @@
 use directories::ProjectDirs;
 use std::{fs, io::Write, path::PathBuf};
 use tokio::io::AsyncWriteExt;
-use toml;
 
 use serde::{Deserialize, Serialize};
 
@@ -13,13 +12,13 @@ pub enum Error {
     NotFoundProjectDirectory,
 
     #[error("I/O Error: {0}")]
-    IoError(#[from] std::io::Error),
+    Io(#[from] std::io::Error),
 
     #[error("Deserialize Error: {0}")]
-    DeserializeError(#[from] toml::de::Error),
+    Deserialize(#[from] toml::de::Error),
 
     #[error("Serialize Error: {0}")]
-    SerializeError(#[from] toml::ser::Error),
+    Serialize(#[from] toml::ser::Error),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -74,7 +73,7 @@ impl Config {
             tokio::fs::create_dir(config_dir).await?;
         };
 
-        open_and_write_async(&self, &Self::path()?).await?;
+        open_and_write_async(self, &Self::path()?).await?;
 
         Ok(())
     }

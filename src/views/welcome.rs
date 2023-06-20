@@ -12,16 +12,14 @@ use crate::net::{BackEndConnection, BackendEvent, ToBackend};
 use crate::style;
 use crate::{components::text::title, widget::Element};
 
-use rand::{thread_rng, Rng};
-use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use super::route::Route;
-use super::{RouterCommand, RouterMessage};
+use super::{GoToView, RouterCommand};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    RelayMessage(relay_row::MessageWrapper),
+    RelayRow(Box<relay_row::MessageWrapper>),
     ToNextStep,
     ToPreviousStep,
     Logout,
@@ -51,7 +49,7 @@ impl ModalState {
                 is_invalid,
             } => Modal::new(true, underlay.into(), move || {
                 let mut add_relay_input =
-                    TextInputGroup::new("Relay Address", &relay_url, Message::AddRelayInputChange)
+                    TextInputGroup::new("Relay Address", relay_url, Message::AddRelayInputChange)
                         .placeholder("wss://my-relay.com")
                         .on_submit(Message::AddRelaySubmit(relay_url.clone()));
 
@@ -292,7 +290,11 @@ impl StepView {
                 let relay_rows = relays_added
                     .iter()
                     .fold(column![].spacing(5), |col, relay| {
-                        col.push(relay.relay_welcome().map(Message::RelayMessage))
+                        col.push(
+                            relay
+                                .relay_welcome()
+                                .map(|m| Message::RelayRow(Box::new(m))),
+                        )
                     });
                 let add_other_btn = container(
                     button("Add Other")
@@ -365,10 +367,10 @@ impl StepView {
                     .center_y()
                     .style(style::Container::WelcomeBg2);
 
-                add_relay_modal.view(underlay).into()
+                add_relay_modal.view(underlay)
             }
 
-            StepView::LoadingClient => inform_card("Loading", "Please wait...").into(),
+            StepView::LoadingClient => inform_card("Loading", "Please wait..."),
         }
     }
 }
@@ -381,7 +383,7 @@ impl State {
             step_view: StepView::Welcome,
         }
     }
-    fn to_next_step(&mut self, conn: &mut BackEndConnection) -> Result<(), BackendClosed> {
+    fn next_step(&mut self, conn: &mut BackEndConnection) -> Result<(), BackendClosed> {
         match &self.step_view {
             StepView::Welcome => {
                 self.step_view = StepView::relays_view(conn)?;
@@ -393,7 +395,7 @@ impl State {
         }
         Ok(())
     }
-    fn to_previous_step(&mut self, _conn: &mut BackEndConnection) {
+    fn previous_step(&mut self, _conn: &mut BackEndConnection) {
         match &self.step_view {
             StepView::Welcome => {}
             StepView::Relays { .. } => self.step_view = StepView::Welcome,
@@ -434,7 +436,7 @@ impl Route for State {
                     tracing::error!("Failed to open link: {}", e);
                 }
             }
-            Message::RelayMessage(msg) => {
+            Message::RelayRow(msg) => {
                 if let StepView::Relays { relays_added, .. } = &mut self.step_view {
                     if let Some(row) = relays_added.iter_mut().find(|r| r.id == msg.from) {
                         let _ = row.update(msg.message, conn)?;
@@ -443,12 +445,12 @@ impl Route for State {
             }
             Message::Logout => {
                 conn.send(ToBackend::Logout)?;
-                command.change_route(RouterMessage::GoToLogout);
+                command.change_route(GoToView::Logout);
             }
             Message::ToNextStep => {
-                self.to_next_step(conn)?;
+                self.next_step(conn)?;
             }
-            Message::ToPreviousStep => self.to_previous_step(conn),
+            Message::ToPreviousStep => self.previous_step(conn),
             Message::AddRelay(relay_url) => {
                 if let StepView::Relays { .. } = &mut self.step_view {
                     conn.send(ToBackend::AddRelay(relay_url))?;
@@ -552,18 +554,17 @@ impl Route for State {
                     relays_added.push(RelayRow::new(relays_added.len() as i32, db_relay));
                 }
                 BackendEvent::RelayDeleted(url) => {
-                    relays_added.retain(|row| &row.db_relay.url != &url);
+                    relays_added.retain(|row| row.db_relay.url != url);
                     relays_suggestion.push(url);
                 }
                 _ => (),
             },
             StepView::Welcome => (),
-            StepView::LoadingClient => match event {
-                BackendEvent::FinishedPreparing => {
-                    command.change_route(RouterMessage::GoToChat);
+            StepView::LoadingClient => {
+                if let BackendEvent::FinishedPreparing = event {
+                    command.change_route(GoToView::Chat);
                 }
-                _ => (),
-            },
+            }
         }
 
         Ok(command)
@@ -572,17 +573,6 @@ impl Route for State {
     fn view(&self, _selected_theme: Option<style::Theme>) -> Element<Self::Message> {
         self.step_view.view()
     }
-}
-
-fn _generate_random_ipv4() -> Ipv4Addr {
-    let mut rng = thread_rng();
-    let ip = Ipv4Addr::new(
-        rng.gen_range(1..=255),
-        rng.gen_range(0..=255),
-        rng.gen_range(0..=255),
-        rng.gen_range(0..=255),
-    );
-    ip
 }
 
 const WELCOME_IMAGE_MAX_WIDTH: f32 = 300.0;

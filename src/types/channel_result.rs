@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use crate::{
     consts::default_channel_image,
     db::{ChannelCache, ImageDownloaded},
@@ -8,28 +6,19 @@ use crate::{
 };
 use chrono::NaiveDateTime;
 use iced::widget::image::Handle;
-use nostr::{secp256k1::XOnlyPublicKey, EventId};
 use url::Url;
-
-use super::PrefixedId;
 
 // todo: maybe use channel_id?
 #[derive(Debug, Clone)]
 pub struct ChannelResult {
-    pub channel_id: EventId,
     pub relay_url: Url,
     pub cache: ChannelCache,
-    pub members: HashSet<XOnlyPublicKey>,
     pub loading_details: bool,
     pub image_handle: Handle,
 }
 
 impl ChannelResult {
-    pub fn from_ns_event(url: Url, ns_event: nostr::Event, cache: ChannelCache) -> Self {
-        let mut members = HashSet::new();
-        let creator = ns_event.pubkey;
-        members.insert(creator.clone());
-
+    pub fn from_cache(url: Url, cache: ChannelCache) -> Self {
         let image_handle = cache
             .image_cache
             .as_ref()
@@ -39,26 +28,15 @@ impl ChannelResult {
             })
             .unwrap_or(Handle::from_memory(default_channel_image(IMAGE_SIZE)));
 
-        let cache = Self {
-            channel_id: ns_event.id,
+        Self {
             relay_url: url,
             cache,
-            members,
             loading_details: true,
             image_handle,
-        };
-
-        cache
-    }
-
-    pub fn loading_details(&mut self) {
-        self.loading_details = true;
+        }
     }
     pub fn done_loading(&mut self) {
         self.loading_details = false;
-    }
-    pub fn message(&mut self, pubkey: XOnlyPublicKey) {
-        self.members.insert(pubkey);
     }
     pub fn update_cache(
         &mut self,
@@ -67,17 +45,15 @@ impl ChannelResult {
     ) -> Result<(), BackendClosed> {
         if let Some(image) = &new_cache.image_cache {
             self.update_image(image);
+        } else if let Some(image_url) = &new_cache.metadata.picture {
+            conn.send(ToBackend::DownloadImage {
+                image_url: image_url.to_owned(),
+                kind: ImageKind::Channel,
+                identifier: self.cache.channel_id.to_string(),
+                event_hash: new_cache.last_event_hash().to_owned(),
+            })?;
         } else {
-            if let Some(image_url) = &new_cache.metadata.picture {
-                conn.send(ToBackend::DownloadImage {
-                    image_url: image_url.to_owned(),
-                    kind: ImageKind::Channel,
-                    identifier: self.channel_id.to_string(),
-                    event_hash: new_cache.last_event_hash().to_owned(),
-                })?;
-            } else {
-                tracing::info!("Channel don't have image");
-            }
+            tracing::info!("Channel don't have image");
         }
         self.cache = new_cache;
         Ok(())

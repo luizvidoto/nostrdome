@@ -8,7 +8,7 @@ use crate::icon::{import_icon, plus_icon, satellite_icon};
 use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
 use crate::utils::contact_matches_search_full;
-use crate::views::RouterMessage;
+use crate::views::GoToView;
 use crate::widget::Element;
 use crate::{components::text::title, db::DbContact};
 
@@ -18,12 +18,12 @@ use super::SettingsRouterMessage;
 pub enum Message {
     DeleteContact(DbContact),
     OpenProfileModal(DbContact),
-    ContactRowMessage(contact_row::Message),
+    ContactRow(contact_row::Message),
     OpenAddContactModal,
     OpenImportContactModal,
     SearchContactInputChange(String),
     RelaysConfirmationPress(Option<ContactsRelaysResponse>),
-    SendMessageTo(DbContact),
+    SendDMTo(DbContact),
 }
 
 #[derive(Debug, Clone)]
@@ -82,20 +82,18 @@ impl State {
                     conn.send(net::ToBackend::FetchContactWithMetadata(pubkey))?;
                 }
             }
-            BackendEvent::GotSingleContact(_pubkey, db_contact) => {
-                if let Some(db_contact) = db_contact {
-                    if let Some(contact) = self
-                        .contacts
-                        .iter_mut()
-                        .find(|c| c.pubkey() == db_contact.pubkey())
-                    {
-                        *contact = db_contact;
-                    } else {
-                        tracing::info!(
-                            "GotSingleContact for someone not in the list?? {:?}",
-                            db_contact
-                        );
-                    }
+            BackendEvent::GotSingleContact(_pubkey, Some(db_contact)) => {
+                if let Some(contact) = self
+                    .contacts
+                    .iter_mut()
+                    .find(|c| c.pubkey() == db_contact.pubkey())
+                {
+                    *contact = db_contact;
+                } else {
+                    tracing::info!(
+                        "GotSingleContact for someone not in the list?? {:?}",
+                        db_contact
+                    );
                 }
             }
             BackendEvent::ReceivedContactList
@@ -116,7 +114,7 @@ impl State {
         conn: &mut BackEndConnection,
     ) -> Result<Option<SettingsRouterMessage>, BackendClosed> {
         match message {
-            Message::SendMessageTo(_) => (),
+            Message::SendDMTo(_) => (),
             Message::RelaysConfirmationPress(_) => (),
             Message::OpenProfileModal(db_contact) => {
                 return Ok(Some(SettingsRouterMessage::OpenProfileModal(db_contact)));
@@ -128,11 +126,11 @@ impl State {
                 return Ok(Some(SettingsRouterMessage::OpenImportContactModal));
             }
             Message::SearchContactInputChange(text) => self.search_contact_input = text,
-            Message::ContactRowMessage(ct_msg) => match ct_msg {
+            Message::ContactRow(ct_msg) => match ct_msg {
                 // TODO: dont return a message, find a better way
                 contact_row::Message::SendMessageTo(contact) => {
                     return Ok(Some(SettingsRouterMessage::RouterMessage(
-                        RouterMessage::GoToChatTo(contact),
+                        GoToView::ChatTo(contact),
                     )));
                 }
                 contact_row::Message::DeleteContact(contact) => {
@@ -234,10 +232,10 @@ impl State {
             .contacts
             .iter()
             .filter(|c| contact_matches_search_full(c, &self.search_contact_input))
-            .map(|c| ContactRow::from_db_contact(c))
+            .map(ContactRow::from_db_contact)
             .fold(
                 column![].padding([0, 20, 0, 0]).spacing(5),
-                |col, contact| col.push(contact.view().map(Message::ContactRowMessage)),
+                |col, contact| col.push(contact.view().map(Message::ContactRow)),
             )
             .into();
         let contact_list_scroller = column![

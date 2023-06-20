@@ -8,7 +8,7 @@ use nostr::secp256k1::XOnlyPublicKey;
 
 use crate::components::chat_contact::{ChatContact, CARD_HEIGHT};
 use crate::components::floating_element::{Anchor, FloatingElement, Offset};
-use crate::components::{chat_contact, chat_list_container, contact_list};
+use crate::components::{chat_contact, chat_view, contact_list};
 use crate::db::{DbContact, DbRelay, DbRelayResponse};
 use crate::error::BackendClosed;
 use crate::icon::{copy_icon, reply_icon, satellite_icon};
@@ -18,14 +18,14 @@ use crate::types::ChatMessage;
 use crate::widget::Element;
 use once_cell::sync::Lazy;
 
-use self::chat_list_container::ChatListContainer;
+use self::chat_view::ChatView;
 use self::contact_list::ContactList;
 
 use super::modal::{
     basic_contact, relays_confirmation, ContactDetails, ModalView, RelaysConfirmation,
 };
 use super::route::Route;
-use super::{RouterCommand, RouterMessage};
+use super::{GoToView, RouterCommand};
 
 static CONTACTS_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
 static CHAT_SCROLLABLE_ID: Lazy<scrollable::Id> = Lazy::new(scrollable::Id::unique);
@@ -51,10 +51,10 @@ impl ModalState {
             ModalState::Off => underlay.into(),
             ModalState::RelaysConfirmation(state) => state
                 .view(underlay)
-                .map(|m| Message::RelaysConfirmationMessage(Box::new(m))),
+                .map(|m| Message::ModalRelaysConfirmation(Box::new(m))),
             ModalState::BasicProfile(state) => state
                 .view(underlay)
-                .map(|m| Message::BasicContactMessage(Box::new(m))),
+                .map(|m| Message::ModalBasicContact(Box::new(m))),
         }
     }
     fn backend_event(
@@ -74,20 +74,19 @@ pub enum Message {
     CopyPressed,
     ReplyPressed,
     RelaysConfirmationPress,
-    BasicContactMessage(Box<basic_contact::CMessage<Message>>),
-    RelaysConfirmationMessage(Box<relays_confirmation::CMessage<Message>>),
+    ModalBasicContact(Box<basic_contact::CMessage<Message>>),
+    ModalRelaysConfirmation(Box<relays_confirmation::CMessage<Message>>),
     OnVerResize(u16),
     CloseModal,
     CloseCtxMenu,
     DebugPressed,
-
-    ContactListMsg(contact_list::Message),
-    ChatListContainerMsg(chat_list_container::Message),
+    ContactList(contact_list::Message),
+    ChatView(chat_view::Message),
 }
 
 pub struct State {
     contact_list: ContactList,
-    chat_list_container: ChatListContainer,
+    chat_view: ChatView,
 
     ver_divider_position: Option<u16>,
     chats: Vec<ChatContact>,
@@ -110,7 +109,7 @@ impl State {
         conn.send(ToBackend::FetchContacts)?;
         Ok(Self {
             contact_list: ContactList::new(),
-            chat_list_container: ChatListContainer::new(),
+            chat_view: ChatView::new(),
 
             chats: Vec::new(),
             messages: vec![],
@@ -196,7 +195,7 @@ impl State {
         self.chats
             .sort_by(|a, b| b.contact.select_name().cmp(&a.contact.select_name()));
         self.chats
-            .sort_by(|a, b| b.last_message_date().cmp(&a.last_message_date()));
+            .sort_by_key(|b| std::cmp::Reverse(b.last_message_date()));
     }
 
     fn close_modal(&mut self) -> Command<Message> {
@@ -213,7 +212,7 @@ impl State {
         if let Some(chat) = self.chats.iter().find(|c| c.id == idx) {
             conn.send(ToBackend::FetchMessages(chat.contact.to_owned()))?;
             self.messages = vec![];
-            self.chat_list_container.update_dm_msg("".into());
+            self.chat_view.update_dm_msg("".into());
             self.active_idx = Some(idx);
             return Ok(text_input::focus(CHAT_INPUT_ID.clone()));
         }
@@ -309,19 +308,19 @@ impl Route for State {
                 self.show_only_profile,
                 self.active_idx,
             )
-            .map(Message::ContactListMsg);
+            .map(Message::ContactList);
 
         // ---
         // --- SECOND SPLIT ---
         let second_split = self
-            .chat_list_container
+            .chat_view
             .view(
                 &CHAT_SCROLLABLE_ID,
                 &CHAT_INPUT_ID,
                 &self.messages,
                 self.active_chat(),
             )
-            .map(Message::ChatListContainerMsg);
+            .map(Message::ChatView);
 
         let main_content = iced_aw::split::Split::new(
             first_split,
@@ -448,8 +447,10 @@ impl Route for State {
                     }
 
                     self.messages
-                        .sort_by(|a, b| a.display_time.cmp(&b.display_time));
-                    self.active_chat_mut().map(|c| c.reset_unseen());
+                        .sort_by(|a, b| a.display_time().cmp(&b.display_time()));
+                    if let Some(c) = self.active_chat_mut() {
+                        c.reset_unseen()
+                    }
                 } else {
                     tracing::info!(
                         "Got chat messages when outside chat?? {:?} - length: {}",
@@ -458,14 +459,15 @@ impl Route for State {
                     )
                 }
             }
-            BackendEvent::ConfirmedDM(chat_message) => {
+            BackendEvent::ConfirmedDM(event_hash, db_message, content) => {
                 if let Some(message) = self
                     .messages
                     .iter_mut()
-                    .find(|message| message.msg_id == chat_message.msg_id)
+                    .filter(|m| m.is_pending())
+                    .find(|message| message.match_pending_hash(&event_hash))
                 {
-                    message.confirm_msg(&chat_message);
-                    conn.send(ToBackend::MessageSeen(message.msg_id))?;
+                    *message = ChatMessage::confirmed_users(&db_message, &content);
+                    // conn.send(ToBackend::MessageSeen(message.msg_id))?;
                 }
             }
             BackendEvent::PendingDM(db_contact, chat_message)
@@ -541,7 +543,7 @@ impl Route for State {
         match message {
             Message::CopyPressed => {
                 if let Some(chat_msg) = &self.chat_message_pressed {
-                    commands.push(clipboard::write(chat_msg.content.to_owned()));
+                    commands.push(clipboard::write(chat_msg.content().to_owned()));
                 }
                 self.hide_context_menu = true;
             }
@@ -571,7 +573,7 @@ impl Route for State {
             Message::CloseModal => {
                 commands.push(self.close_modal());
             }
-            Message::RelaysConfirmationMessage(modal_msg) => {
+            Message::ModalRelaysConfirmation(modal_msg) => {
                 if let ModalState::RelaysConfirmation(state) = &mut self.modal_state {
                     match *modal_msg {
                         relays_confirmation::CMessage::UnderlayMessage(message) => {
@@ -583,12 +585,12 @@ impl Route for State {
                                 commands.push(self.close_modal())
                             }
                             commands
-                                .push(cmd.map(|m| Message::RelaysConfirmationMessage(Box::new(m))));
+                                .push(cmd.map(|m| Message::ModalRelaysConfirmation(Box::new(m))));
                         }
                     }
                 }
             }
-            Message::BasicContactMessage(modal_msg) => {
+            Message::ModalBasicContact(modal_msg) => {
                 if let ModalState::BasicProfile(state) = &mut self.modal_state {
                     match *modal_msg {
                         basic_contact::CMessage::UnderlayMessage(message) => {
@@ -599,7 +601,7 @@ impl Route for State {
                             if close_modal {
                                 commands.push(self.close_modal())
                             }
-                            commands.push(cmd.map(|m| Message::BasicContactMessage(Box::new(m))));
+                            commands.push(cmd.map(|m| Message::ModalBasicContact(Box::new(m))));
                         }
                     }
                 }
@@ -623,66 +625,59 @@ impl Route for State {
                 }
             }
 
-            Message::ChatListContainerMsg(chat_msg) => match chat_msg {
-                chat_list_container::Message::DMSentPress(dm_msg) => {
-                    match (self.active_chat(), dm_msg.is_empty()) {
-                        (Some(chat_contact), false) => {
-                            conn.send(ToBackend::SendDM(
-                                chat_contact.contact.to_owned(),
-                                dm_msg.clone(),
-                            ))?;
-                            self.chat_list_container.update_dm_msg("".into());
-                        }
-                        _ => (),
+            Message::ChatView(chat_msg) => match chat_msg {
+                chat_view::Message::DMSentPress(dm_msg) => {
+                    if let (Some(chat_contact), false) = (self.active_chat(), dm_msg.is_empty()) {
+                        conn.send(ToBackend::SendDM(chat_contact.contact.to_owned(), dm_msg))?;
+                        self.chat_view.update_dm_msg("".into());
                     }
                 }
-                chat_list_container::Message::DMNMessageChange(text) => {
-                    self.chat_list_container.update_dm_msg(text);
+                chat_view::Message::DMNMessageChange(text) => {
+                    self.chat_view.update_dm_msg(text);
                 }
-                chat_list_container::Message::GotChatSize(size, child_size) => {
+                chat_view::Message::GotChatSize(size, child_size) => {
                     self.chat_window_size = size;
                     self.chat_total_size = child_size;
                 }
-                chat_list_container::Message::Scrolled(offset) => {
+                chat_view::Message::Scrolled(offset) => {
                     self.msgs_scroll_offset = offset;
 
                     // need to see if we need to fetch more messages
                     if self.msgs_scroll_offset.y < 0.01 {
                         if let Some(active_chat) = self.active_chat() {
                             let contact = active_chat.contact.to_owned();
-                            if let Some(first_message) = self.messages.first() {
-                                tracing::info!(
-                                    "fetching more messages, first: {:?}",
-                                    first_message
-                                );
+                            if let Some(first_date) =
+                                self.messages.first().and_then(|f| f.display_time())
+                            {
+                                tracing::info!("fetching more messages, first: {:?}", first_date);
                                 conn.send(ToBackend::FetchMoreMessages(
                                     contact,
-                                    first_message.to_owned(),
+                                    first_date.to_owned(),
                                 ))?;
                             }
                         }
                     }
                 }
-                chat_list_container::Message::OpenContactProfile => {
+                chat_view::Message::OpenContactProfile => {
                     if let Some(chat_contact) = self.active_chat() {
                         self.modal_state = ModalState::basic_profile(&chat_contact.contact, conn)?;
                     }
                 }
-                chat_list_container::Message::ChatRightClick(msg, point) => {
+                chat_view::Message::ChatRightClick(msg, point) => {
                     conn.send(ToBackend::FetchRelayResponsesChatMsg(msg.clone()))?;
                     self.calculate_ctx_menu_pos(point);
                     self.hide_context_menu = false;
                     self.chat_message_pressed = Some(msg);
                 }
-                chat_list_container::Message::ChannelMenuPressed => {}
-                chat_list_container::Message::ChannelOpenModalPressed => {}
-                chat_list_container::Message::ChannelSearchPressed => {}
-                chat_list_container::Message::ChannelUserNamePressed(_) => {}
+                chat_view::Message::ChannelMenuPressed => {}
+                chat_view::Message::ChannelOpenModalPressed => {}
+                chat_view::Message::ChannelSearchPressed => {}
+                chat_view::Message::ChannelUserNamePressed(_) => {}
             },
 
-            Message::ContactListMsg(ct_msg) => match ct_msg {
+            Message::ContactList(ct_msg) => match ct_msg {
                 contact_list::Message::AddContactPress => {
-                    commands.change_route(RouterMessage::GoToSettingsContacts);
+                    commands.change_route(GoToView::SettingsContacts);
                 }
                 contact_list::Message::SearchContactInputChange(text) => {
                     self.contact_list.search_input_change(text);
