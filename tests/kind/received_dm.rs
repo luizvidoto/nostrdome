@@ -6,7 +6,8 @@ use url::Url;
 
 use super::dm_helpers::*;
 use super::*;
-use crate::helpers::spawn_app;
+use crate::common::make_dm_event;
+use crate::spawn_app;
 
 /// Tests for Received event of Kind::EncryptedDirectMessage
 

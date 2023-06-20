@@ -22,13 +22,19 @@ pub fn members_metadata_filter<'a, T: IntoIterator<Item = &'a XOnlyPublicKey>>(
         .until(Timestamp::now())
 }
 
-pub fn contact_list_metadata_filter<
-    'a,
-    C: IntoIterator<Item = &'a DbContact>,
-    M: IntoIterator<Item = &'a XOnlyPublicKey>,
->(
-    contact_list: C,
+pub fn channel_members_metadata_filter<'a, M: IntoIterator<Item = &'a XOnlyPublicKey>>(
     members_pubkeys: M,
+) -> Filter {
+    let members_pubkeys = members_pubkeys
+        .into_iter()
+        .map(|m| m.to_string())
+        .collect::<Vec<_>>();
+
+    Filter::new().authors(members_pubkeys).kind(Kind::Metadata)
+}
+
+pub fn contact_list_metadata_filter<'a, C: IntoIterator<Item = &'a DbContact>>(
+    contact_list: C,
     last_event: &Option<DbEvent>,
 ) -> Filter {
     let contacts_pubkeys = contact_list
@@ -36,18 +42,8 @@ pub fn contact_list_metadata_filter<
         .map(|c| c.pubkey().to_string())
         .collect::<Vec<_>>();
 
-    let members_pubkeys = members_pubkeys
-        .into_iter()
-        .map(|m| m.to_string())
-        .collect::<Vec<_>>();
-
-    let all_pubkeys: Vec<_> = contacts_pubkeys
-        .iter()
-        .chain(members_pubkeys.iter())
-        .collect();
-
     Filter::new()
-        .authors(all_pubkeys)
+        .authors(contacts_pubkeys)
         .kind(Kind::Metadata)
         .since(Timestamp::from(to_secs(last_event)))
 }

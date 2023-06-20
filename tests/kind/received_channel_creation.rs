@@ -6,8 +6,8 @@ use nostrtalk::{
 };
 use url::Url;
 
-use super::*;
-use crate::helpers::spawn_app;
+use crate::common::make_channel_creation_event;
+use crate::spawn_app;
 
 #[tokio::test]
 async fn channel_creation_ok() {

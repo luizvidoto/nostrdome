@@ -185,8 +185,8 @@ impl Route for State {
                                     .any(|btn| btn.channel_id == result.cache.channel_id);
 
                                 self.active_view = ViewState::Channel {
-                                    state: channel::Channel::loaded(
-                                        result.cache,
+                                    state: channel::Channel::load(
+                                        result.cache.channel_id,
                                         is_subscribed,
                                         conn,
                                     )?,

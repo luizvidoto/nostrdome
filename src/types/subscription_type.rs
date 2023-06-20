@@ -24,11 +24,15 @@ pub enum SubName {
     Messages,
     SearchChannels,
     SearchChannelsDetails(PrefixedId),
+    ChannelMembersMetadata(PrefixedId),
     Channels,
 }
 impl SubName {
     pub fn src_channel_details(channel_id: &nostr::EventId) -> Self {
         Self::SearchChannelsDetails(PrefixedId::new(&channel_id.to_hex()))
+    }
+    pub fn channel_members_meta(channel_id: &nostr::EventId) -> Self {
+        Self::ChannelMembersMetadata(PrefixedId::new(&channel_id.to_hex()))
     }
     pub fn from_id(id: &SubscriptionId) -> Option<Self> {
         let str = id.to_string();
@@ -43,6 +47,9 @@ impl SubName {
                 if str.starts_with("SrcChannelDts_") {
                     let (_, hex) = str.split_at("SrcChannelDts_".len());
                     Some(SubName::SearchChannelsDetails(PrefixedId(hex.to_owned())))
+                } else if str.starts_with("ChannelMembersMeta_") {
+                    let (_, hex) = str.split_at("ChannelMembersMeta_".len());
+                    Some(SubName::ChannelMembersMetadata(PrefixedId(hex.to_owned())))
                 } else {
                     None
                 }
@@ -60,6 +67,9 @@ impl std::fmt::Display for SubName {
             SubName::Messages => write!(f, "Messages"),
             SubName::Channels => write!(f, "Channels"),
             SubName::SearchChannels => write!(f, "SearchChannels"),
+            SubName::ChannelMembersMetadata(prefixed) => {
+                write!(f, "ChannelMembersMeta_{}", &prefixed)
+            }
             SubName::SearchChannelsDetails(prefixed) => {
                 write!(f, "SrcChannelDts_{}", &prefixed)
             }

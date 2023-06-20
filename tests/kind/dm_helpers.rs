@@ -3,7 +3,7 @@ use nostrtalk::{
     utils::channel_id_from_tags,
 };
 
-use crate::helpers::TestApp;
+use crate::TestApp;
 
 pub async fn assert_dm_in_database(
     test_app: &TestApp,

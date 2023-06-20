@@ -44,16 +44,20 @@ impl ChatView {
         messages: &'a [ChatMessage],
         name: &str,
         members: i32,
+        disable_input: bool,
     ) -> Element<'a, Message> {
         let chat_messages = create_channel_content(scrollable_id, messages);
-        let message_input = text_input("Write a message...", &self.dm_msg_input)
-            .on_submit(Message::DMSentPress(self.dm_msg_input.clone()))
-            .on_input(Message::DMNMessageChange)
-            .id(chat_input_id.clone());
+        let mut message_input =
+            text_input("Write a message...", &self.dm_msg_input).id(chat_input_id.clone());
+        let mut send_btn =
+            button(send_icon().style(style::Text::Primary)).style(style::Button::Invisible);
 
-        let send_btn = button(send_icon().style(style::Text::Primary))
-            .style(style::Button::Invisible)
-            .on_press(Message::DMSentPress(self.dm_msg_input.clone()));
+        if !disable_input {
+            message_input = message_input
+                .on_submit(Message::DMSentPress(self.dm_msg_input.clone()))
+                .on_input(Message::DMNMessageChange);
+            send_btn = send_btn.on_press(Message::DMSentPress(self.dm_msg_input.clone()));
+        }
 
         let msg_input_row = container(row![message_input, send_btn].spacing(5))
             .style(style::Container::Default)

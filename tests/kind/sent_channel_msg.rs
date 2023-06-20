@@ -3,7 +3,7 @@ use nostrtalk::net::{process_message, ToBackend};
 use nostrtalk::utils::channel_id_from_tags;
 
 use super::*;
-use crate::helpers::spawn_app;
+use crate::spawn_app;
 
 // When there is a PendingEvent, it can be confirmed in two ways,
 // either by receiving an OK message from the relay or by receiving the event itself

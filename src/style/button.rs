@@ -119,7 +119,7 @@ impl button::StyleSheet for Theme {
             },
             Button::Link => button::Appearance {
                 background: Color::TRANSPARENT.into(),
-                text_color: self.palette().base.text,
+                text_color: Color::from_rgb8(0x00, 0x7a, 0xff),
                 border_color: Color::TRANSPARENT,
                 border_radius: 0.0,
                 border_width: 0.0,

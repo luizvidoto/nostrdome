@@ -6,7 +6,6 @@ use ns_client::Subscription;
 use rfd::AsyncFileDialog;
 use serde::Serialize;
 use sqlx::SqlitePool;
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::signal;
@@ -29,7 +28,6 @@ use crate::components::async_file_importer::FileFilter;
 use crate::components::chat_contact::ChatInfo;
 use crate::config::Config;
 use crate::consts::NIPS_LIST_MARKDOWN;
-use crate::db::channel_cache::fetch_channel_members;
 use crate::db::ChannelCache;
 use crate::db::ChannelSubscription;
 use crate::db::Database;
@@ -45,6 +43,7 @@ use crate::db::ProfileCache;
 use crate::db::UserConfig;
 use crate::error::BackendClosed;
 use crate::net::filters::channel_details_filter;
+use crate::net::filters::channel_members_metadata_filter;
 use crate::net::filters::channel_search_filter;
 use crate::net::filters::contact_list_filter;
 use crate::net::filters::members_metadata_filter;
@@ -306,18 +305,8 @@ async fn handle_eose(
             SubName::ContactList => {
                 let contact_list = DbContact::fetch_basic(backend.pool()).await?;
                 let last_event = DbEvent::fetch_last_url(backend.pool(), &url).await?;
-                let channels = ChannelSubscription::fetch(backend.pool()).await?;
-                let channels: Vec<_> = channels.into_iter().map(|c| c.channel_id).collect();
 
-                let mut all_members = HashSet::new();
-                // remove user from members?
-                for channel in &channels {
-                    let members = fetch_channel_members(backend.cache_pool(), channel).await?;
-                    all_members.extend(members);
-                }
-
-                let filter =
-                    contact_list_metadata_filter(&contact_list, all_members.iter(), &last_event);
+                let filter = contact_list_metadata_filter(&contact_list, &last_event);
                 let subscription = ns_client::Subscription::new(vec![filter])
                     .with_id(SubName::ContactListMetadata.to_string());
                 tracing::debug!("contact_list_meta_sub: {:?}", subscription);
@@ -624,7 +613,7 @@ async fn handle_task_result(
             tracing::info!("NTP time: {}", ntp_time);
             backend.update_ntp(ntp_time, &server);
             let last_ntp_offset = UserConfig::update_ntp_offset(backend.pool(), ntp_time).await?;
-            let (ntp_offset, ntp_server) = backend.synced_ntp();
+            let (_ntp_offset, ntp_server) = backend.synced_ntp();
             _ = output
                 .send(BackendEvent::NtpInfo {
                     last_ntp_offset,
@@ -809,6 +798,7 @@ pub enum ToBackend {
     FetchSubscribedChannels,
     FetchChannelCache(EventId),
     SubscribeToChannelDetails(Url, Vec<EventId>),
+    SubscribeChannelMembersMeta(EventId),
 }
 
 pub async fn process_message(
@@ -940,7 +930,8 @@ pub async fn process_message(
         ToBackend::GetNtpInfo => {
             let pool = backend.pool();
             let last_ntp_offset = UserConfig::get_ntp_offset(pool).await?;
-            let (ntp_offset, ntp_server) = backend.synced_ntp();
+            let (_ntp_offset, ntp_server) = backend.synced_ntp();
+
             _ = output
                 .send(BackendEvent::NtpInfo {
                     last_ntp_offset,
@@ -1158,14 +1149,29 @@ pub async fn process_message(
         ToBackend::MessageSeen(msg_id) => {
             DbMessage::mark_seen(backend.pool(), msg_id).await?;
         }
+        ToBackend::SubscribeChannelMembersMeta(channel_id) => {
+            if let Some(cache) =
+                ChannelCache::fetch_by_channel_id(backend.cache_pool(), &channel_id).await?
+            {
+                let subscription =
+                    Subscription::new(vec![channel_members_metadata_filter(cache.members.iter())])
+                        .with_id(SubName::channel_members_meta(&channel_id).to_string())
+                        .eose(None);
+                backend.nostr.subscribe(&subscription)?;
+            }
+        }
         ToBackend::FetchChannelMessages(channel_id) => {
             let pool = backend.pool();
 
-            let messages = DbChannelMessage::fetch(pool, &channel_id).await?;
+            let messages: Vec<_> = DbChannelMessage::fetch(pool, &channel_id)
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect();
 
-            // _ = output
-            //     .send(BackendEvent::GotChannelMessages(channel_id, messages))
-            //     .await;
+            _ = output
+                .send(BackendEvent::GotChannelMessages(channel_id, messages))
+                .await;
         }
         ToBackend::FetchMessages(db_contact) => {
             let pool = backend.pool();
@@ -1442,7 +1448,19 @@ async fn handle_channel_message(
         let is_users = db_event.pubkey == keys.public_key();
         let ch_msg = DbChannelMessage::insert_confirmed(pool, &db_event, is_users).await?;
 
-        ChannelCache::insert_member(cache_pool, &channel_id, &db_event.pubkey).await?;
+        let rows_affected =
+            ChannelCache::insert_member(cache_pool, &channel_id, &db_event.pubkey).await?;
+        if rows_affected != 0 {
+            // TODO: check if this is IO heavy
+            if let Some(cache) = ChannelCache::fetch_by_channel_id(cache_pool, &channel_id).await? {
+                let _ = output.send(BackendEvent::ChannelCacheUpdated(cache)).await;
+            } else {
+                tracing::error!(
+                    "Failed to fetch channel cache for channel_id: {}",
+                    &channel_id
+                );
+            }
+        }
 
         let _ = output
             .send(BackendEvent::ReceivedChannelMessage(
@@ -1479,7 +1497,6 @@ pub async fn _create_channel(_client: &RelayPool) -> Result<BackendEvent, Error>
 
 async fn prepare_client(keys: &Keys, backend: &mut BackendState) -> Result<(), Error> {
     let pool = backend.pool();
-    let cache_pool = backend.cache_pool();
 
     let relays = DbRelay::fetch(pool).await?;
     let last_event = DbEvent::fetch_last(pool).await?;
@@ -1487,13 +1504,6 @@ async fn prepare_client(keys: &Keys, backend: &mut BackendState) -> Result<(), E
 
     let channels = ChannelSubscription::fetch(pool).await?;
     let channels: Vec<_> = channels.into_iter().map(|c| c.channel_id).collect();
-
-    let mut all_members = HashSet::new();
-    // remove user from members?
-    for channel in &channels {
-        let members = fetch_channel_members(cache_pool, channel).await?;
-        all_members.extend(members);
-    }
 
     UserConfig::store_first_login(pool).await?;
 
@@ -1523,8 +1533,7 @@ async fn prepare_client(keys: &Keys, backend: &mut BackendState) -> Result<(), E
         .with_id(SubName::Messages.to_string());
     backend.nostr.subscribe(&messages_sub)?;
 
-    // além dos dados meta dos contatos, preciso também dos members dos canais em que estou inscrito
-    let filter = contact_list_metadata_filter(&contact_list, all_members.iter(), &last_event);
+    let filter = contact_list_metadata_filter(&contact_list, &last_event);
     let contact_list_meta_sub =
         Subscription::new(vec![filter]).with_id(SubName::ContactListMetadata.to_string());
     tracing::debug!("contact_list_meta_sub: {:?}", contact_list_meta_sub);

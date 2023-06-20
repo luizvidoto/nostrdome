@@ -2,7 +2,8 @@ use nostrtalk::db::DbContact;
 use nostrtalk::net::{process_message, ToBackend};
 
 use super::*;
-use crate::helpers::spawn_app;
+use crate::common::{make_contact, make_random_contact};
+use crate::spawn_app;
 
 // When there is a PendingEvent, it can be confirmed in two ways,
 // either by receiving an OK message from the relay or by receiving the event itself

@@ -15,8 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - No more pending message in the database, only in memory.
-- Changend main views to use the Route trait
-- ModalView trait to modals
+- Main views use the Route trait.
+- Modals use the ModalView trait.
 - Better organization of the net mod file.
 
 ### Fixed

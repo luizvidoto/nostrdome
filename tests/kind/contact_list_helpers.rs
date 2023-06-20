@@ -6,7 +6,7 @@ use nostrtalk::{
     net::BackendEvent,
 };
 
-use crate::helpers::TestApp;
+use crate::TestApp;
 
 use super::assert_channel_timeout;
 

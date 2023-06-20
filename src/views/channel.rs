@@ -71,12 +71,13 @@ pub enum State {
     Loading,
     Loaded {
         cache: ChannelCache,
-        chat_list_container: ChatView,
+        chat_view: ChatView,
         messages: Vec<ChatMessage>,
         members: HashMap<XOnlyPublicKey, Member>,
     },
 }
 pub struct Channel {
+    msgs_scroll_offset: scrollable::RelativeOffset,
     is_subscribed: bool,
     channel_id: EventId,
     state: State,
@@ -91,20 +92,21 @@ impl Channel {
         conn: &mut BackEndConnection,
     ) -> Result<Self, BackendClosed> {
         conn.send(ToBackend::FetchChannelCache(channel_id))?;
-        conn.send(ToBackend::FetchChannelMessages(channel_id))?;
 
         Ok(Self {
+            msgs_scroll_offset: scrollable::RelativeOffset::default(),
             is_subscribed,
             channel_id,
             state: State::Loading,
         })
     }
-    pub fn loaded(
+    fn loaded(
         cache: ChannelCache,
         is_subscribed: bool,
         conn: &mut BackEndConnection,
     ) -> Result<Self, BackendClosed> {
         conn.send(ToBackend::FetchChannelMessages(cache.channel_id))?;
+        conn.send(ToBackend::SubscribeChannelMembersMeta(cache.channel_id))?;
 
         let members = cache
             .members
@@ -113,11 +115,12 @@ impl Channel {
             .collect();
 
         Ok(Self {
+            msgs_scroll_offset: scrollable::RelativeOffset::default(),
             channel_id: cache.channel_id,
             is_subscribed,
             state: State::Loaded {
                 cache,
-                chat_list_container: ChatView::new(),
+                chat_view: ChatView::new(),
                 messages: vec![],
                 members,
             },
@@ -155,13 +158,19 @@ impl Route for Channel {
         event: crate::net::BackendEvent,
         conn: &mut BackEndConnection,
     ) -> Result<super::RouterCommand<Self::Message>, BackendClosed> {
-        let command = RouterCommand::new();
+        let mut command = RouterCommand::new();
 
         match event {
             BackendEvent::GotChannelCache(cache) => {
-                *self = Self::loaded(cache, self.is_subscribed, conn)?;
+                if self.matches_id(&cache.channel_id) {
+                    *self = Self::loaded(cache, self.is_subscribed, conn)?;
+                }
             }
-            BackendEvent::ChannelCacheUpdated(cache) => self.update_cache(cache),
+            BackendEvent::ChannelCacheUpdated(cache) => {
+                if self.matches_id(&cache.channel_id) {
+                    self.update_cache(cache)
+                }
+            }
             BackendEvent::ChannelSubscribed(channel_id) => {
                 if self.matches_id(&channel_id) {
                     self.is_subscribed = true;
@@ -186,6 +195,12 @@ impl Route for Channel {
                         }
                     }
                 }
+
+                self.msgs_scroll_offset = scrollable::RelativeOffset::END;
+                command.push(scrollable::snap_to(
+                    CHAT_SCROLLABLE_ID.clone(),
+                    self.msgs_scroll_offset,
+                ));
             }
             BackendEvent::ReceivedChannelMessage(channel_id, new_message) => {
                 // match &mut message {
@@ -289,10 +304,10 @@ impl Route for Channel {
         match &self.state {
             State::Loading { .. } => inform_card("Loading Channel", "Please wait"),
             State::Loaded {
-                cache,
-                chat_list_container,
+                chat_view,
                 messages,
                 members,
+                ..
             } => {
                 // let members_list = make_member_list(self.channel.members.iter(), Message::MemberPressed);
 
@@ -309,13 +324,14 @@ impl Route for Channel {
                 .width(MEMBERS_LIST_WIDTH)
                 .style(style::Container::Foreground);
 
-                let chat_view = chat_list_container
+                let chat_view = chat_view
                     .channel_view(
                         &CHAT_SCROLLABLE_ID,
                         &CHAT_INPUT_ID,
                         messages,
                         &self.name(),
                         members.len() as i32,
+                        !self.is_subscribed,
                     )
                     .map(Message::ChatView);
 

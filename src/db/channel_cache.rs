@@ -55,7 +55,7 @@ impl ChannelCache {
     pub async fn insert_member_from_event(
         cache_pool: &SqlitePool,
         db_event: &DbEvent,
-    ) -> Result<(), Error> {
+    ) -> Result<u64, Error> {
         let channel_id = channel_id_from_tags(&db_event.tags)
             .ok_or(Error::NotFoundChannelInTags(db_event.event_hash.to_owned()))?;
         Self::insert_member(cache_pool, &channel_id, &db_event.pubkey).await
@@ -65,17 +65,17 @@ impl ChannelCache {
         cache_pool: &SqlitePool,
         channel_id: &nostr::EventId,
         member: &XOnlyPublicKey,
-    ) -> Result<(), Error> {
+    ) -> Result<u64, Error> {
         let query =
             "INSERT OR IGNORE INTO channel_member_map (channel_id, public_key) VALUES (?, ?)";
 
-        sqlx::query(query)
+        let output = sqlx::query(query)
             .bind(channel_id.to_string())
             .bind(member.to_string())
             .execute(cache_pool)
             .await?;
 
-        Ok(())
+        Ok(output.rows_affected())
     }
 
     pub async fn fetch_by_creator(
@@ -210,7 +210,7 @@ impl ChannelCache {
     }
 }
 
-pub async fn fetch_channel_members(
+async fn fetch_channel_members(
     cache_pool: &SqlitePool,
     channel_id: &EventId,
 ) -> Result<Vec<XOnlyPublicKey>, Error> {

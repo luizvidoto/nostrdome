@@ -6,7 +6,11 @@ use nostrtalk::{
 use url::Url;
 
 use super::*;
-use crate::helpers::spawn_app;
+use crate::common::{
+    event_with_time, make_contact, make_random_contact, users_contact_list_builder,
+    users_contact_list_event,
+};
+use crate::spawn_app;
 use contact_list_helpers::*;
 
 /// Tests for Received event of Kind::ContactList
