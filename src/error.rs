@@ -29,6 +29,9 @@ pub enum Error {
     #[error("Nostr Client Error: {0}")]
     FromNostrClient(#[from] ns_client::Error),
 
+    #[error("Nostr Client Sdk Error: {0}")]
+    FromNostrClientSdkError(#[from] nostr_sdk::client::Error),
+
     #[error("{0}")]
     FromBackendState(#[from] crate::types::backend_state::Error),
 
