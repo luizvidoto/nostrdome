@@ -25,7 +25,7 @@ We welcome contributions from the community to improve NostrTalk. If you'd like 
 For more information, please read our [contribution guidelines](https://www.example.com/contribute).
 
 ## GUI 
-(https://github.com/iced-rs/iced)
+[iced](https://github.com/iced-rs/iced)
 
 ## Donations
 If you would like to contribute and help dev team with this project you can send a donation to the following LN address ⚡nickhntv@getalby.com⚡
