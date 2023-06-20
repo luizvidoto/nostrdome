@@ -1,10 +1,9 @@
 CREATE TABLE relay (
-    url TEXT PRIMARY KEY NOT NULL,
-    -- Milliseconds unix timestamp
-    created_at INTEGER DEFAULT NULL,
-    updated_at INTEGER DEFAULT NULL,
+    id INTEGER PRIMARY KEY,
+    url TEXT NOT NULL UNIQUE,
     read INTEGER NOT NULL DEFAULT 1,
     write INTEGER NOT NULL DEFAULT 1,
-    advertise INTEGER NOT NULL DEFAULT 0,
-    have_error TEXT
+    advertise INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE INDEX url ON relay (url);

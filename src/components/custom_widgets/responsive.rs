@@ -20,7 +20,7 @@ use std::ops::Deref;
 pub struct Responsive<'a, Message, Renderer> {
     view: Box<dyn Fn(Size) -> Element<'a, Message, Renderer> + 'a>,
     content: RefCell<Content<'a, Message, Renderer>>,
-    on_update: Option<Box<dyn Fn((Size, Size)) -> Message + 'a>>,
+    on_update: Option<Box<dyn Fn(Size, Size) -> Message + 'a>>,
 }
 
 impl<'a, Message, Renderer> Responsive<'a, Message, Renderer>
@@ -49,7 +49,7 @@ where
     #[must_use]
     pub fn on_update<F>(mut self, callback: F) -> Self
     where
-        F: 'a + Fn((Size, Size)) -> Message + 'a,
+        F: 'a + Fn(Size, Size) -> Message + 'a,
     {
         self.on_update = Some(Box::new(callback));
         self
@@ -207,7 +207,7 @@ where
                 let children_size = child.bounds().size();
                 if state.children_size != children_size {
                     state.children_size = children_size;
-                    let message = on_update((new_size, children_size));
+                    let message = on_update(new_size, children_size);
                     shell.publish(message);
                 }
             }

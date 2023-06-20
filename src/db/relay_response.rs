@@ -1,4 +1,4 @@
-use nostr::{EventId, Kind, Url};
+use nostr::{EventId, Url};
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{FromRow, Row, SqlitePool};
@@ -13,14 +13,10 @@ use super::DbEvent;
 pub enum Error {
     #[error("Sqlx error: {0}")]
     SqlxError(#[from] sqlx::Error),
-
-    #[error("{0}")]
-    FromDbEventError(#[from] crate::db::event::Error),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DbRelayResponse {
-    pub id: Option<i64>,
     pub event_id: i64,
     pub event_hash: EventId,
     pub relay_url: Url,
@@ -29,7 +25,6 @@ pub struct DbRelayResponse {
 impl DbRelayResponse {
     pub fn ok(event_id: i64, event_hash: &EventId, relay_url: &Url) -> Self {
         Self {
-            id: None,
             event_id,
             event_hash: event_hash.to_owned(),
             relay_url: relay_url.to_owned(),
@@ -43,7 +38,6 @@ impl DbRelayResponse {
         error_message: &str,
     ) -> Self {
         Self {
-            id: None,
             event_id,
             event_hash: event_hash.to_owned(),
             relay_url: relay_url.to_owned(),
@@ -67,16 +61,38 @@ impl DbRelayResponse {
 
         Ok(responses)
     }
-    pub async fn insert(pool: &SqlitePool, response: &DbRelayResponse) -> Result<i64, Error> {
-        tracing::debug!("Inserting relay response: {:?}", response);
+    pub async fn fetch_one(
+        pool: &SqlitePool,
+        response: &DbRelayResponse,
+    ) -> Result<Option<DbRelayResponse>, Error> {
+        let sql = r#"
+            SELECT *
+            FROM relay_response
+            WHERE event_id = ? AND relay_url = ?
+        "#;
+
+        let db_response = sqlx::query_as::<_, DbRelayResponse>(sql)
+            .bind(response.event_id)
+            .bind(&response.relay_url.to_string())
+            .fetch_optional(pool)
+            .await?;
+
+        Ok(db_response)
+    }
+    async fn insert(pool: &SqlitePool, response: &DbRelayResponse) -> Result<(), Error> {
+        tracing::trace!("Inserting relay response: {:?}", response);
         let (status, error_message) = response.status.to_bool();
+
+        if (Self::fetch_one(pool, response).await?).is_some() {
+            return Ok(());
+        }
 
         let sql = r#"
             INSERT INTO relay_response (event_id, event_hash, relay_url, status, error_message)
             VALUES (?, ?, ?, ?, ?)
         "#;
 
-        let output = sqlx::query(sql)
+        sqlx::query(sql)
             .bind(response.event_id)
             .bind(&response.event_hash.to_string())
             .bind(&response.relay_url.to_string())
@@ -85,7 +101,7 @@ impl DbRelayResponse {
             .execute(pool)
             .await?;
 
-        Ok(output.last_insert_rowid())
+        Ok(())
     }
 
     pub async fn insert_ok(
@@ -93,16 +109,11 @@ impl DbRelayResponse {
         relay_url: &nostr::Url,
         db_event: &DbEvent,
     ) -> Result<(), Error> {
-        let event_id = db_event.event_id()?;
+        let event_id = db_event.event_id;
         let relay_response = DbRelayResponse::ok(event_id, &db_event.event_hash, relay_url);
         DbRelayResponse::insert(pool, &relay_response).await?;
         Ok(())
     }
-
-    // pub(crate) fn with_id(mut self, id: i64) -> Self {
-    //     self.id = Some(id);
-    //     self
-    // }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -136,7 +147,6 @@ impl FromRow<'_, SqliteRow> for DbRelayResponse {
         let error_message = row.get::<Option<String>, &str>("error_message");
         let status = ResponseStatus::from_bool(row.try_get::<bool, &str>("status")?, error_message);
         Ok(DbRelayResponse {
-            id: Some(row.try_get::<i64, &str>("relay_response_id")?),
             event_id: row.try_get::<i64, &str>("event_id")?,
             event_hash,
             relay_url,

@@ -6,6 +6,7 @@ use iced::{
 };
 
 use crate::{
+    error::BackendClosed,
     net::{BackEndConnection, ToBackend},
     widget::Element,
 };
@@ -20,7 +21,6 @@ pub struct FileFilter {
     pub name: String,
     pub extensions: Vec<String>,
 }
-#[derive(Debug, Clone)]
 pub struct AsyncFileImporter {
     placeholder: String,
     file_input: PathBuf,
@@ -46,20 +46,23 @@ impl AsyncFileImporter {
     pub fn view(&self) -> Element<'static, Message> {
         let file_input =
             text_input(&self.placeholder, &self.file_input.to_string_lossy()).width(Length::Fill);
-        let file_input_btn = button("...")
-            .width(Length::Fixed(30.0))
-            .on_press(Message::ChooseFile);
+        let file_input_btn = button("...").width(30).on_press(Message::ChooseFile);
         row![file_input, file_input_btn]
             .spacing(10)
             .width(Length::Fill)
             .into()
     }
-    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
+    pub fn update(
+        &mut self,
+        message: Message,
+        conn: &mut BackEndConnection,
+    ) -> Result<(), BackendClosed> {
         match message {
-            Message::ChooseFile => conn.send(ToBackend::ChooseFile(self.file_filter.clone())),
+            Message::ChooseFile => conn.send(ToBackend::ChooseFile(self.file_filter.clone()))?,
             Message::UpdateFilePath(path) => {
                 self.file_input = path;
             }
         }
+        Ok(())
     }
 }

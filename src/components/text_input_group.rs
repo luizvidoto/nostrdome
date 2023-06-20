@@ -100,7 +100,7 @@ fn text_input_group<'a, Message: Clone + 'a>(
     let label = text(label_str).style(label_style);
     let tooltip: Element<_> = if let Some(tooltip_str) = tooltip_str {
         let tooltip_icon = container(text("?").size(15))
-            .style(style::Container::TooltipIcon)
+            .style(style::Container::Frame)
             .padding([2, 4]);
         tooltip(tooltip_icon, tooltip_str, tooltip::Position::Top)
             .style(style::Container::TooltipBg)
@@ -108,7 +108,7 @@ fn text_input_group<'a, Message: Clone + 'a>(
     } else {
         text("").into()
     };
-    let label_row = row![label, tooltip].spacing(4);
+    let label_row = row![label, tooltip].spacing(5);
 
     let mut txt_input = text_input(placeholder, value).style(text_input_style);
     if !is_disabled {
@@ -120,5 +120,7 @@ fn text_input_group<'a, Message: Clone + 'a>(
 
     let invalid_message_text = text(invalid_message).size(16).style(style::Text::Danger);
 
-    column![label_row, txt_input, invalid_message_text].into()
+    column![label_row, txt_input, invalid_message_text]
+        .spacing(5)
+        .into()
 }

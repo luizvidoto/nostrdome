@@ -6,22 +6,23 @@ use iced_aw::{Card, Modal};
 use crate::components::text_input_group::TextInputGroup;
 use crate::components::{common_scrollable, inform_card, relay_row, RelayRow};
 use crate::consts::{NOSTR_RESOURCES_LINK, RELAYS_IMAGE, RELAY_SUGGESTIONS, WELCOME_IMAGE};
-use crate::db::DbRelay;
+use crate::error::BackendClosed;
 use crate::icon::{regular_circle_icon, solid_circle_icon};
-use crate::net::{self, BackEndConnection, BackendEvent};
+use crate::net::{BackEndConnection, BackendEvent, ToBackend};
 use crate::style;
 use crate::{components::text::title, widget::Element};
 
-use rand::{thread_rng, Rng};
-use std::net::Ipv4Addr;
 use std::time::Duration;
+
+use super::route::Route;
+use super::{GoToView, RouterCommand};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    RelayMessage(relay_row::MessageWrapper),
+    RelayRow(Box<relay_row::MessageWrapper>),
     ToNextStep,
     ToPreviousStep,
-    Exit,
+    Logout,
     AddRelay(nostr::Url),
     AddOtherPress,
 
@@ -35,7 +36,6 @@ pub enum Message {
     Tick,
 }
 
-#[derive(Debug, Clone)]
 pub enum ModalState {
     AddRelay { relay_url: String, is_invalid: bool },
     Off,
@@ -49,7 +49,7 @@ impl ModalState {
                 is_invalid,
             } => Modal::new(true, underlay.into(), move || {
                 let mut add_relay_input =
-                    TextInputGroup::new("Relay Address", &relay_url, Message::AddRelayInputChange)
+                    TextInputGroup::new("Relay Address", relay_url, Message::AddRelayInputChange)
                         .placeholder("wss://my-relay.com")
                         .on_submit(Message::AddRelaySubmit(relay_url.clone()));
 
@@ -122,23 +122,23 @@ pub enum StepView {
     LoadingClient,
 }
 impl StepView {
-    fn relays_view(conn: &mut BackEndConnection) -> Self {
-        conn.send(net::ToBackend::FetchRelays);
+    fn relays_view(conn: &mut BackEndConnection) -> Result<Self, BackendClosed> {
+        conn.send(ToBackend::FetchRelays)?;
 
         let relays_suggestion: Vec<_> = RELAY_SUGGESTIONS
             .iter()
             .filter_map(|s| nostr::Url::parse(s).ok())
             .collect();
 
-        Self::Relays {
+        Ok(Self::Relays {
             relays_suggestion,
             relays_added: vec![],
             add_relay_modal: ModalState::Off,
-        }
+        })
     }
-    fn loading_client(conn: &mut BackEndConnection) -> StepView {
-        conn.send(net::ToBackend::PrepareClient);
-        Self::LoadingClient
+    fn loading_client(conn: &mut BackEndConnection) -> Result<StepView, BackendClosed> {
+        conn.send(ToBackend::PrepareClient)?;
+        Ok(Self::LoadingClient)
     }
     fn get_step(&self) -> u8 {
         match self {
@@ -167,7 +167,7 @@ impl StepView {
     fn make_btns(&self) -> Element<'static, Message> {
         match self {
             StepView::Welcome => row![
-                button("Cancel").on_press(Message::Exit),
+                button("Cancel").on_press(Message::Logout),
                 button("Next").on_press(Message::ToNextStep)
             ]
             .spacing(10)
@@ -290,7 +290,11 @@ impl StepView {
                 let relay_rows = relays_added
                     .iter()
                     .fold(column![].spacing(5), |col, relay| {
-                        col.push(relay.relay_welcome().map(Message::RelayMessage))
+                        col.push(
+                            relay
+                                .relay_welcome()
+                                .map(|m| Message::RelayRow(Box::new(m))),
+                        )
                     });
                 let add_other_btn = container(
                     button("Add Other")
@@ -363,10 +367,10 @@ impl StepView {
                     .center_y()
                     .style(style::Container::WelcomeBg2);
 
-                add_relay_modal.view(underlay).into()
+                add_relay_modal.view(underlay)
             }
 
-            StepView::LoadingClient => inform_card("Loading", "Please wait...").into(),
+            StepView::LoadingClient => inform_card("Loading", "Please wait..."),
         }
     }
 }
@@ -374,7 +378,36 @@ pub struct State {
     pub step_view: StepView,
 }
 impl State {
-    pub fn subscription(&self) -> Subscription<Message> {
+    pub fn new() -> Self {
+        Self {
+            step_view: StepView::Welcome,
+        }
+    }
+    fn next_step(&mut self, conn: &mut BackEndConnection) -> Result<(), BackendClosed> {
+        match &self.step_view {
+            StepView::Welcome => {
+                self.step_view = StepView::relays_view(conn)?;
+            }
+            StepView::Relays { .. } => {
+                self.step_view = StepView::loading_client(conn)?;
+            }
+            StepView::LoadingClient => {}
+        }
+        Ok(())
+    }
+    fn previous_step(&mut self, _conn: &mut BackEndConnection) {
+        match &self.step_view {
+            StepView::Welcome => {}
+            StepView::Relays { .. } => self.step_view = StepView::Welcome,
+            // StepView::DownloadEvents { .. } => {}
+            StepView::LoadingClient => {}
+        }
+    }
+}
+
+impl Route for State {
+    type Message = Message;
+    fn subscription(&self) -> Subscription<Self::Message> {
         match &self.step_view {
             StepView::Relays { relays_added, .. } => {
                 if relays_added.is_empty() {
@@ -387,61 +420,47 @@ impl State {
             _ => iced::Subscription::none(),
         }
     }
-    pub fn new() -> Self {
-        Self {
-            step_view: StepView::Welcome,
-        }
-    }
-    fn to_next_step(&mut self, conn: &mut BackEndConnection) {
-        match &self.step_view {
-            StepView::Welcome => {
-                self.step_view = StepView::relays_view(conn);
-            }
-            StepView::Relays { .. } => self.step_view = StepView::loading_client(conn),
-            StepView::LoadingClient => {}
-        }
-    }
-    fn to_previous_step(&mut self, _conn: &mut BackEndConnection) {
-        match &self.step_view {
-            StepView::Welcome => {}
-            StepView::Relays { .. } => self.step_view = StepView::Welcome,
-            // StepView::DownloadEvents { .. } => {}
-            StepView::LoadingClient => {}
-        }
-    }
+    fn update(
+        &mut self,
+        message: Message,
+        conn: &mut BackEndConnection,
+    ) -> Result<RouterCommand<Self::Message>, BackendClosed> {
+        let mut command = RouterCommand::new();
 
-    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
         match message {
             Message::Tick => {
-                conn.send(net::ToBackend::GetRelayStatusList);
+                conn.send(ToBackend::GetRelayInformation)?;
             }
             Message::OpenLink(url) => {
                 if let Err(e) = webbrowser::open(url) {
                     tracing::error!("Failed to open link: {}", e);
                 }
             }
-            Message::RelayMessage(msg) => {
+            Message::RelayRow(msg) => {
                 if let StepView::Relays { relays_added, .. } = &mut self.step_view {
                     if let Some(row) = relays_added.iter_mut().find(|r| r.id == msg.from) {
-                        let _ = row.update(msg.message, conn);
+                        let _ = row.update(msg.message, conn)?;
                     }
                 }
             }
-            Message::Exit => (),
-            Message::ToNextStep => self.to_next_step(conn),
-            Message::ToPreviousStep => self.to_previous_step(conn),
+            Message::Logout => {
+                conn.send(ToBackend::Logout)?;
+                command.change_route(GoToView::Logout);
+            }
+            Message::ToNextStep => {
+                self.next_step(conn)?;
+            }
+            Message::ToPreviousStep => self.previous_step(conn),
             Message::AddRelay(relay_url) => {
                 if let StepView::Relays { .. } = &mut self.step_view {
-                    let db_relay = DbRelay::new(relay_url);
-                    conn.send(net::ToBackend::AddRelay(db_relay));
+                    conn.send(ToBackend::AddRelay(relay_url))?;
                 }
             }
             Message::AddAllRelays => {
                 if let StepView::Relays { .. } = &mut self.step_view {
                     for relay_url in RELAY_SUGGESTIONS {
                         if let Ok(relay_url) = nostr::Url::parse(relay_url) {
-                            let db_relay = DbRelay::new(relay_url);
-                            conn.send(net::ToBackend::AddRelay(db_relay));
+                            conn.send(ToBackend::AddRelay(relay_url))?;
                         }
                     }
                 }
@@ -477,8 +496,7 @@ impl State {
                 {
                     match nostr::Url::parse(&relay_url) {
                         Ok(url) => {
-                            let db_relay = DbRelay::new(url);
-                            conn.send(net::ToBackend::AddRelay(db_relay));
+                            conn.send(ToBackend::AddRelay(url))?;
                             add_relay_modal.close();
                         }
                         Err(_e) => add_relay_modal.error(),
@@ -494,21 +512,30 @@ impl State {
                 }
             }
         }
+        Ok(command)
     }
-    pub fn backend_event(&mut self, event: BackendEvent, conn: &mut BackEndConnection) {
+
+    fn backend_event(
+        &mut self,
+        event: BackendEvent,
+        _conn: &mut BackEndConnection,
+    ) -> Result<RouterCommand<Self::Message>, BackendClosed> {
+        let mut command = RouterCommand::new();
+
         match &mut self.step_view {
             StepView::Relays {
                 relays_added,
                 relays_suggestion,
                 ..
             } => match event {
-                BackendEvent::GotRelayStatusList(list) => {
-                    for (url, status) in list {
-                        if let Some(row) = relays_added.iter_mut().find(|r| r.db_relay.url == url) {
-                            let _ = row.update(relay_row::Message::UpdateRelayStatus(status), conn);
-                        } else {
-                            tracing::warn!("Got status for unknown relay: {}", url);
-                        }
+                BackendEvent::RelayUpdated(db_relay) => {
+                    if let Some(row) = relays_added
+                        .iter_mut()
+                        .find(|row| row.db_relay.url == db_relay.url)
+                    {
+                        row.relay_updated(db_relay);
+                    } else {
+                        tracing::warn!("Got information for unknown relay: {}", db_relay.url);
                     }
                 }
                 BackendEvent::GotRelays(mut db_relays) => {
@@ -519,46 +546,33 @@ impl State {
                     *relays_added = db_relays
                         .into_iter()
                         .enumerate()
-                        .map(|(idx, db_relay)| RelayRow::new(idx as i32, db_relay, conn))
+                        .map(|(idx, db_relay)| RelayRow::new(idx as i32, db_relay))
                         .collect();
                 }
                 BackendEvent::RelayCreated(db_relay) => {
-                    relays_suggestion.sort_by(|a, b| a.cmp(&b));
-                    relays_added.sort_by(|a, b| a.db_relay.url.cmp(&b.db_relay.url));
-
                     relays_suggestion.retain(|url| url != &db_relay.url);
-                    relays_added.push(RelayRow::new(relays_added.len() as i32, db_relay, conn));
+                    relays_added.push(RelayRow::new(relays_added.len() as i32, db_relay));
                 }
-                BackendEvent::RelayDeleted(db_relay) => {
-                    relays_suggestion.sort_by(|a, b| a.cmp(&b));
-                    relays_added.sort_by(|a, b| a.db_relay.url.cmp(&b.db_relay.url));
-
-                    relays_added.retain(|row| &row.db_relay.url != &db_relay.url);
-                    relays_suggestion.push(db_relay.url);
+                BackendEvent::RelayDeleted(url) => {
+                    relays_added.retain(|row| row.db_relay.url != url);
+                    relays_suggestion.push(url);
                 }
-                other => {
-                    relays_added
-                        .iter_mut()
-                        .for_each(|r| r.backend_event(other.clone(), conn));
-                }
+                _ => (),
             },
-            _ => (),
+            StepView::Welcome => (),
+            StepView::LoadingClient => {
+                if let BackendEvent::FinishedPreparing = event {
+                    command.change_route(GoToView::Chat);
+                }
+            }
         }
+
+        Ok(command)
     }
-    pub fn view(&self) -> Element<Message> {
+
+    fn view(&self, _selected_theme: Option<style::Theme>) -> Element<Self::Message> {
         self.step_view.view()
     }
-}
-
-fn _generate_random_ipv4() -> Ipv4Addr {
-    let mut rng = thread_rng();
-    let ip = Ipv4Addr::new(
-        rng.gen_range(1..=255),
-        rng.gen_range(0..=255),
-        rng.gen_range(0..=255),
-        rng.gen_range(0..=255),
-    );
-    ip
 }
 
 const WELCOME_IMAGE_MAX_WIDTH: f32 = 300.0;

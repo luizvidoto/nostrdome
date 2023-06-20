@@ -20,8 +20,24 @@ fn regular_icon(unicode: char) -> Text<'static> {
         .size(20)
 }
 
+pub fn dots_vertical_icon() -> Text<'static> {
+    solid_icon('\u{f142}')
+}
+
+pub fn wand_icon() -> Text<'static> {
+    solid_icon('\u{E2CA}')
+}
+
 pub fn refresh_icon() -> Text<'static> {
     solid_icon('\u{F021}')
+}
+
+pub fn home_icon() -> Text<'static> {
+    solid_icon('\u{F015}')
+}
+
+pub fn regular_bell_icon() -> Text<'static> {
+    regular_icon('\u{F0F3}')
 }
 
 pub fn retweet_icon() -> Text<'static> {
@@ -51,6 +67,10 @@ pub fn signal_icon() -> Text<'static> {
 
 pub fn server_icon() -> Text<'static> {
     solid_icon('\u{F233}')
+}
+
+pub fn search_icon() -> Text<'static> {
+    solid_icon('\u{F002}')
 }
 
 pub fn solid_circle_icon() -> Text<'static> {

@@ -14,7 +14,6 @@ pub enum CMessage<M: Clone + Debug> {
     UnderlayMessage(M),
 }
 
-#[derive(Debug, Clone)]
 pub struct ProfileView {
     contact: DbContact,
 }

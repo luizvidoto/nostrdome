@@ -6,6 +6,7 @@ use crate::components::common_scrollable;
 use crate::components::text::title;
 use crate::components::text_input_group::TextInputGroup;
 use crate::db::{DbRelay, DbRelayResponse};
+use crate::error::BackendClosed;
 use crate::icon::satellite_icon;
 use crate::net::{BackEndConnection, BackendEvent, ToBackend};
 use crate::style;
@@ -23,7 +24,6 @@ pub enum Message {
     LNChange(String),
     NIP05Change(String),
     SavePress,
-    BackEndEvent(BackendEvent),
     RelaysConfirmationPress(Option<AccountRelaysResponse>),
 }
 
@@ -44,7 +44,6 @@ impl AccountRelaysResponse {
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct State {
     name: String,
     user_name: String,
@@ -61,10 +60,10 @@ pub struct State {
     relays_response: Option<AccountRelaysResponse>,
 }
 impl State {
-    pub fn new(conn: &mut BackEndConnection) -> Self {
-        conn.send(ToBackend::GetUserProfileMeta);
-        conn.send(ToBackend::FetchRelayResponsesUserProfile);
-        Self {
+    pub fn new(conn: &mut BackEndConnection) -> Result<Self, BackendClosed> {
+        conn.send(ToBackend::GetUserProfileMeta)?;
+        conn.send(ToBackend::FetchRelayResponsesUserProfile)?;
+        Ok(Self {
             name: "".into(),
             user_name: "".into(),
             picture_url: "".into(),
@@ -78,40 +77,45 @@ impl State {
             website_url_is_invalid: false,
             banner_url_is_invalid: false,
             relays_response: None,
-        }
+        })
     }
 
-    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) {
+    pub fn backend_event(
+        &mut self,
+        event: BackendEvent,
+        _conn: &mut BackEndConnection,
+    ) -> Result<(), BackendClosed> {
+        match event {
+            BackendEvent::GotRelayResponsesUserProfile {
+                responses,
+                all_relays,
+            } => {
+                self.relays_response = Some(AccountRelaysResponse::new(responses, all_relays));
+            }
+            BackendEvent::GotUserProfileCache(Some(profile_cache)) => {
+                let meta = profile_cache.metadata;
+                self.name = meta.name.unwrap_or("".into());
+                self.user_name = meta.display_name.unwrap_or("".into());
+                self.picture_url = meta.picture.unwrap_or("".into());
+                self.about = meta.about.unwrap_or("".into());
+                self.banner = meta.banner.unwrap_or("".into());
+                self.website = meta.website.unwrap_or("".into());
+                self.ln_url = meta.lud06.unwrap_or("".into());
+                self.ln_addrs = meta.lud16.unwrap_or("".into());
+                self.nostr_addrs = meta.nip05.unwrap_or("".into());
+            }
+            _ => (),
+        }
+        Ok(())
+    }
+
+    pub fn update(
+        &mut self,
+        message: Message,
+        conn: &mut BackEndConnection,
+    ) -> Result<(), BackendClosed> {
         match message {
             Message::RelaysConfirmationPress(_) => (),
-            Message::BackEndEvent(back_ev) => match back_ev {
-                BackendEvent::ConfirmedMetadata { is_user, .. } => {
-                    if is_user {
-                        conn.send(ToBackend::FetchRelayResponsesUserProfile);
-                    }
-                }
-                BackendEvent::GotRelayResponsesUserProfile {
-                    responses,
-                    all_relays,
-                } => {
-                    self.relays_response = Some(AccountRelaysResponse::new(responses, all_relays));
-                }
-                BackendEvent::GotUserProfileCache(cache) => {
-                    if let Some(profile_cache) = cache {
-                        let meta = profile_cache.metadata;
-                        self.name = meta.name.unwrap_or("".into());
-                        self.user_name = meta.display_name.unwrap_or("".into());
-                        self.picture_url = meta.picture.unwrap_or("".into());
-                        self.about = meta.about.unwrap_or("".into());
-                        self.banner = meta.banner.unwrap_or("".into());
-                        self.website = meta.website.unwrap_or("".into());
-                        self.ln_url = meta.lud06.unwrap_or("".into());
-                        self.ln_addrs = meta.lud16.unwrap_or("".into());
-                        self.nostr_addrs = meta.nip05.unwrap_or("".into());
-                    }
-                }
-                _ => (),
-            },
             Message::ProfileNameChange(name) => self.name = name,
             Message::UserNameChange(user_name) => self.user_name = user_name,
             Message::AboutChange(about) => self.about = about,
@@ -133,10 +137,11 @@ impl State {
             Message::SavePress => {
                 let meta = self.make_meta();
                 if self.all_valid() {
-                    conn.send(ToBackend::UpdateUserProfileMeta(meta))
+                    conn.send(ToBackend::UpdateUserProfileMeta(meta))?;
                 }
             }
         }
+        Ok(())
     }
 
     fn make_meta(&mut self) -> Metadata {
@@ -193,7 +198,7 @@ impl State {
                 ))
                 .style(style::Button::MenuBtn)
                 .padding(5),
-                "Relays Confirmation",
+                "Profile Confirmations",
                 tooltip::Position::Left,
             )
             .style(style::Container::TooltipBg)
@@ -302,7 +307,12 @@ impl State {
             .width(Length::Fill)
             .height(FOOTER_HEIGHT);
 
-        container(column![title_group, form, footer_row].spacing(10)).into()
+        container(
+            column![title_group, form, footer_row]
+                .padding([20, 20, 0, 0])
+                .spacing(10),
+        )
+        .into()
     }
 }
 

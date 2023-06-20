@@ -1,20 +1,23 @@
 use chrono::NaiveDateTime;
-use iced::widget::{column, container, row, text, Space};
+use iced::widget::{button, column, container, row, text};
 use iced::Point;
 use iced::{alignment, Length};
-use nostr::{secp256k1::XOnlyPublicKey, EventId};
+use nostr::secp256k1::XOnlyPublicKey;
+use nostr::EventId;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::components::MouseArea;
-use crate::db::MessageStatus;
+use crate::db::{DbChannelMessage, MessageStatus};
 use crate::icon::{check_icon, double_check_icon, xmark_icon};
-use crate::utils::from_naive_utc_to_local;
-use crate::widget::Element;
+use crate::utils::{from_naive_utc_to_local, hide_string};
+use crate::widget::{Element, Text};
 use crate::{
-    db::{DbContact, DbEvent, DbMessage},
+    db::{DbContact, DbMessage},
     style,
 };
+
+use super::PendingEvent;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -24,148 +27,274 @@ pub enum Error {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    None,
-    ChatRightClick((ChatMessage, Point)),
-}
-
-pub trait EventLike {
-    fn created_at(&self) -> i64;
-    fn pubkey(&self) -> XOnlyPublicKey;
-}
-
-impl EventLike for nostr::Event {
-    fn created_at(&self) -> i64 {
-        self.created_at.as_i64()
-    }
-    fn pubkey(&self) -> XOnlyPublicKey {
-        self.pubkey.clone()
-    }
-}
-
-impl EventLike for DbEvent {
-    fn created_at(&self) -> i64 {
-        self.local_creation.timestamp_millis()
-    }
-    fn pubkey(&self) -> XOnlyPublicKey {
-        self.pubkey.clone()
-    }
+    ChatRightClick(ChatMessage, Point),
+    UserNameClick(XOnlyPublicKey),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatMessage {
-    pub msg_id: i64,
-    pub display_time: NaiveDateTime,
-    pub content: String,
-    pub is_from_user: bool,
-    pub select_name: String,
-    pub event_id: i64,
-    pub event_hash: EventId,
-    pub status: MessageStatus,
+pub enum UserMessage {
+    Pending {
+        event_hash: EventId,
+        content: String,
+        display_time: Option<NaiveDateTime>,
+    },
+    Confirmed {
+        content: String,
+        display_time: NaiveDateTime,
+        event_id: i64,
+        status: MessageStatus,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ChatMessage {
+    UserMessage(UserMessage),
+    ContactMessage {
+        content: String,
+        author: XOnlyPublicKey,
+        display_name: String,
+        display_time: NaiveDateTime,
+        event_id: i64,
+        status: MessageStatus,
+    },
 }
 
 impl ChatMessage {
-    pub fn from_db_message(
-        keys: &nostr::Keys,
-        db_message: &DbMessage,
-        contact: &DbContact,
-    ) -> Result<Self, Error> {
-        let content = db_message.decrypt_message(keys)?;
-        Ok(Self::from_db_message_content(
-            keys, db_message, contact, &content,
-        )?)
+    pub fn is_pending(&self) -> bool {
+        if let Self::UserMessage(UserMessage::Pending { .. }) = self {
+            return true;
+        }
+        false
     }
-
-    pub fn from_db_message_content(
-        keys: &nostr::Keys,
-        db_message: &DbMessage,
-        contact: &DbContact,
-        content: &str,
-    ) -> Result<Self, Error> {
-        let is_from_user = db_message.im_author(&keys.public_key());
-        let msg_id = db_message.id()?;
-        let event_id = db_message.event_id()?;
-        let event_hash = db_message.event_hash()?;
-        Ok(Self {
+    pub fn match_pending_hash(&self, event_hash: &EventId) -> bool {
+        if let Self::UserMessage(UserMessage::Pending {
+            event_hash: pending_hash,
+            ..
+        }) = self
+        {
+            return pending_hash == event_hash;
+        }
+        false
+    }
+    pub fn event_id(&self) -> Option<i64> {
+        match self {
+            Self::UserMessage(user) => match user {
+                UserMessage::Pending { .. } => None,
+                UserMessage::Confirmed { event_id, .. } => Some(*event_id),
+            },
+            Self::ContactMessage { event_id, .. } => Some(*event_id),
+        }
+    }
+    pub fn pending(pending: PendingEvent, content: &str) -> Self {
+        let user_msg = UserMessage::Pending {
+            event_hash: pending.event_hash().to_owned(),
             content: content.to_owned(),
-            display_time: db_message.display_time(),
-            is_from_user,
-            select_name: contact.select_name(),
-            msg_id,
-            event_id,
-            event_hash,
-            status: db_message.status(),
-        })
+            display_time: pending.display_time().ok(),
+        };
+        Self::UserMessage(user_msg)
     }
 
-    pub fn confirm_msg(&mut self, chat_msg: &ChatMessage) {
-        self.display_time = chat_msg.display_time;
-        self.status = chat_msg.status;
+    pub fn confirmed_users(db_message: &DbMessage, content: &str) -> Self {
+        let user_msg = UserMessage::Confirmed {
+            content: content.to_owned(),
+            display_time: db_message.created_at.to_owned(),
+            event_id: db_message.event_id,
+            status: db_message.status,
+        };
+        Self::UserMessage(user_msg)
+    }
+    pub fn confirmed_contacts(db_message: &DbMessage, contact: &DbContact, content: &str) -> Self {
+        Self::ContactMessage {
+            content: content.to_owned(),
+            author: contact.pubkey().to_owned(),
+            display_time: db_message.created_at.to_owned(),
+            display_name: contact.select_name(),
+            event_id: db_message.event_id,
+            status: db_message.status,
+        }
     }
 
-    pub fn view<'a>(&'a self) -> Element<'a, Message> {
-        let chat_alignment = match self.is_from_user {
-            false => alignment::Horizontal::Left,
-            true => alignment::Horizontal::Right,
-        };
+    pub fn show_name(&self, previous_msg: Option<&Self>) -> bool {
+        match self {
+            Self::UserMessage { .. } => false,
+            Self::ContactMessage { display_name, .. } => match previous_msg {
+                Some(Self::UserMessage { .. }) => true,
+                Some(Self::ContactMessage {
+                    display_name: prev_display_name,
+                    ..
+                }) => prev_display_name != display_name,
+                None => true,
+            },
+        }
+    }
 
-        let container_style = if self.is_from_user {
-            style::Container::SentMessage
-        } else {
-            style::Container::ReceivedMessage
-        };
+    fn alignment(&self) -> alignment::Horizontal {
+        match self {
+            ChatMessage::ContactMessage { .. } => alignment::Horizontal::Left,
+            ChatMessage::UserMessage(_) => alignment::Horizontal::Right,
+        }
+    }
 
-        // TODO: to local timezone
-        let local_time = from_naive_utc_to_local(self.display_time);
-        let local_time = local_time.time().format("%H:%M").to_string();
-        let data_cp = column![container(
-            text(&local_time)
-                .style(style::Text::ChatMessageDate)
-                .size(16)
-        )];
+    fn style(&self) -> style::Container {
+        match self {
+            ChatMessage::ContactMessage { .. } => style::Container::ReceivedMessage,
+            ChatMessage::UserMessage(_) => style::Container::SentMessage,
+        }
+    }
 
-        let status = {
-            let mut status = if self.is_from_user {
-                match self.status {
-                    MessageStatus::Offline => xmark_icon().size(14),
+    fn status<'a, M: 'a>(&'a self) -> Element<'a, M> {
+        let style = match self {
+            ChatMessage::ContactMessage { .. } => check_icon().size(14),
+            ChatMessage::UserMessage(user) => match user {
+                UserMessage::Pending { .. } => xmark_icon().size(14),
+                UserMessage::Confirmed { status, .. } => match status {
+                    MessageStatus::Pending => xmark_icon().size(14),
                     MessageStatus::Delivered => check_icon().size(14),
                     MessageStatus::Seen => double_check_icon().size(14),
-                }
-            } else {
-                text("")
-            };
-            status = status.style(style::Text::ChatMessageDate);
-            status
+                },
+            },
         };
+        style.style(style::Text::Alpha(0.5)).into()
+    }
 
-        // text_input("", &self.content)
-        //         .style(style::TextInput::Invisible)
-        //         .on_input(|_| Message::None)
-        //         .width(Length::Fill)
-        //         .size(18)
+    pub fn display_time(&self) -> Option<&NaiveDateTime> {
+        match self {
+            ChatMessage::UserMessage(user) => match user {
+                UserMessage::Pending { display_time, .. } => display_time.as_ref(),
+                UserMessage::Confirmed { display_time, .. } => Some(display_time),
+            },
+            ChatMessage::ContactMessage { display_time, .. } => Some(display_time),
+        }
+    }
 
-        let msg_content = container(text(&self.content).size(18));
-        let status_row = container(
-            row![Space::new(Length::Shrink, Length::Shrink), data_cp, status]
-                .spacing(5)
-                .align_items(alignment::Alignment::Center),
+    fn local_time(&self) -> Text<'_> {
+        make_local_time(self.display_time())
+    }
+
+    fn name(&self, show_name: bool) -> Element<'_, Message> {
+        if !show_name {
+            return text("").into();
+        }
+
+        match self {
+            ChatMessage::UserMessage(_) => text("").into(),
+            ChatMessage::ContactMessage {
+                display_name,
+                author,
+                ..
+            } => {
+                // only shows name if is in channel view and
+                // previous chat message is a different user
+                button(text(display_name))
+                    .on_press(Message::UserNameClick(*author))
+                    .style(style::Button::Invisible)
+                    .into()
+            }
+        }
+    }
+    pub fn content(&self) -> &str {
+        match self {
+            ChatMessage::UserMessage(user) => match user {
+                UserMessage::Pending { content, .. } => content,
+                UserMessage::Confirmed { content, .. } => content,
+            },
+            ChatMessage::ContactMessage { content, .. } => content,
+        }
+    }
+
+    pub fn view(&self, show_name: bool) -> Element<'_, Message> {
+        make_chat_view(
+            self.alignment(),
+            self.style(),
+            self.name(show_name),
+            self.status(),
+            self.local_time(),
+            self.content(),
+            |p| Message::ChatRightClick(self.clone(), p),
         )
-        .width(Length::Shrink);
+    }
 
-        let message_container = container(column![msg_content, status_row].spacing(5))
-            .width(Length::Shrink)
-            .max_width(CHAT_MESSAGE_MAX_WIDTH)
-            .padding([5, 10])
-            .style(container_style);
+    pub(crate) fn update_display_name(&mut self, pubkey: &XOnlyPublicKey, name: String) {
+        match self {
+            ChatMessage::UserMessage(_) => (),
+            ChatMessage::ContactMessage {
+                author,
+                display_name,
+                ..
+            } => {
+                if author == pubkey {
+                    *display_name = name;
+                }
+            }
+        }
+    }
+}
 
-        let mouse_area = MouseArea::new(message_container)
-            .on_right_release(|p| Message::ChatRightClick((self.clone(), p)));
+fn make_local_time<'a>(display_time: Option<&NaiveDateTime>) -> Text<'a> {
+    if let Some(display_time) = display_time {
+        let local_time = from_naive_utc_to_local(*display_time);
+        let local_time = local_time.time().format("%H:%M").to_string();
+        text(&local_time).style(style::Text::Alpha(0.5)).size(16)
+    } else {
+        text("")
+    }
+}
 
-        container(mouse_area)
-            .width(Length::Fill)
-            .center_y()
-            .align_x(chat_alignment)
-            .padding([2, 20])
-            .into()
+fn make_chat_view<'a, F>(
+    alignment: alignment::Horizontal,
+    container_style: style::Container,
+    name: impl Into<Element<'a, Message>>,
+    status: impl Into<Element<'a, Message>>,
+    local_time: impl Into<Element<'a, Message>>,
+    content: &'a str,
+    on_right_press: F,
+) -> Element<'a, Message>
+where
+    F: 'a + Fn(Point) -> Message,
+{
+    let content = text(content).size(18);
+    let status_row = row![local_time.into(), status.into()].spacing(5);
+    let message_container = column![name.into(), content, status_row]
+        // this works but all the items are aligned to the right
+        // and I cant realign them to the left after this
+        // .align_items(alignment::Alignment::End)
+        .spacing(5);
+
+    let message_container = container(message_container)
+        .max_width(CHAT_MESSAGE_MAX_WIDTH)
+        .padding([5, 10])
+        .style(container_style);
+
+    let mouse_area = MouseArea::new(message_container).on_right_release(on_right_press);
+
+    container(mouse_area)
+        .width(Length::Fill)
+        .center_y()
+        .align_x(alignment)
+        .padding([2, 20])
+        .into()
+}
+
+impl From<DbChannelMessage> for ChatMessage {
+    fn from(ch_msg: DbChannelMessage) -> Self {
+        if ch_msg.is_users {
+            Self::UserMessage(UserMessage::Confirmed {
+                content: ch_msg.content,
+                display_time: ch_msg.created_at,
+                event_id: ch_msg.event_id,
+                status: MessageStatus::Delivered,
+            })
+        } else {
+            let display_name = hide_string(&ch_msg.display_name(), 6);
+            Self::ContactMessage {
+                author: ch_msg.author,
+                display_time: ch_msg.created_at,
+                content: ch_msg.content,
+                display_name,
+                event_id: ch_msg.event_id,
+                status: MessageStatus::Delivered,
+            }
+        }
     }
 }
 

@@ -1,15 +1,20 @@
 use futures::channel::mpsc;
-use nostr::{secp256k1::XOnlyPublicKey, EventId};
 use thiserror::Error;
 
-// pub type Result<T> = std::result::Result<T, Error>;
-
 /// Errors that can occur in the nostrtalk crate
-
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("{0}")]
+    FromConfig(#[from] crate::config::Error),
+
+    #[error("{0}")]
+    FromDbChannelMessage(#[from] crate::db::channel_message::Error),
+
+    #[error("{0}")]
+    FromChannelSubscription(#[from] crate::db::channel_subscription::Error),
+
     #[error("SendError: {0}")]
-    FromSendError(#[from] mpsc::SendError),
+    FromSend(#[from] mpsc::SendError),
 
     // I/O Error
     #[error("I/O Error: {0}")]
@@ -19,58 +24,61 @@ pub enum Error {
     FromSerdeJson(#[from] serde_json::Error),
 
     #[error("Reqwest error: {0}")]
-    FromReqwestClientError(#[from] crate::net::reqwest_client::Error),
+    FromReqwestClient(#[from] crate::net::reqwest_client::Error),
 
     #[error("Nostr Client Error: {0}")]
-    FromNostrClientError(#[from] ns_client::Error),
+    FromNostrClient(#[from] ns_client::Error),
 
     #[error("Nostr Client Sdk Error: {0}")]
     FromNostrClientSdkError(#[from] nostr_sdk::client::Error),
 
     #[error("{0}")]
-    FromChatMessageError(#[from] crate::types::chat_message::Error),
+    FromBackendState(#[from] crate::types::backend_state::Error),
 
     #[error("{0}")]
-    FromChannelCacheError(#[from] crate::db::channel_cache::Error),
+    FromUtils(#[from] crate::utils::Error),
 
     #[error("{0}")]
-    FromContactError(#[from] crate::db::contact::Error),
+    FromChannelMetadata(#[from] crate::types::channel_metadata::Error),
 
     #[error("{0}")]
-    FromDatabaseError(#[from] crate::db::database::Error),
+    FromChatMessage(#[from] crate::types::chat_message::Error),
 
     #[error("{0}")]
-    FromEventError(#[from] crate::db::event::Error),
+    FromImageCache(#[from] crate::db::image_cache::Error),
 
     #[error("{0}")]
-    FromMessageError(#[from] crate::db::message::Error),
+    FromChannelCache(#[from] crate::db::channel_cache::Error),
 
     #[error("{0}")]
-    FromProfileCacheError(#[from] crate::db::profile_cache::Error),
+    FromContact(#[from] crate::db::contact::Error),
 
     #[error("{0}")]
-    FromRelayError(#[from] crate::db::relay::Error),
+    FromDatabase(#[from] crate::db::database::Error),
 
     #[error("{0}")]
-    FromRelayResponseError(#[from] crate::db::relay_response::Error),
+    FromEvent(#[from] crate::db::event::Error),
 
     #[error("{0}")]
-    FromUserConfigError(#[from] crate::db::user_config::Error),
+    FromMessage(#[from] crate::db::message::Error),
 
     #[error("{0}")]
-    FromEventBuilderError(#[from] crate::net::operations::builder::Error),
+    FromProfileCache(#[from] crate::db::profile_cache::Error),
 
     #[error("{0}")]
-    FromNtpError(#[from] crate::net::ntp::Error),
+    FromRelay(#[from] crate::db::relay::Error),
 
-    #[error("Failed to send to backend input channel: {0}")]
-    FailedToSendBackendInput(String),
+    #[error("{0}")]
+    FromRelayResponse(#[from] crate::db::relay_response::Error),
+
+    #[error("{0}")]
+    FromUserConfig(#[from] crate::db::user_config::Error),
+
+    #[error("{0}")]
+    FromNtp(#[from] crate::net::ntp::NtpError),
 
     #[error("App didn't ask for kind: {0:?}")]
     NotSubscribedToKind(nostr::Kind),
-
-    #[error("Contact not found - pubkey: {0:?}")]
-    ContactNotFound(XOnlyPublicKey),
 
     #[error("Not allowed to insert own pubkey as a contact")]
     SameContactInsert,
@@ -78,18 +86,23 @@ pub enum Error {
     #[error("Not allowed to update to own pubkey as a contact")]
     SameContactUpdate,
 
-    #[error("Event need to be confirmed")]
-    NotConfirmedEvent(nostr::EventId),
+    #[error("{0}")]
+    FromUrlParse(#[from] url::ParseError),
 
-    #[error("Trying to find message with event_id: {0}")]
-    EventWithoutMessage(i64),
+    #[error("Closed backend channel")]
+    ClosedBackend(#[from] BackendClosed),
 
-    #[error("Inserting event with the same id")]
-    DuplicatedEvent,
+    #[error("Channel id not found in event tags: EventID: {0}")]
+    ChannelIdNotFound(nostr::EventId),
 
-    #[error("Event not in database: {0}")]
-    EventNotInDatabase(nostr::EventId),
+    #[error("Unexpected event kind: {0}")]
+    UnexpectedEventKind(u32),
+}
 
-    #[error("Failed to insert event")]
-    FailedToInsert,
+#[derive(Error, Debug)]
+pub struct BackendClosed;
+impl std::fmt::Display for BackendClosed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(Backend channel closed)")
+    }
 }

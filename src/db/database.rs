@@ -38,21 +38,18 @@ impl Database {
 }
 
 async fn db_pool(pubkey: &str) -> Result<SqlitePool, Error> {
-    tracing::info!("NEW DATABASE_pubkey {:?}", pubkey);
     let dirs = ProjectDirs::from(APP_PROJECT_DIRS.0, APP_PROJECT_DIRS.1, APP_PROJECT_DIRS.2)
         .ok_or(Error::NotFoundProjectDirectory)?;
-    tracing::debug!("Creating data directory");
-    let project_dir = dirs.data_dir();
-    std::fs::create_dir_all(project_dir)?;
+    let data_dir = dirs.data_dir();
+    std::fs::create_dir_all(data_dir)?;
 
-    tracing::debug!("Creating database");
     let db_url = if IN_MEMORY {
         "sqlite::memory:".to_owned()
     } else {
         let mut path_ext = String::new();
-        for dir in project_dir.iter() {
+        for dir in data_dir.iter() {
             if let Some(p) = dir.to_str() {
-                if p.contains("\\") || p.contains("/") {
+                if p.contains('\\') || p.contains('/') {
                     continue;
                 }
                 path_ext.push_str(&format!("/{}", p));
@@ -70,32 +67,39 @@ async fn db_pool(pubkey: &str) -> Result<SqlitePool, Error> {
 async fn get_cache_pool() -> Result<SqlitePool, Error> {
     let dirs = ProjectDirs::from(APP_PROJECT_DIRS.0, APP_PROJECT_DIRS.1, APP_PROJECT_DIRS.2)
         .ok_or(Error::NotFoundProjectDirectory)?;
-    tracing::debug!("Creating cache directory");
-    let project_dir = dirs.cache_dir();
-    std::fs::create_dir_all(project_dir)?;
+    let cache_dir = dirs.cache_dir();
+    std::fs::create_dir_all(cache_dir)?;
 
-    tracing::debug!("Creating cache database");
-    let mut path_ext = String::new();
-    for dir in project_dir.iter() {
-        if let Some(p) = dir.to_str() {
-            if p.contains("\\") || p.contains("/") {
-                continue;
+    let db_url = if IN_MEMORY {
+        "sqlite::memory:".to_owned()
+    } else {
+        let mut path_ext = String::new();
+        for dir in cache_dir.iter() {
+            if let Some(p) = dir.to_str() {
+                if p.contains('\\') || p.contains('/') {
+                    continue;
+                }
+                path_ext.push_str(&format!("/{}", p));
             }
-            path_ext.push_str(&format!("/{}", p));
         }
-    }
-    let db_url = format!("sqlite://{}.db3?mode=rwc", &path_ext);
+        format!("sqlite://{}.db3?mode=rwc", &path_ext)
+    };
 
     tracing::info!("Connecting to cache database");
-    let pool = SqlitePool::connect(&db_url).await?;
+    let cache_pool = SqlitePool::connect(&db_url).await?;
 
     tracing::info!("Cache setup");
 
-    for sql in CACHE_SETUP {
-        sqlx::query(sql).execute(&pool).await?;
-    }
+    upgrade_cache_db(&cache_pool).await?;
 
-    Ok(pool)
+    Ok(cache_pool)
+}
+
+pub async fn upgrade_cache_db(cache_pool: &SqlitePool) -> Result<(), Error> {
+    for sql in CACHE_SETUP {
+        sqlx::query(sql).execute(cache_pool).await?;
+    }
+    Ok(())
 }
 
 /// Upgrade DB to latest version, and execute pragma settings
@@ -178,21 +182,24 @@ const _UPGRADE_SQL: [&str; 0] = [
 /// Latest database version
 pub const DB_VERSION: usize = 1;
 
-const INITIAL_SETUP: [&str; 8] = [
+const INITIAL_SETUP: [&str; 9] = [
     include_str!("../../migrations/1_setup.sql"),
     include_str!("../../migrations/2_event.sql"),
     include_str!("../../migrations/3_relay.sql"),
-    include_str!("../../migrations/4_tag.sql"),
     include_str!("../../migrations/5_contact.sql"),
     include_str!("../../migrations/6_message.sql"),
     include_str!("../../migrations/7_user_config.sql"),
     include_str!("../../migrations/8_relay_response.sql"),
+    include_str!("../../migrations/9_channel_message.sql"),
+    include_str!("../../migrations/10_subscribed_channel.sql"),
 ];
 
-const CACHE_SETUP: [&str; 3] = [
+const CACHE_SETUP: [&str; 5] = [
     include_str!("../../migrations/cache/1_setup.sql"),
     include_str!("../../migrations/cache/2_profile_meta_cache.sql"),
     include_str!("../../migrations/cache/3_channel_cache.sql"),
+    include_str!("../../migrations/cache/4_image_cache.sql"),
+    include_str!("../../migrations/cache/5_channel_member_map.sql"),
 ];
 
 const IN_MEMORY: bool = false;

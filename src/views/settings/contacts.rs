@@ -3,11 +3,12 @@ use iced::{Alignment, Length};
 
 use crate::components::{common_scrollable, contact_row, ContactRow};
 use crate::db::{DbRelay, DbRelayResponse};
-use crate::icon::{import_icon, plus_icon, refresh_icon, satellite_icon, to_cloud_icon};
+use crate::error::BackendClosed;
+use crate::icon::{import_icon, plus_icon, satellite_icon};
 use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
 use crate::utils::contact_matches_search_full;
-use crate::views::RouterMessage;
+use crate::views::GoToView;
 use crate::widget::Element;
 use crate::{components::text::title, db::DbContact};
 
@@ -15,17 +16,14 @@ use super::SettingsRouterMessage;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    BackEndEvent(BackendEvent),
     DeleteContact(DbContact),
     OpenProfileModal(DbContact),
-    ContactRowMessage(contact_row::Message),
+    ContactRow(contact_row::Message),
     OpenAddContactModal,
     OpenImportContactModal,
     SearchContactInputChange(String),
-    RefreshContacts,
-    SendContactList,
     RelaysConfirmationPress(Option<ContactsRelaysResponse>),
-    SendMessageTo(DbContact),
+    SendDMTo(DbContact),
 }
 
 #[derive(Debug, Clone)]
@@ -45,98 +43,109 @@ impl ContactsRelaysResponse {
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct State {
     contacts: Vec<DbContact>,
     search_contact_input: String,
     relays_response: Option<ContactsRelaysResponse>,
 }
 impl State {
-    pub fn new(conn: &mut BackEndConnection) -> Self {
-        conn.send(net::ToBackend::FetchContacts);
-        conn.send(net::ToBackend::FetchRelayResponsesContactList);
-        Self {
+    pub fn new(conn: &mut BackEndConnection) -> Result<Self, BackendClosed> {
+        conn.send(net::ToBackend::FetchContacts)?;
+        conn.send(net::ToBackend::FetchRelayResponsesContactList)?;
+        Ok(Self {
             contacts: vec![],
             search_contact_input: "".into(),
             relays_response: None,
+        })
+    }
+
+    pub fn backend_event(
+        &mut self,
+        event: BackendEvent,
+        conn: &mut BackEndConnection,
+    ) -> Result<(), BackendClosed> {
+        match event {
+            BackendEvent::ConfirmedContactList(_) => {
+                conn.send(net::ToBackend::FetchRelayResponsesContactList)?;
+            }
+            BackendEvent::GotRelayResponsesContactList {
+                responses,
+                all_relays,
+            } => {
+                self.relays_response = Some(ContactsRelaysResponse::new(responses, all_relays));
+            }
+            BackendEvent::GotContacts(db_contacts) => {
+                self.contacts = db_contacts;
+            }
+            BackendEvent::UpdatedMetadata(pubkey) => {
+                if self.contacts.iter().any(|c| c.pubkey() == &pubkey) {
+                    conn.send(net::ToBackend::FetchContactWithMetadata(pubkey))?;
+                }
+            }
+            BackendEvent::GotSingleContact(_pubkey, Some(db_contact)) => {
+                if let Some(contact) = self
+                    .contacts
+                    .iter_mut()
+                    .find(|c| c.pubkey() == db_contact.pubkey())
+                {
+                    *contact = db_contact;
+                } else {
+                    tracing::info!(
+                        "GotSingleContact for someone not in the list?? {:?}",
+                        db_contact
+                    );
+                }
+            }
+            BackendEvent::ReceivedContactList
+            | BackendEvent::FileContactsImported(_)
+            | BackendEvent::ContactCreated(_)
+            | BackendEvent::ContactUpdated(_)
+            | BackendEvent::ContactDeleted(_) => {
+                conn.send(net::ToBackend::FetchContacts)?;
+            }
+            _ => (),
         }
+        Ok(())
     }
 
     pub fn update(
         &mut self,
         message: Message,
         conn: &mut BackEndConnection,
-    ) -> Option<SettingsRouterMessage> {
+    ) -> Result<Option<SettingsRouterMessage>, BackendClosed> {
         match message {
-            Message::SendMessageTo(_) => (),
+            Message::SendDMTo(_) => (),
             Message::RelaysConfirmationPress(_) => (),
-            Message::SendContactList => {
-                conn.send(net::ToBackend::SendContactListToRelays);
-            }
-            Message::RefreshContacts => {
-                conn.send(net::ToBackend::RefreshContactsProfile);
-            }
             Message::OpenProfileModal(db_contact) => {
-                return Some(SettingsRouterMessage::OpenProfileModal(db_contact))
+                return Ok(Some(SettingsRouterMessage::OpenProfileModal(db_contact)));
             }
             Message::OpenAddContactModal => {
-                return Some(SettingsRouterMessage::OpenAddContactModal)
+                return Ok(Some(SettingsRouterMessage::OpenAddContactModal));
             }
             Message::OpenImportContactModal => {
-                return Some(SettingsRouterMessage::OpenImportContactModal)
+                return Ok(Some(SettingsRouterMessage::OpenImportContactModal));
             }
             Message::SearchContactInputChange(text) => self.search_contact_input = text,
-            Message::ContactRowMessage(ct_msg) => match ct_msg {
+            Message::ContactRow(ct_msg) => match ct_msg {
                 // TODO: dont return a message, find a better way
                 contact_row::Message::SendMessageTo(contact) => {
-                    return Some(SettingsRouterMessage::RouterMessage(
-                        RouterMessage::GoToChatTo(contact),
-                    ));
+                    return Ok(Some(SettingsRouterMessage::RouterMessage(
+                        GoToView::ChatTo(contact),
+                    )));
                 }
                 contact_row::Message::DeleteContact(contact) => {
-                    conn.send(net::ToBackend::DeleteContact(contact))
+                    conn.send(net::ToBackend::DeleteContact(contact))?;
                 }
                 contact_row::Message::EditContact(contact) => {
-                    return Some(SettingsRouterMessage::OpenEditContactModal(contact));
+                    return Ok(Some(SettingsRouterMessage::OpenEditContactModal(contact)));
                 }
             },
             Message::DeleteContact(contact) => {
-                conn.send(net::ToBackend::DeleteContact(contact));
+                conn.send(net::ToBackend::DeleteContact(contact))?;
             }
-            Message::BackEndEvent(event) => match event {
-                BackendEvent::ConfirmedContactList(_) => {
-                    conn.send(net::ToBackend::FetchRelayResponsesContactList);
-                }
-                BackendEvent::GotRelayResponsesContactList {
-                    responses,
-                    all_relays,
-                } => {
-                    self.relays_response = Some(ContactsRelaysResponse::new(responses, all_relays));
-                }
-                BackendEvent::GotContacts(db_contacts) => {
-                    self.contacts = db_contacts;
-                }
-                BackendEvent::UpdatedContactMetadata { db_contact, .. } => {
-                    if let Some(contact) = self
-                        .contacts
-                        .iter_mut()
-                        .find(|c| c.pubkey() == db_contact.pubkey())
-                    {
-                        *contact = db_contact;
-                    }
-                }
-                BackendEvent::ReceivedContactList { .. }
-                | BackendEvent::FileContactsImported(_)
-                | BackendEvent::ContactCreated(_)
-                | BackendEvent::ContactUpdated(_)
-                | BackendEvent::ContactDeleted(_) => {
-                    conn.send(net::ToBackend::FetchContacts);
-                }
-                _ => (),
-            },
         }
 
-        None
+        Ok(None)
     }
 
     fn make_relays_response<'a>(&self) -> Element<'a, Message> {
@@ -159,7 +168,7 @@ impl State {
                 ))
                 .style(style::Button::MenuBtn)
                 .padding(5),
-                "Relays Confirmation",
+                "Contact List Confirmations",
                 tooltip::Position::Left,
             )
             .style(style::Container::TooltipBg)
@@ -180,6 +189,7 @@ impl State {
             self.make_relays_response()
         ]
         .align_items(Alignment::Center)
+        .padding([20, 20, 0, 0])
         .spacing(10);
 
         let search_contact = text_input("Search", &self.search_contact_input)
@@ -198,12 +208,7 @@ impl State {
             tooltip::Position::Top,
         )
         .style(style::Container::TooltipBg);
-        let refresh_btn = tooltip(
-            button(refresh_icon().size(18)).on_press(Message::RefreshContacts),
-            "Refresh Contacts",
-            tooltip::Position::Top,
-        )
-        .style(style::Container::TooltipBg);
+
         let import_btn = tooltip(
             button(import_icon().size(18))
                 .padding(5)
@@ -217,9 +222,9 @@ impl State {
             search_contact,
             Space::with_width(Length::Fill),
             add_contact_btn,
-            refresh_btn,
             import_btn,
         ]
+        .padding([0, 20, 0, 0])
         .spacing(5)
         .width(Length::Fill);
 
@@ -227,12 +232,16 @@ impl State {
             .contacts
             .iter()
             .filter(|c| contact_matches_search_full(c, &self.search_contact_input))
-            .map(|c| ContactRow::from_db_contact(c))
-            .fold(column![].spacing(5), |col, contact| {
-                col.push(contact.view().map(Message::ContactRowMessage))
-            })
+            .map(ContactRow::from_db_contact)
+            .fold(
+                column![].padding([0, 20, 0, 0]).spacing(5),
+                |col, contact| col.push(contact.view().map(Message::ContactRow)),
+            )
             .into();
-        let contact_list_scroller = column![ContactRow::header(), common_scrollable(contact_list)];
+        let contact_list_scroller = column![
+            container(ContactRow::header()).padding([0, 20, 0, 0]),
+            common_scrollable(contact_list)
+        ];
         let content: Element<_> = column![title_group, utils_row, contact_list_scroller]
             .spacing(10)
             .width(Length::Fill)

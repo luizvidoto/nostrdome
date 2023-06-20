@@ -4,9 +4,11 @@ use iced::{alignment, Alignment, Command, Length};
 use nostr_sdk::RelayStatus;
 
 use crate::consts::NOSTRTALK_VERSION;
+use crate::error::BackendClosed;
 use crate::icon::signal_icon;
 use crate::net::{self, BackEndConnection, BackendEvent};
 use crate::style;
+use crate::views::{GoToView, RouterCommand};
 use crate::widget::Element;
 
 #[derive(Debug, Clone)]
@@ -29,24 +31,28 @@ impl StatusBar {
         event: BackendEvent,
         _conn: &mut BackEndConnection,
     ) -> Command<Message> {
-        match event {
-            BackendEvent::GotRelayStatusList(list) => {
-                self.relays_connected = list
-                    .iter()
-                    .filter(|(_url, status)| status == &RelayStatus::Connected)
-                    .count();
-            }
-            _ => (),
+        if let BackendEvent::GotRelayStatusList(list) = event {
+            self.relays_connected = list
+                .iter()
+                .filter(|(_url, status)| status.is_connected())
+                .count();
         }
         Command::none()
     }
-    pub fn update(&mut self, message: Message, conn: &mut BackEndConnection) -> Command<Message> {
+    pub fn update(
+        &mut self,
+        message: Message,
+        conn: &mut BackEndConnection,
+    ) -> Result<RouterCommand<Message>, BackendClosed> {
+        let mut command = RouterCommand::new();
         match message {
-            Message::GoToAbout => (),
-            Message::GoToNetwork => (),
-            Message::Tick => conn.send(net::ToBackend::GetRelayStatusList),
+            Message::GoToAbout => command.change_route(GoToView::About),
+            Message::GoToNetwork => command.change_route(GoToView::Network),
+            Message::Tick => {
+                conn.send(net::ToBackend::GetRelayStatusList)?;
+            }
         }
-        Command::none()
+        Ok(command)
     }
     pub fn subscription(&self) -> Subscription<Message> {
         iced::time::every(std::time::Duration::from_millis(TICK_INTERVAL_MILLIS))
@@ -59,11 +65,8 @@ impl StatusBar {
             .on_press(Message::GoToAbout)
             .style(style::Button::StatusBarButton);
         let signal = button(
-            row![
-                text(&self.relays_connected).size(18),
-                signal_icon().size(12),
-            ]
-            .align_items(Alignment::Center),
+            row![text(self.relays_connected).size(18), signal_icon().size(12),]
+                .align_items(Alignment::Center),
         )
         .height(Length::Fill)
         .padding([0, 2])

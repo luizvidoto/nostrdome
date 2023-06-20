@@ -1,46 +1,23 @@
 use crate::db::DbRelay;
-use crate::icon::{delete_icon, exclamation_icon, solid_circle_icon};
-use crate::net::{self, BackEndConnection, BackendEvent};
+use crate::error::BackendClosed;
+use crate::icon::{
+    delete_icon, exclamation_icon, file_icon_regular, refresh_icon, solid_circle_icon,
+};
+use crate::net::{self, BackEndConnection};
 use crate::style;
 use crate::widget::{Element, Text};
 use chrono::{NaiveDateTime, Utc};
 use iced::widget::{button, checkbox, container, row, text, tooltip, Space};
-use iced::{alignment, Command, Length, Subscription};
-use nostr_sdk::RelayStatus;
-
-#[derive(Debug, Clone)]
-pub enum RelayRowState {
-    Idle,
-    Loading,
-    Success,
-}
-
-#[derive(Debug, Clone)]
-pub enum Mode {
-    ModalView { state: RelayRowState },
-    Normal,
-}
-impl Mode {
-    pub fn success(&mut self) {
-        if let Mode::ModalView { state } = self {
-            *state = RelayRowState::Success;
-        }
-    }
-    pub fn loading(&mut self) {
-        if let Mode::ModalView { state } = self {
-            *state = RelayRowState::Loading;
-        }
-    }
-}
+use iced::{alignment, Command, Length};
+use ns_client::RelayStatus;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    None,
-    DeleteRelay(DbRelay),
-    ToggleRead(DbRelay),
-    ToggleWrite(DbRelay),
-    SendContactListToRelays,
-    UpdateRelayStatus(RelayStatus),
+    DeleteRelay,
+    ToggleRead,
+    ToggleWrite,
+    OpenRelayDocument(DbRelay),
+    ReconnectRelay,
 }
 #[derive(Debug, Clone)]
 pub struct MessageWrapper {
@@ -53,95 +30,57 @@ impl MessageWrapper {
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct RelayRow {
     pub id: i32,
     pub db_relay: DbRelay,
-    relay_status: Option<RelayStatus>,
-    last_connected_at: Option<NaiveDateTime>,
-    mode: Mode,
 }
 
 impl RelayRow {
-    pub fn new(id: i32, db_relay: DbRelay, _conn: &mut BackEndConnection) -> Self {
-        Self {
-            id,
-            db_relay,
-            relay_status: None,
-            last_connected_at: None,
-            mode: Mode::Normal,
-        }
-    }
-    pub fn with_mode(mut self) -> Self {
-        self.mode = Mode::ModalView {
-            state: RelayRowState::Idle,
-        };
-        self
-    }
-    pub fn subscription(&self) -> Subscription<MessageWrapper> {
-        Subscription::none()
+    pub fn new(id: i32, db_relay: DbRelay) -> Self {
+        Self { id, db_relay }
     }
 
-    pub fn backend_event(&mut self, event: BackendEvent, _conn: &mut BackEndConnection) {
-        match event {
-            BackendEvent::RelayUpdated(db_relay) => {
-                if self.db_relay.url == db_relay.url {
-                    tracing::debug!("Relay updated");
-                    tracing::debug!("{:?}", db_relay);
-                    self.db_relay = db_relay;
-                }
-            }
-            BackendEvent::ConfirmedContactList(db_event) => {
-                if let Some(relay_url) = db_event.relay_url {
-                    if relay_url == self.db_relay.url {
-                        self.mode.success()
-                    }
-                }
-            }
-            _ => (),
-        }
+    pub fn relay_updated(&mut self, db_relay: DbRelay) {
+        self.db_relay = db_relay;
     }
 
     pub fn update(
         &mut self,
         message: Message,
         conn: &mut BackEndConnection,
-    ) -> Command<MessageWrapper> {
+    ) -> Result<Command<MessageWrapper>, BackendClosed> {
         match message {
-            Message::None => (),
-            Message::UpdateRelayStatus(status) => {
-                self.relay_status = Some(status);
+            Message::OpenRelayDocument(_db_relay) => (),
+            Message::ReconnectRelay => {
+                conn.send(net::ToBackend::ReconnectRelay(self.db_relay.url.to_owned()))?;
             }
-            Message::SendContactListToRelays => {
-                if let Mode::ModalView { .. } = &mut self.mode {
-                    conn.send(net::ToBackend::SendContactListToRelays);
-                    self.mode.loading();
-                }
+            Message::DeleteRelay => {
+                conn.send(net::ToBackend::DeleteRelay(self.db_relay.url.to_owned()))?;
             }
-
-            Message::DeleteRelay(db_relay) => {
-                conn.send(net::ToBackend::DeleteRelay(db_relay));
+            Message::ToggleRead => {
+                conn.send(net::ToBackend::ToggleRelayRead(self.db_relay.to_owned()))?;
             }
-            Message::ToggleRead(db_relay) => {
-                let read = !db_relay.read;
-                conn.send(net::ToBackend::ToggleRelayRead((db_relay, read)));
-            }
-            Message::ToggleWrite(db_relay) => {
-                let write = !db_relay.write;
-                conn.send(net::ToBackend::ToggleRelayWrite((db_relay, write)));
+            Message::ToggleWrite => {
+                conn.send(net::ToBackend::ToggleRelayWrite(self.db_relay.to_owned()))?;
             }
         }
-        Command::none()
+        Ok(Command::none())
     }
 
     fn seconds_since_last_conn(&self) -> Element<'static, MessageWrapper> {
-        if let Some(last_connected_at) = self.last_connected_at {
-            let now = Utc::now().naive_utc();
-            let dif_secs = (now - last_connected_at).num_seconds();
-            text(format!("{}s", &dif_secs)).into()
-        } else {
-            text("").into()
+        if let Some(information) = &self.db_relay.information {
+            if let RelayStatus::Connected = information.status {
+                if let Some(last_connected_at) = NaiveDateTime::from_timestamp_millis(
+                    information.conn_stats.connected_at() as i64,
+                ) {
+                    let now = Utc::now().naive_utc();
+                    let dif_secs = (now - last_connected_at).num_seconds();
+                    return text(format!("{}s", &dif_secs)).into();
+                }
+            }
         }
+
+        text("").into()
     }
 
     pub fn view_header() -> Element<'static, MessageWrapper> {
@@ -160,19 +99,55 @@ impl RelayRow {
                 .width(Length::Fixed(CHECKBOX_CELL_WIDTH)),
             container(text(""))
                 .center_x()
+                .width(Length::Fixed(ACTION_ICON_WIDTH)),
+            container(text(""))
+                .center_x()
+                .width(Length::Fixed(ACTION_ICON_WIDTH)),
+            container(text(""))
+                .center_x()
                 .width(Length::Fixed(ACTION_ICON_WIDTH))
         ]
+        .spacing(5)
         .into()
     }
 
-    pub fn view<'a>(&'a self) -> Element<'a, MessageWrapper> {
+    pub fn view(&self) -> Element<'_, MessageWrapper> {
         let (status_icon, status_text) = self.relay_status_icon();
+
+        let mut doc_btn = button(file_icon_regular().size(16))
+            .style(style::Button::Primary)
+            .width(Length::Fixed(ACTION_ICON_WIDTH));
+
+        if let Some(information) = &self.db_relay.information {
+            if information.document.is_some() {
+                doc_btn = doc_btn.on_press(MessageWrapper::new(
+                    self.id,
+                    Message::OpenRelayDocument(self.db_relay.clone()),
+                ));
+            }
+        }
+
+        let document_btn = tooltip(doc_btn, "Relay Document", tooltip::Position::Left)
+            .style(style::Container::TooltipBg);
+
+        let mut reconnect_btn = button(refresh_icon().size(16))
+            .style(style::Button::Primary)
+            .width(Length::Fixed(ACTION_ICON_WIDTH));
+        if let Some(information) = &self.db_relay.information {
+            match information.status {
+                RelayStatus::Connected => (),
+                _ => {
+                    reconnect_btn = reconnect_btn
+                        .on_press(MessageWrapper::new(self.id, Message::ReconnectRelay));
+                }
+            }
+        }
+        let reconnect_btn = tooltip(reconnect_btn, "Reconnect", tooltip::Position::Left)
+            .style(style::Container::TooltipBg);
+
         let delete_btn = tooltip(
             button(delete_icon().size(16))
-                .on_press(MessageWrapper::new(
-                    self.id,
-                    Message::DeleteRelay(self.db_relay.clone()),
-                ))
+                .on_press(MessageWrapper::new(self.id, Message::DeleteRelay))
                 .style(style::Button::Danger)
                 .width(Length::Fixed(ACTION_ICON_WIDTH)),
             "Delete Relay",
@@ -197,18 +172,21 @@ impl RelayRow {
                     .width(Length::Fixed(ACTIVITY_CELL_WIDTH)),
                 container(checkbox("", self.db_relay.read, |_| MessageWrapper::new(
                     self.id,
-                    Message::ToggleRead(self.db_relay.clone())
+                    Message::ToggleRead
                 )))
                 .center_x()
                 .width(Length::Fixed(CHECKBOX_CELL_WIDTH)),
                 container(checkbox("", self.db_relay.write, |_| MessageWrapper::new(
                     self.id,
-                    Message::ToggleWrite(self.db_relay.clone())
+                    Message::ToggleWrite
                 )))
                 .center_x()
                 .width(Length::Fixed(CHECKBOX_CELL_WIDTH)),
+                document_btn,
+                reconnect_btn,
                 delete_btn,
             ]
+            .spacing(5)
             .align_items(alignment::Alignment::Center),
         )
         // queria um hover para cada linha da tabela
@@ -217,50 +195,37 @@ impl RelayRow {
     }
 
     fn have_error_icon<'a, M: 'a>(&self) -> Element<'a, M> {
-        if let Some(error_msg) = &self.db_relay.have_error {
-            tooltip(
-                exclamation_icon().size(16).style(style::Text::Danger),
-                error_msg,
-                tooltip::Position::Top,
-            )
-            .style(style::Container::TooltipBg)
-            .into()
-        } else {
-            text("").into()
+        if let Some(information) = &self.db_relay.information {
+            if let Some(last_error_msg) = information.error_messages.back() {
+                return tooltip(
+                    exclamation_icon().size(16).style(style::Text::Danger),
+                    &last_error_msg.message,
+                    tooltip::Position::Top,
+                )
+                .style(style::Container::TooltipBg)
+                .into();
+            }
         }
+
+        text("").into()
     }
 
-    fn relay_status_icon<'a>(&'a self) -> (Text<'a>, String) {
-        let (status_icon, status_text) = match &self.relay_status {
-            Some(status) => {
-                let status_icon = match status {
-                    RelayStatus::Connected => solid_circle_icon()
-                        .size(16)
-                        .style(style::Text::RelayStatusConnected),
-                    RelayStatus::Connecting => solid_circle_icon()
-                        .size(16)
-                        .style(style::Text::RelayStatusConnecting),
-                    RelayStatus::Disconnected => solid_circle_icon()
-                        .size(16)
-                        .style(style::Text::RelayStatusDisconnected),
-                    RelayStatus::Terminated => solid_circle_icon()
-                        .size(16)
-                        .style(style::Text::RelayStatusTerminated),
-                    RelayStatus::Initialized => solid_circle_icon()
-                        .size(16)
-                        .style(style::Text::RelayStatusInitialized),
-                };
-                let status_text = status.to_string();
-                (status_icon, status_text)
-            }
-            None => (
+    fn relay_status_icon(&self) -> (Text<'_>, String) {
+        if let Some(information) = &self.db_relay.information {
+            (
                 solid_circle_icon()
                     .size(16)
-                    .style(style::Text::RelayStatusLoading),
+                    .style(style::Text::RelayStatus(Some(information.status))),
+                information.status.to_string(),
+            )
+        } else {
+            (
+                solid_circle_icon()
+                    .size(16)
+                    .style(style::Text::RelayStatus(None)),
                 "Loading".into(),
-            ),
-        };
-        (status_icon, status_text)
+            )
+        }
     }
 
     pub fn relay_welcome(&self) -> Element<MessageWrapper> {
@@ -277,10 +242,7 @@ impl RelayRow {
                 Space::with_width(Length::Fill),
                 tooltip(
                     button(delete_icon())
-                        .on_press(MessageWrapper::new(
-                            self.id,
-                            Message::DeleteRelay(self.db_relay.clone())
-                        ))
+                        .on_press(MessageWrapper::new(self.id, Message::DeleteRelay))
                         .style(style::Button::Danger),
                     "Delete",
                     tooltip::Position::Top

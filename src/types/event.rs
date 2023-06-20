@@ -1,7 +1,7 @@
 use nostr::{Kind, Tag};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Deserialize)]
 pub struct UncheckedEvent {
     pub kind: Kind,
     pub content: String,

@@ -1,10 +1,17 @@
 #![allow(dead_code)]
-use crate::{components::chat_contact::ChatContact, db::DbContact};
+use crate::{
+    components::chat_contact::ChatContact,
+    db::{DbContact, MessageStatus},
+    net::ImageKind,
+    style::{Theme, ThemeType},
+    types::ChannelMetadata,
+};
 use chrono::{DateTime, Local, NaiveDateTime, Offset};
 use iced::widget::image::Handle;
 use image::{ImageBuffer, Luma, Rgba};
 use nostr::prelude::*;
 use qrcode::QrCode;
+use regex::Regex;
 use serde::de::DeserializeOwned;
 use std::{
     fs::File,
@@ -34,6 +41,12 @@ pub enum Error {
 
     #[error("{0}")]
     QrError(#[from] qrcode::types::QrError),
+
+    #[error("{0}")]
+    FromRegexError(#[from] regex::Error),
+
+    #[error("{0}")]
+    FromParseError(#[from] std::num::ParseIntError),
 }
 
 // Accepts both hex and bech32 keys and returns the hex encoded key
@@ -77,18 +90,6 @@ where
     Ok(contents)
 }
 
-pub fn format_pubkey(pubkey: &str) -> String {
-    let prefix = &pubkey[0..4];
-    let suffix = &pubkey[pubkey.len().saturating_sub(4)..];
-    format!("{}..{}", prefix, suffix)
-}
-
-pub fn format_btc_address(pubkey: &str) -> String {
-    let prefix = &pubkey[0..8];
-    let suffix = &pubkey[pubkey.len().saturating_sub(8)..];
-    format!("{}..{}", prefix, suffix)
-}
-
 /// Convert a i64 representing milliseconds since UNIX epoch to an Option<NaiveDateTime>.
 ///
 /// # Arguments
@@ -112,7 +113,7 @@ pub fn ns_event_to_millis(created_at: nostr::Timestamp) -> i64 {
 }
 
 pub fn ns_event_to_naive(created_at: nostr::Timestamp) -> Result<NaiveDateTime, Error> {
-    Ok(millis_to_naive(ns_event_to_millis(created_at))?)
+    millis_to_naive(ns_event_to_millis(created_at))
 }
 
 pub fn naive_to_event_tt(naive_utc: NaiveDateTime) -> nostr::Timestamp {
@@ -130,12 +131,10 @@ where
 }
 
 pub fn millis_to_naive_or_err(millis: i64, index: &str) -> Result<NaiveDateTime, sqlx::Error> {
-    Ok(
-        millis_to_naive(millis).map_err(|e| sqlx::Error::ColumnDecode {
-            index: index.into(),
-            source: Box::new(e),
-        })?,
-    )
+    millis_to_naive(millis).map_err(|e| sqlx::Error::ColumnDecode {
+        index: index.into(),
+        source: Box::new(e),
+    })
 }
 pub fn public_key_or_err(public_key: &str, index: &str) -> Result<XOnlyPublicKey, sqlx::Error> {
     XOnlyPublicKey::from_str(public_key).map_err(|e| handle_decode_error(e, index))
@@ -144,13 +143,25 @@ pub fn event_hash_or_err(event_id: &str, index: &str) -> Result<EventId, sqlx::E
     EventId::from_str(event_id).map_err(|e| handle_decode_error(e, index))
 }
 pub fn url_or_err(url: &str, index: &str) -> Result<Url, sqlx::Error> {
-    Url::from_str(url).map_err(|e| handle_decode_error(e, index))
-}
-pub fn unchecked_url_or_err(url: &str, index: &str) -> Result<UncheckedUrl, sqlx::Error> {
-    UncheckedUrl::from_str(url).map_err(|e| handle_decode_error(e, index))
+    Url::parse(url).map_err(|e| handle_decode_error(e, index))
 }
 pub fn profile_meta_or_err(json: &str, index: &str) -> Result<nostr::Metadata, sqlx::Error> {
     nostr::Metadata::from_json(json).map_err(|e| handle_decode_error(e, index))
+}
+pub fn channel_meta_or_err(json: &str, index: &str) -> Result<ChannelMetadata, sqlx::Error> {
+    ChannelMetadata::from_json(json).map_err(|e| handle_decode_error(e, index))
+}
+pub fn image_kind_or_err(kind: i32, index: &str) -> Result<ImageKind, sqlx::Error> {
+    ImageKind::from_i32(kind).map_err(|e| handle_decode_error(e, index))
+}
+pub fn relay_doc_or_err(doc: &str, index: &str) -> Result<RelayInformationDocument, sqlx::Error> {
+    serde_json::from_str(doc).map_err(|e| handle_decode_error(e, index))
+}
+pub fn message_status_or_err(status: i32, index: &str) -> Result<MessageStatus, sqlx::Error> {
+    MessageStatus::from_i32(status).map_err(|e| handle_decode_error(e, index))
+}
+pub fn theme_or_err(theme: u8, index: &str) -> Result<Theme, sqlx::Error> {
+    u8::try_into(theme).map_err(|e| handle_decode_error(e, index))
 }
 
 pub fn chat_matches_search(chat: &ChatContact, search: &str) -> bool {
@@ -168,12 +179,58 @@ pub fn from_naive_utc_to_local(naive_utc: NaiveDateTime) -> DateTime<Local> {
     DateTime::from_utc(naive_utc, Local::now().offset().fix())
 }
 
+pub fn channel_id_from_tags(tags: &[nostr::Tag]) -> Option<nostr::EventId> {
+    tags.iter().find_map(|tag| {
+        if let nostr::Tag::Event(event_id, _, _) = tag {
+            Some(event_id.to_owned())
+        } else {
+            None
+        }
+    })
+}
+
+pub fn channel_msg_builder(
+    channel_id: &EventId,
+    recommended_relay: Option<&Url>,
+    content: &str,
+) -> EventBuilder {
+    let tags = &[nostr::Tag::Event(
+        channel_id.to_owned(),
+        recommended_relay
+            .as_ref()
+            .map(|url| nostr::UncheckedUrl::new(url.to_string())),
+        Some(Marker::Root),
+    )];
+    EventBuilder::new(nostr::Kind::ChannelMessage, content, tags)
+}
+
+pub fn channel_creation_builder(metadata: &ChannelMetadata) -> EventBuilder {
+    EventBuilder::new(nostr::Kind::ChannelCreation, metadata.as_json(), &[])
+}
+
+pub fn channel_metadata_builder(
+    channel_id: &EventId,
+    recommended_relay: Option<&Url>,
+    metadata: &ChannelMetadata,
+) -> EventBuilder {
+    let tags = &[nostr::Tag::Event(
+        channel_id.to_owned(),
+        recommended_relay
+            .as_ref()
+            .map(|url| nostr::UncheckedUrl::new(url.to_string())),
+        None,
+    )];
+    EventBuilder::new(nostr::Kind::ChannelMetadata, metadata.as_json(), tags)
+}
+
 pub fn contact_matches_search_full(contact: &DbContact, search: &str) -> bool {
-    let pubkey_matches = contact
+    let ct_pubkey = contact
         .pubkey()
-        .to_string()
-        .to_lowercase()
-        .contains(&search.to_lowercase());
+        .to_bech32()
+        .unwrap_or(contact.pubkey().to_string());
+
+    let pubkey_matches = ct_pubkey.to_lowercase().contains(&search.to_lowercase());
+
     let petname_matches = contact.get_petname().map_or(false, |petname| {
         petname.to_lowercase().contains(&search.to_lowercase())
     });
@@ -196,6 +253,27 @@ pub fn add_ellipsis_trunc(s: &str, max_length: usize) -> String {
     } else {
         s.to_string()
     }
+}
+
+pub fn change_color_by_type(theme_type: ThemeType, color: iced::Color, amount: f32) -> iced::Color {
+    match theme_type {
+        ThemeType::Light => darken_color(color, amount),
+        ThemeType::Dark => lighten_color(color, amount),
+    }
+}
+
+pub fn lighten_color(mut color: iced::Color, amount: f32) -> iced::Color {
+    color.r = (color.r + amount).min(1.0);
+    color.g = (color.g + amount).min(1.0);
+    color.b = (color.b + amount).min(1.0);
+    color
+}
+
+pub fn darken_color(mut color: iced::Color, amount: f32) -> iced::Color {
+    color.r = (color.r - amount).max(0.0);
+    color.g = (color.g - amount).max(0.0);
+    color.b = (color.b - amount).max(0.0);
+    color
 }
 
 pub fn qr_code_handle(code: &str) -> Result<Handle, Error> {
@@ -226,3 +304,138 @@ pub fn qr_code_handle(code: &str) -> Result<Handle, Error> {
 
     Ok(Handle::from_pixels(width, height, bytes)) // Pass the owned bytes
 }
+
+#[derive(Debug, Clone)]
+pub struct NipData {
+    pub number: u16,
+    pub description: String,
+    pub repo_link: String,
+}
+pub fn parse_nips_markdown(markdown_content: &str) -> Result<Vec<NipData>, Error> {
+    let re = Regex::new(r"- \[NIP-(\d+): (.*?)\]\((\d+).md\)")?;
+    let mut nip_data: Vec<_> = Vec::new();
+
+    for line in markdown_content.lines() {
+        if let Some(cap) = re.captures(line) {
+            let nip_number = cap[1].parse::<u32>()?;
+            let description = &cap[2];
+            let repo_link = format!(
+                "https://github.com/nostr-protocol/nips/blob/master/{:02}.md",
+                nip_number
+            );
+
+            nip_data.push(NipData {
+                description: description.to_string(),
+                number: nip_number as u16,
+                repo_link,
+            });
+        }
+    }
+    Ok(nip_data)
+}
+/// Hides the middle part of a string with "..."
+pub fn hide_string(string: &str, open: usize) -> String {
+    let chars: Vec<char> = string.chars().collect();
+    let len = chars.len();
+
+    // If open value is greater than half of the string length, return the entire string
+    if open >= len / 2 {
+        return string.to_string();
+    }
+
+    let prefix: String = chars.iter().take(open).collect();
+    let suffix: String = chars.iter().rev().take(open).collect();
+
+    format!("{}...{}", prefix, suffix.chars().rev().collect::<String>())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_nips_markdown() {
+        let markdown_content = "
+        - [NIP-01: Basic protocol flow description](01.md)
+        - [NIP-02: Contact List and Petnames](02.md)
+        ";
+
+        let nips = parse_nips_markdown(markdown_content).unwrap();
+
+        assert_eq!(nips.len(), 2);
+
+        assert_eq!(nips[0].number, 1);
+        assert_eq!(nips[0].description, "Basic protocol flow description");
+        assert_eq!(
+            nips[0].repo_link,
+            "https://github.com/nostr-protocol/nips/blob/master/01.md"
+        );
+
+        assert_eq!(nips[1].number, 2);
+        assert_eq!(nips[1].description, "Contact List and Petnames");
+        assert_eq!(
+            nips[1].repo_link,
+            "https://github.com/nostr-protocol/nips/blob/master/02.md"
+        );
+    }
+
+    #[test]
+    fn test_hide_string() {
+        // the string total chars is 13
+        // 0 from each side turns into 0 chars, hide the entire string
+        assert_eq!(hide_string("Hello, world!", 0), "...");
+
+        // 2 from each side turns into 4 chars, hide 9 chars
+        assert_eq!(hide_string("Hello, world!", 2), "He...d!");
+
+        // 5 from each side turns into 10 chars, hide 3 chars
+        assert_eq!(hide_string("Hello, world!", 5), "Hello...orld!");
+
+        // 8 from each side turns into 16 chars, open the entire string
+        assert_eq!(hide_string("Hello, world!", 8), "Hello, world!");
+    }
+}
+
+// pub fn round_image(image: &mut ColorImage) {
+//     // The radius to the edge of of the avatar circle
+//     let edge_radius = image.size[0] as f32 / 2.0;
+//     let edge_radius_squared = edge_radius * edge_radius;
+
+//     for (pixnum, pixel) in image.pixels.iter_mut().enumerate() {
+//         // y coordinate
+//         let uy = pixnum / image.size[0];
+//         let y = uy as f32;
+//         let y_offset = edge_radius - y;
+
+//         // x coordinate
+//         let ux = pixnum % image.size[0];
+//         let x = ux as f32;
+//         let x_offset = edge_radius - x;
+
+//         // The radius to this pixel (may be inside or outside the circle)
+//         let pixel_radius_squared: f32 = x_offset * x_offset + y_offset * y_offset;
+
+//         // If inside of the avatar circle
+//         if pixel_radius_squared <= edge_radius_squared {
+//             // squareroot to find how many pixels we are from the edge
+//             let pixel_radius: f32 = pixel_radius_squared.sqrt();
+//             let distance = edge_radius - pixel_radius;
+
+//             // If we are within 1 pixel of the edge, we should fade, to
+//             // antialias the edge of the circle. 1 pixel from the edge should
+//             // be 100% of the original color, and right on the edge should be
+//             // 0% of the original color.
+//             if distance <= 1.0 {
+//                 *pixel = Color32::from_rgba_premultiplied(
+//                     (pixel.r() as f32 * distance) as u8,
+//                     (pixel.g() as f32 * distance) as u8,
+//                     (pixel.b() as f32 * distance) as u8,
+//                     (pixel.a() as f32 * distance) as u8,
+//                 );
+//             }
+//         } else {
+//             // Outside of the avatar circle
+//             *pixel = Color32::TRANSPARENT;
+//         }
+//     }
+// }

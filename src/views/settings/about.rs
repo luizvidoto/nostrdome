@@ -1,25 +1,22 @@
 use crate::{
-    components::{common_scrollable, text::title},
+    components::{common_scrollable, copy_btn, text::title},
     consts::{BITCOIN_ADDRESS, GITHUB_REPO, LIGHTNING_ADDRESS, NOSTRTALK_VERSION, TT_LINK},
-    icon::copy_icon,
-    net::BackendEvent,
+    net::{BackEndConnection, BackendEvent},
     style,
-    utils::{format_btc_address, qr_code_handle},
+    utils::{hide_string, qr_code_handle},
     widget::Element,
 };
-use iced::widget::{button, column, container, image as iced_image, row, text, tooltip, Rule};
+use iced::widget::{button, column, container, image as iced_image, row, text, Rule};
 use iced::{clipboard, widget::image::Handle};
 use iced::{Alignment, Command, Length};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    BackEndEvent(BackendEvent),
     OpenTTLink,
     OpenGHLink,
     CopyQrCode(String),
 }
 
-#[derive(Debug, Clone)]
 pub struct State {
     btc_qrcode_handle: Option<Handle>,
     lnd_qrcode_handle: Option<Handle>,
@@ -32,9 +29,10 @@ impl State {
         }
     }
 
+    pub fn backend_event(&mut self, _event: BackendEvent, _conn: &mut BackEndConnection) {}
+
     pub fn update(&mut self, message: Message) -> Command<Message> {
         match message {
-            Message::BackEndEvent(_ev) => (),
             Message::OpenTTLink => {
                 if let Err(e) = webbrowser::open(TT_LINK) {
                     tracing::error!("Failed to open link: {}", e);
@@ -103,7 +101,9 @@ impl State {
                 .width(Length::Fill)
                 .spacing(50),
         ]
+        .padding([20, 20, 0, 0])
         .spacing(10);
+
         container(common_scrollable(content))
             .width(Length::Fill)
             .into()
@@ -129,25 +129,20 @@ fn make_donation_qrcode<'a>(
     };
 
     let qrcode_txt = container(
-        text(format_btc_address(qr_code_str))
+        text(hide_string(qr_code_str, 8))
             .size(18)
             .style(style::Text::Placeholder),
     );
     //quando clica no botao, aparece uma tooltip falando "copied!"
-    let copy_btn = tooltip(
-        button(copy_icon())
-            .on_press(Message::CopyQrCode(qr_code_str.to_owned()))
-            .style(style::Button::Primary),
-        "Copy",
-        tooltip::Position::Top,
-    )
-    .style(style::Container::TooltipBg);
-
-    let qrcode_txt_group = row![qrcode_txt, copy_btn]
-        .align_items(Alignment::Center)
-        .spacing(5);
+    let qrcode_txt_group = row![
+        qrcode_txt,
+        copy_btn("Copy", Message::CopyQrCode(qr_code_str.to_owned()))
+    ]
+    .align_items(Alignment::Center)
+    .spacing(5);
 
     let content = column![name, qrcode_image, qrcode_txt_group]
+        .padding([0, 20, 0, 0])
         .spacing(5)
         .align_items(Alignment::Center);
 

@@ -1,19 +1,23 @@
-use std::path::PathBuf;
 use thiserror::Error;
 
 use chrono::NaiveDateTime;
-use nostr::secp256k1::XOnlyPublicKey;
+use nostr::{secp256k1::XOnlyPublicKey, EventId};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
-use crate::utils::{
-    event_hash_or_err, millis_to_naive_or_err, profile_meta_or_err, public_key_or_err,
+use crate::{
+    net::ImageKind,
+    types::ChannelMetadata,
+    utils::{
+        channel_id_from_tags, channel_meta_or_err, event_hash_or_err, millis_to_naive_or_err,
+        ns_event_to_millis, public_key_or_err,
+    },
 };
 
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("Sqlx error: {0}")]
-    SqlxError(#[from] sqlx::Error),
+    Sqlx(#[from] sqlx::Error),
 
     #[error("Error parsing JSON content into nostr::Metadata: {0}")]
     JsonToMetadata(String),
@@ -25,13 +29,16 @@ pub enum Error {
     NotFoundChannelToUpdate(nostr::EventId),
 
     #[error("Not found channel id inside event tags: event_hash: {0}")]
-    ChannelIdNotFound(nostr::EventId),
+    NotFoundChannelInTags(nostr::EventId),
 
     #[error("Event need to be confirmed")]
     NotConfirmedEvent(nostr::EventId),
+
+    #[error("{0}")]
+    FromImageCache(#[from] crate::db::image_cache::Error),
 }
 
-use super::DbEvent;
+use super::{DbEvent, ImageDownloaded};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelCache {
@@ -40,20 +47,53 @@ pub struct ChannelCache {
     pub created_at: NaiveDateTime,
     pub updated_event_hash: Option<nostr::EventId>,
     pub updated_at: Option<NaiveDateTime>,
-    pub metadata: nostr::Metadata,
-    pub image_path: Option<PathBuf>,
+    pub metadata: ChannelMetadata,
+    pub image_cache: Option<ImageDownloaded>,
+    pub members: Vec<XOnlyPublicKey>,
 }
 impl ChannelCache {
+    pub async fn insert_member_from_event(
+        cache_pool: &SqlitePool,
+        db_event: &DbEvent,
+    ) -> Result<(), Error> {
+        let channel_id = channel_id_from_tags(&db_event.tags)
+            .ok_or(Error::NotFoundChannelInTags(db_event.event_hash.to_owned()))?;
+        Self::insert_member(cache_pool, &channel_id, &db_event.pubkey).await
+    }
+
+    pub async fn insert_member(
+        cache_pool: &SqlitePool,
+        channel_id: &nostr::EventId,
+        member: &XOnlyPublicKey,
+    ) -> Result<(), Error> {
+        let query =
+            "INSERT OR IGNORE INTO channel_member_map (channel_id, public_key) VALUES (?, ?)";
+
+        sqlx::query(query)
+            .bind(channel_id.to_string())
+            .bind(member.to_string())
+            .execute(cache_pool)
+            .await?;
+
+        Ok(())
+    }
+
     pub async fn fetch_by_creator(
         cache_pool: &SqlitePool,
         creator_pubkey: &XOnlyPublicKey,
     ) -> Result<Vec<ChannelCache>, Error> {
         let query = "SELECT * FROM channel_cache WHERE creator_pubkey = ?;";
-        let result = sqlx::query_as::<_, ChannelCache>(query)
+        let mut results = sqlx::query_as::<_, ChannelCache>(query)
             .bind(creator_pubkey.to_string())
             .fetch_all(cache_pool)
             .await?;
-        Ok(result)
+
+        for channel_cache in &mut results {
+            channel_cache.fetch_img_cache(cache_pool).await?;
+            channel_cache.fetch_members(cache_pool).await?;
+        }
+
+        Ok(results)
     }
 
     pub async fn fetch_by_channel_id(
@@ -61,35 +101,41 @@ impl ChannelCache {
         channel_id: &nostr::EventId,
     ) -> Result<Option<ChannelCache>, Error> {
         let query = "SELECT * FROM channel_cache WHERE creation_event_hash = ?;";
-        let result = sqlx::query_as::<_, ChannelCache>(query)
+        let mut result = sqlx::query_as::<_, ChannelCache>(query)
             .bind(channel_id.to_string())
             .fetch_optional(cache_pool)
             .await?;
+        if let Some(cache) = &mut result {
+            cache.fetch_img_cache(cache_pool).await?;
+            cache.fetch_members(cache_pool).await?;
+        }
         Ok(result)
     }
 
-    pub async fn insert(
+    // If the channel is not in the database, it will be inserted.
+    pub async fn fetch_insert(
         cache_pool: &SqlitePool,
-        db_event: &DbEvent,
+        ns_event: &nostr::Event,
     ) -> Result<ChannelCache, Error> {
-        // need to be kind 40
-        let metadata = nostr::Metadata::from_json(&db_event.content)
-            .map_err(|_| Error::JsonToMetadata(db_event.content.clone()))?;
-        let channel_id = &db_event.event_hash;
-        let creator_pubkey = &db_event.pubkey;
-        let created_at = &db_event
-            .remote_creation()
-            .ok_or(Error::NotConfirmedEvent(channel_id.to_owned()))?;
+        let metadata = nostr::Metadata::from_json(&ns_event.content)
+            .map_err(|_| Error::JsonToMetadata(ns_event.content.clone()))?;
+        let channel_id = &ns_event.id;
+        let creator_pubkey = &ns_event.pubkey;
+        let created_at_millis = ns_event_to_millis(ns_event.created_at);
+
+        if let Some(channel_cache) = Self::fetch_by_channel_id(cache_pool, channel_id).await? {
+            return Ok(channel_cache);
+        }
 
         let insert_query = r#"
             INSERT INTO channel_cache
                 (creation_event_hash, creator_pubkey, created_at, metadata)
             VALUES (?1, ?2, ?3, ?4)
         "#;
-        sqlx::query(&insert_query)
+        sqlx::query(insert_query)
             .bind(channel_id.to_string())
             .bind(creator_pubkey.to_string())
-            .bind(created_at.timestamp_millis())
+            .bind(created_at_millis)
             .bind(metadata.as_json())
             .execute(cache_pool)
             .await?;
@@ -100,46 +146,37 @@ impl ChannelCache {
 
         Ok(channel_cache)
     }
+
     pub async fn update(
         cache_pool: &SqlitePool,
-        db_event: &DbEvent,
+        ns_event: &nostr::Event,
     ) -> Result<ChannelCache, Error> {
         // Only updates for kind 41 coming from the same channel_id.
         // the channel id is inside the E tag
         // It's possible to receive a kind 41 before a kind 40.
-        let channel_id = channel_id_from_tags(&db_event.tags)
-            .ok_or(Error::ChannelIdNotFound(db_event.event_hash.to_owned()))?;
+        let channel_id = channel_id_from_tags(&ns_event.tags)
+            .ok_or(Error::NotFoundChannelInTags(ns_event.id.to_owned()))?;
 
-        let channel_cache = Self::fetch_by_channel_id(cache_pool, &channel_id)
+        // Check if channel already exists in the database or error
+        Self::fetch_by_channel_id(cache_pool, &channel_id)
             .await?
             .ok_or(Error::NotFoundChannelToUpdate(channel_id.to_owned()))?;
 
-        let metadata = nostr::Metadata::from_json(&db_event.content)
-            .map_err(|_| Error::JsonToMetadata(db_event.content.clone()))?;
-        let updated_event_hash = db_event.event_hash;
-        let updated_at = db_event
-            .remote_creation()
-            .ok_or(Error::NotConfirmedEvent(updated_event_hash.clone()))?;
+        let metadata = nostr::Metadata::from_json(&ns_event.content)
+            .map_err(|_| Error::JsonToMetadata(ns_event.content.clone()))?;
+        let updated_event_hash = ns_event.id;
+        let updated_at_millis = ns_event_to_millis(ns_event.created_at);
 
-        let image_path_update = if metadata.picture != channel_cache.metadata.picture {
-            r#", image_path='' "#
-        } else {
-            ""
-        };
+        let update_query = r#"
+            UPDATE channel_cache
+            SET metadata=?, updated_event_hash=?, updated_at=?
+            WHERE creation_event_hash = ?
+        "#;
 
-        let update_query = format!(
-            r#"
-                UPDATE channel_cache
-                SET metadata=?, updated_event_hash=?, updated_at=? {}
-                WHERE channel_id = ?
-            "#,
-            image_path_update
-        );
-
-        sqlx::query(&update_query)
+        sqlx::query(update_query)
             .bind(metadata.as_json())
             .bind(updated_event_hash.to_string())
-            .bind(updated_at.timestamp_millis())
+            .bind(updated_at_millis)
             .bind(channel_id.to_string())
             .execute(cache_pool)
             .await?;
@@ -151,30 +188,52 @@ impl ChannelCache {
         Ok(channel_cache)
     }
 
-    pub(crate) async fn update_local_path(
-        cache_pool: &SqlitePool,
-        public_key: &XOnlyPublicKey,
-        path: &PathBuf,
+    async fn fetch_img_cache(
+        &mut self,
+        cache_pool: &sqlx::Pool<sqlx::Sqlite>,
     ) -> Result<(), Error> {
-        todo!()
+        if self.metadata.picture.is_some() {
+            let event_hash = self.last_event_hash();
+            self.image_cache =
+                ImageDownloaded::fetch(cache_pool, event_hash, ImageKind::Channel).await?;
+        }
+        Ok(())
     }
 
-    pub(crate) async fn remove_file(
-        cache_pool: &SqlitePool,
-        cache: &ChannelCache,
-    ) -> Result<(), Error> {
-        todo!()
+    async fn fetch_members(&mut self, cache_pool: &SqlitePool) -> Result<(), Error> {
+        self.members = fetch_channel_members(cache_pool, &self.channel_id).await?;
+        Ok(())
     }
 
-    pub(crate) fn get_path(&self) -> Option<PathBuf> {
-        todo!()
+    pub fn last_event_hash(&self) -> &EventId {
+        self.updated_event_hash.as_ref().unwrap_or(&self.channel_id)
     }
+}
+
+pub async fn fetch_channel_members(
+    cache_pool: &SqlitePool,
+    channel_id: &EventId,
+) -> Result<Vec<XOnlyPublicKey>, Error> {
+    let query = "SELECT public_key FROM channel_member_map WHERE channel_id = ?;";
+    let rows = sqlx::query(query)
+        .bind(channel_id.to_string())
+        .fetch_all(cache_pool)
+        .await?;
+
+    let mut members = Vec::new();
+    for row in rows {
+        let member = row.try_get::<String, &str>("public_key")?;
+        let member = public_key_or_err(&member, "public_key")?;
+        members.push(member);
+    }
+
+    Ok(members)
 }
 
 impl sqlx::FromRow<'_, SqliteRow> for ChannelCache {
     fn from_row(row: &'_ SqliteRow) -> Result<Self, sqlx::Error> {
         let metadata: String = row.try_get("metadata")?;
-        let metadata = profile_meta_or_err(&metadata, "metadata")?;
+        let metadata = channel_meta_or_err(&metadata, "metadata")?;
 
         let channel_id: String = row.try_get("creation_event_hash")?;
         let channel_id = event_hash_or_err(&channel_id, "creation_event_hash")?;
@@ -195,9 +254,6 @@ impl sqlx::FromRow<'_, SqliteRow> for ChannelCache {
             .map(|date| millis_to_naive_or_err(date, "updated_at"))
             .transpose()?;
 
-        let image_path: Option<String> = row.get("image_path");
-        let image_path = image_path.map(|path| PathBuf::from(path));
-
         Ok(Self {
             metadata,
             created_at,
@@ -205,28 +261,8 @@ impl sqlx::FromRow<'_, SqliteRow> for ChannelCache {
             channel_id,
             creator_pubkey,
             updated_event_hash,
-            image_path,
+            image_cache: None,
+            members: vec![],
         })
     }
-}
-
-// async fn remove_all_images(path: &PathBuf, kind: ImageKind) -> Result<(), Error> {
-//     tokio::fs::remove_file(path).await?;
-
-//     let med_path = image_filename(kind, ImageSize::Medium, "png");
-//     tokio::fs::remove_file(med_path).await?;
-
-//     let sm_path = image_filename(kind, ImageSize::Small, "png");
-//     tokio::fs::remove_file(sm_path).await?;
-//     Ok(())
-// }
-
-fn channel_id_from_tags(tags: &[nostr::Tag]) -> Option<nostr::EventId> {
-    tags.iter().find_map(|tag| {
-        if let nostr::Tag::Event(event_id, _, _) = tag {
-            Some(event_id.to_owned())
-        } else {
-            None
-        }
-    })
 }
