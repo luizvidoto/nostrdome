@@ -80,9 +80,12 @@ jobs:
     - uses: actions/checkout@master
     - name: Install necessary packages
       run: |
-        sudo apt-get update
-        sudo apt-get install -y libssl-dev pkg-config build-essential checkinstall zlib1g-dev
+        export DEBIAN_FRONTED=noninteractive
+        sudo apt-get -qq update
+        sudo apt-get install -y build-essential checkinstall zlib1g-dev
     - name: Install OpenSSL
+      run: sudo apt install openssl
+    - name: Install OpenSSL from source
       run: |
         cd /usr/local/src/
         sudo wget https://www.openssl.org/source/openssl-1.1.1s.tar.gz
