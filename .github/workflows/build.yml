@@ -104,6 +104,10 @@ jobs:
     - name: Install cross
       run: cargo install cross
     - name: Build nostrtalk binary for Raspberry Pi 3/4 (64 bits)
+      env:
+        PKG_CONFIG_PATH: $(dirname $(find /usr -name openssl.pc))
+        OPENSSL_DIR: /usr/local/ssl
+        OPENSSL_LIB_DIR: /usr/local/ssl/lib
       run: cross build --verbose --profile release --package nostrtalk --target aarch64-unknown-linux-gnu
     - name: Archive nostrtalk binary
       uses: actions/upload-artifact@v1
@@ -111,6 +115,10 @@ jobs:
         name: nostrtalk-aarch64-unknown-linux-gnu
         path: target/aarch64-unknown-linux-gnu/release/nostrtalk
     - name: Build nostrtalk binary for Raspberry Pi 2/3/4 (32 bits)
+      env:
+        PKG_CONFIG_PATH: $(dirname $(find /usr -name openssl.pc))
+        OPENSSL_DIR: /usr/local/ssl
+        OPENSSL_LIB_DIR: /usr/local/ssl/lib
       run: cross build --verbose --profile release --package nostrtalk --target armv7-unknown-linux-gnueabihf
     - name: Archive nostrtalk binary
       uses: actions/upload-artifact@v1
