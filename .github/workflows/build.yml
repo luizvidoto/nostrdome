@@ -99,6 +99,8 @@ jobs:
         echo 'PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/usr/local/ssl/bin"' | sudo tee /etc/environment
         source /etc/environment
         export PKG_CONFIG_PATH=$(dirname $(find /usr -name openssl.pc))
+        export OPENSSL_DIR=/usr/local/ssl
+        export OPENSSL_LIB_DIR=/usr/local/ssl/lib
     - name: Install cross
       run: cargo install cross
     - name: Build nostrtalk binary for Raspberry Pi 3/4 (64 bits)
