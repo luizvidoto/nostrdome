@@ -1,0 +1,94 @@
+name: Build
+on:
+  push:
+    branches:
+      - test-workflow
+jobs:
+  nostrtalk_linux:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: hecrj/setup-rust-action@v1
+    - name: Install cargo-deb
+      run: cargo install cargo-deb
+    - uses: actions/checkout@master
+    - name: Install dependencies
+      run: |
+        export DEBIAN_FRONTED=noninteractive
+        sudo apt-get -qq update
+        sudo apt-get install -y libxkbcommon-dev
+    - name: Build nostrtalk binary
+      run: cargo build --verbose --profile release --package nostrtalk
+    - name: Archive nostrtalk binary
+      uses: actions/upload-artifact@v1
+      with:
+        name: nostrtalk-x86_64-unknown-linux-gnu
+        path: target/release/nostrtalk
+    - name: Pack nostrtalk .deb package
+      run: cargo deb --no-build --profile release --package nostrtalk
+    - name: Rename nostrtalk .deb package
+      run: mv target/debian/*.deb target/debian/nostrtalk-x86_64-debian-linux-gnu.deb
+    - name: Archive nostrtalk .deb package
+      uses: actions/upload-artifact@v1
+      with:
+        name: nostrtalk-x86_64-debian-linux-gnu
+        path: target/debian/nostrtalk-x86_64-debian-linux-gnu.deb
+
+  nostrtalk_windows:
+    runs-on: windows-latest
+    steps:
+    - uses: hecrj/setup-rust-action@v1
+    - uses: actions/checkout@master
+    - name: Enable static CRT linkage
+      run: |
+        mkdir .cargo
+        echo '[target.x86_64-pc-windows-msvc]' >> .cargo/config
+        echo 'rustflags = ["-Ctarget-feature=+crt-static"]' >> .cargo/config
+    - name: Run the application without starting the shell
+      run: |
+        sed -i '1 i\#![windows_subsystem = \"windows\"]' examples/nostrtalk/src/main.rs
+    - name: Build nostrtalk binary
+      run: cargo build --verbose --profile release --package nostrtalk
+    - name: Archive nostrtalk binary
+      uses: actions/upload-artifact@v1
+      with:
+        name: nostrtalk-x86_64-pc-windows-msvc
+        path: target/release/nostrtalk.exe
+
+  nostrtalk_macos:
+    runs-on: macOS-latest
+    steps:
+    - uses: hecrj/setup-rust-action@v1
+    - uses: actions/checkout@master
+    - name: Build nostrtalk binary
+      env:
+        MACOSX_DEPLOYMENT_TARGET: 10.14
+      run: cargo build --verbose --profile release --package nostrtalk
+    - name: Open binary via double-click
+      run: chmod +x target/release/nostrtalk
+    - name: Archive nostrtalk binary
+      uses: actions/upload-artifact@v1
+      with:
+        name: nostrtalk-x86_64-apple-darwin
+        path: target/release/nostrtalk
+
+  nostrtalk_raspberry:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: hecrj/setup-rust-action@v1
+    - uses: actions/checkout@master
+    - name: Install cross
+      run: cargo install cross
+    - name: Build nostrtalk binary for Raspberry Pi 3/4 (64 bits)
+      run: cross build --verbose --profile release --package nostrtalk --target aarch64-unknown-linux-gnu
+    - name: Archive nostrtalk binary
+      uses: actions/upload-artifact@v1
+      with:
+        name: nostrtalk-aarch64-unknown-linux-gnu
+        path: target/aarch64-unknown-linux-gnu/release/nostrtalk
+    - name: Build nostrtalk binary for Raspberry Pi 2/3/4 (32 bits)
+      run: cross build --verbose --profile release --package nostrtalk --target armv7-unknown-linux-gnueabihf
+    - name: Archive nostrtalk binary
+      uses: actions/upload-artifact@v1
+      with:
+        name: nostrtalk-armv7-unknown-linux-gnueabihf
+        path: target/armv7-unknown-linux-gnueabihf/release/nostrtalk
