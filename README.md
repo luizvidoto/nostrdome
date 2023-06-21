@@ -22,8 +22,6 @@ We welcome contributions from the community to improve NostrTalk. If you'd like 
 3. Commit your changes to the new branch.
 4. Create a pull request describing your changes, and submit it to the main repository.
 
-For more information, please read our [contribution guidelines](https://www.example.com/contribute).
-
 ## GUI 
 <p align="center"><a href="https://github.com/iced-rs/iced"><img alt="" src="https://user-images.githubusercontent.com/100347457/219339409-0a44722b-416d-410b-93a4-8b0e84c0031d.svg" width="50%"/></a></p>
 
