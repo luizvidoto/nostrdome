@@ -10,3 +10,5 @@ community.json
 *.log
 *.txt
 *.http
+Cargo.lock
+.cargo/

@@ -2775,6 +2775,7 @@ dependencies = [
 [[package]]
 name = "ns-client"
 version = "0.1.0"
+source = "git+https://github.com/luizvidoto/ns-client.git?branch=master#7e3a501f0d870563e9efac25adbb44daf9858cb8"
 dependencies = [
  "futures-util",
  "log",

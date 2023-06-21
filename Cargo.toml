@@ -26,7 +26,7 @@ iced_lazy = { version="0.6.1" }
 iced_style = "0.8.0"
 image = {version = "0.23.14", features = ["webp"]}
 nostr = { version = "0.22.0", features = ["all-nips"]}
-ns-client = { path="../ns-client/lib" }
+ns-client = { git="https://github.com/luizvidoto/ns-client.git", branch="master" }
 once_cell = "1.17.1"
 ouroboros = "0.13.0"
 qrcode = "0.12.0"
