@@ -74,40 +74,44 @@ jobs:
         path: target/release/nostrtalk
 
   nostrtalk_raspberry:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: hecrj/setup-rust-action@v1
-    - uses: actions/checkout@master
-    - name: Install OpenSSL
-      run: |
-        sudo apt install build-essential checkinstall zlib1g-dev -y
-        cd /usr/local/src/
-        sudo wget https://www.openssl.org/source/openssl-1.1.1s.tar.gz
-        sudo tar -xf openssl-1.1.1s.tar.gz
-        cd openssl-1.1.1s
-        sudo ./config --prefix=/usr/local/ssl --openssldir=/usr/local/ssl shared zlib
-        sudo make
-        sudo make test
-        sudo make install
-        echo "/usr/local/ssl/lib" | sudo tee -a /etc/ld.so.conf.d/openssl-1.1.1s.conf
-        sudo ldconfig -v
-        sudo mv /usr/bin/c_rehash /usr/bin/c_rehash.backup
-        sudo mv /usr/bin/openssl /usr/bin/openssl.backup
-        echo 'PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/usr/local/ssl/bin"' | sudo tee /etc/environment
-        source /etc/environment
-    - name: Install cross
-      run: cargo install cross
-    - name: Build nostrtalk binary for Raspberry Pi 3/4 (64 bits)
-      run: cross build --verbose --profile release --package nostrtalk --target aarch64-unknown-linux-gnu
-    - name: Archive nostrtalk binary
-      uses: actions/upload-artifact@v1
-      with:
-        name: nostrtalk-aarch64-unknown-linux-gnu
-        path: target/aarch64-unknown-linux-gnu/release/nostrtalk
-    - name: Build nostrtalk binary for Raspberry Pi 2/3/4 (32 bits)
-      run: cross build --verbose --profile release --package nostrtalk --target armv7-unknown-linux-gnueabihf
-    - name: Archive nostrtalk binary
-      uses: actions/upload-artifact@v1
-      with:
-        name: nostrtalk-armv7-unknown-linux-gnueabihf
-        path: target/armv7-unknown-linux-gnueabihf/release/nostrtalk
+  runs-on: ubuntu-latest
+  steps:
+  - uses: hecrj/setup-rust-action@v1
+  - uses: actions/checkout@master
+  - name: Install necessary packages
+    run: |
+      sudo apt-get update
+      sudo apt-get install -y libssl-dev pkg-config build-essential checkinstall zlib1g-dev
+  - name: Install OpenSSL
+    run: |
+      cd /usr/local/src/
+      sudo wget https://www.openssl.org/source/openssl-1.1.1s.tar.gz
+      sudo tar -xf openssl-1.1.1s.tar.gz
+      cd openssl-1.1.1s
+      sudo ./config --prefix=/usr/local/ssl --openssldir=/usr/local/ssl shared zlib
+      sudo make
+      sudo make test
+      sudo make install
+      echo "/usr/local/ssl/lib" | sudo tee -a /etc/ld.so.conf.d/openssl-1.1.1s.conf
+      sudo ldconfig -v
+      sudo mv /usr/bin/c_rehash /usr/bin/c_rehash.backup
+      sudo mv /usr/bin/openssl /usr/bin/openssl.backup
+      echo 'PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/usr/local/ssl/bin"' | sudo tee /etc/environment
+      source /etc/environment
+      export PKG_CONFIG_PATH=$(dirname $(find /usr -name openssl.pc))
+  - name: Install cross
+    run: cargo install cross
+  - name: Build nostrtalk binary for Raspberry Pi 3/4 (64 bits)
+    run: cross build --verbose --profile release --package nostrtalk --target aarch64-unknown-linux-gnu
+  - name: Archive nostrtalk binary
+    uses: actions/upload-artifact@v1
+    with:
+      name: nostrtalk-aarch64-unknown-linux-gnu
+      path: target/aarch64-unknown-linux-gnu/release/nostrtalk
+  - name: Build nostrtalk binary for Raspberry Pi 2/3/4 (32 bits)
+    run: cross build --verbose --profile release --package nostrtalk --target armv7-unknown-linux-gnueabihf
+  - name: Archive nostrtalk binary
+    uses: actions/upload-artifact@v1
+    with:
+      name: nostrtalk-armv7-unknown-linux-gnueabihf
+      path: target/armv7-unknown-linux-gnueabihf/release/nostrtalk
