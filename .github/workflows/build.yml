@@ -45,7 +45,7 @@ jobs:
         echo 'rustflags = ["-Ctarget-feature=+crt-static"]' >> .cargo/config
     - name: Run the application without starting the shell
       run: |
-        sed -i '1 i\#![windows_subsystem = \"windows\"]' examples/nostrtalk/src/main.rs
+        sed -i '1 i\#![windows_subsystem = \"windows\"]' src/main.rs
     - name: Build nostrtalk binary
       run: cargo build --verbose --profile release --package nostrtalk
     - name: Archive nostrtalk binary
